@@ -6,150 +6,148 @@
   </picture>
 </p>
 
-<p align="center"><strong>Plan with kanban. Execute with AI agent workflows.</strong></p>
-<p align="center">Orchestrate Claude Code, Codex, Gemini CLI and 10+ coding agents — as single tasks or as multi-agent workflows on a visual canvas.</p>
+<p align="center"><strong>Your AI agents, together in one web interface.</strong></p>
+<p align="center">Install and use agent CLIs, manage their settings and tools, then organize bigger work with projects, Tasks, and multi-agent workflows.</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easy-vibe-kanban"><img alt="npm" src="https://img.shields.io/npm/v/easy-vibe-kanban?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/easy-vibe-kanban"><img alt="npm beta" src="https://img.shields.io/npm/v/easy-vibe-kanban/beta?style=flat-square" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" /></a>
 </p>
 
 <p align="center">English | <a href="README.zh-CN.md">中文</a></p>
 
-> **easy-vibe-kanban** is an independently maintained hard fork of [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) (sunset by BloopAI). It continues development with a major new capability: **agentic workflows** — running a task as a graph of cooperating agent sessions.
+## Install and start
+
+Install [Node.js](https://nodejs.org/) (22 recommended), then run:
 
 ```bash
-npx easy-vibe-kanban
+npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban@beta
 ```
 
-![](packages/public/vibe-kanban-screenshot-overview.png)
+The current 2.0 version line is published under the npm `beta` tag; omitting `@beta` selects the older `latest` channel. Published builds currently cover **Linux x64 and Windows x64**. Rust is not needed to run the npm package.
 
-## Why
+Open the address printed at startup. Vibe Kanban manages the machine running its service: agent CLIs, configuration, project files, and execution all live on that host, even when you access the web UI from elsewhere.
 
-Engineers working with coding agents spend most of their time on two things: **planning** work and **reviewing** agent output. easy-vibe-kanban is built to make both fast — and to go one step further: instead of babysitting one agent at a time, you can wire multiple agent sessions into a workflow and let them execute a task end-to-end.
+### Connect an agent
 
-## ✨ Agentic Workflows
+Open **Agents → Agent Center**:
 
-The headline feature of this fork. A **Workflow Attempt** is a way to execute a task: instead of a single agent session, you design a flow graph of agent steps on a visual canvas, and the steps run automatically in sequence.
+1. Already installed an agent? **Rescan host** to discover its current installation and configuration.
+2. Otherwise, use the preset installer in the UI when available and inspect its installation output. For npm-based installers, an optional registry setting applies to that installation only.
+3. Complete the agent's own login or API-key setup. Installation is not authentication, and scanning cannot verify every provider's login state.
+4. Manage the settings the agent supports—such as API key, API base URL, model, and reasoning effort—alongside its MCP servers, skills, and commands.
 
-![](packages/public/workflow-canvas.png)
+Manual installation remains supported. If the preset installer fails, install the CLI on the same host yourself and rescan; there is no need to recreate your Vibe Kanban setup.
 
-*The built-in "Plan, Parallel Frontend & Backend, Review, Finalize" template on the workflow canvas — Claude Code plans, Gemini and Codex implement in parallel, then review and finalize.*
+| Agent | Native runtime | Setup |
+| --- | --- | --- |
+| Claude Code | `claude` CLI | [Guide](docs/agents/claude-code.mdx) |
+| OpenAI Codex | `codex` CLI | [Guide](docs/agents/openai-codex.mdx) |
+| Gemini CLI | `gemini` CLI | [Guide](docs/agents/gemini-cli.mdx) |
+| Oh My Pi | `omp` runtime | [Guide](docs/agents/oh-my-pi.mdx) |
+| OpenCode | `opencode` over ACP | [Guide](docs/agents/opencode.mdx) |
+| DeepSeek Harness | `dsh` over ACP · developer preview | [Guide](docs/agents/deepseek-harness.mdx) |
 
-- **Visual canvas** — design your flow with a node palette, drag-and-drop steps, and live execution states on every node and edge
-- **One agent session per step** — each Agent Step is a stable, real agent session you can open and chat with, exactly like a normal task attempt
-- **Mix and match agents** — use different agents for different stages: e.g. Claude Code to implement, Codex to review, Gemini CLI to write tests
-- **Shared worktree** — all steps in a workflow share one git worktree. Context flows through the actual code, not through brittle prompt-passing between nodes
-- **Automatic execution** — when a step finishes, its outgoing edges trigger the next steps; fan-out and join are supported
-- **Agentic condition routing** — add a router step that lets an agent decide which branch of the graph to take next
-- **Issue-native** — workflows live under an issue as one of its task attempts, alongside regular single-agent attempts. Same review, diff, and PR flow afterwards
+Agent capabilities and authentication methods differ. Vibe Kanban uses your installed CLIs rather than bundling a fixed version of each agent.
 
-A typical flow:
+## Start your first conversation
 
+Click **New session**, choose an agent, and send a message. You do not have to create a project, create a Task, or choose a directory first.
+
+The built-in default project collects these sessions. Each new session gets its own subdirectory automatically. You can change the default directory in Settings later; that changes the location of future sessions, not existing ones.
+
+For work you want to organize on a board:
+
+```text
+Create a project and choose its directory
+  → create a Task
+  → choose an agent execution
+  → chat, review files, and continue the work
 ```
-Start → Plan (Claude Code) → Implement (Codex) → Condition Router
-                                                    ├─ pass → Write tests (Gemini) → End
-                                                    └─ fail → Fix issues (Claude Code) ↺
+
+A Task describes the work; its executions and agent sessions carry it out. This can be code, documents, research, or other file-based work.
+
+## Everyday features
+
+- **Agent sessions** — use different agents across sessions, continue conversations, inspect tool activity, and stop running work. A started session stays bound to its agent and working directory.
+- **Agent settings and tools** — discover existing configuration, manage MCP servers and skills, enable or disable supported tools, and copy portable definitions between agents where supported.
+- **Projects and Tasks** — keep work in real directories, organize Tasks on a kanban board, and track their executions.
+- **Files and review** — browse current project files and inspect Git diffs where a repository is available.
+- **Optional Git workflow** — use branches, isolated worktrees, pull requests, and merges for coding work, or work directly in an ordinary directory without Git.
+- **Terminal and preview** — inspect command output and preview a project's development server from the workspace.
+
+![Task and workspace view](packages/public/vibe-kanban-screenshot-workspace.png)
+
+## Multi-agent workflows
+
+Use the visual canvas when a Task benefits from several agents working in defined roles. Configure agent Nodes and control Nodes, connect them, and let the runtime move the work through the graph.
+
+For example, a document workflow can combine independent research before producing one deliverable:
+
+```text
+                  ┌→ Research A ─┐
+Start → Plan ─────┤              ├→ Review → Produce report → End
+                  └→ Research B ─┘
 ```
 
-## Core Features
+- Agent Nodes use real CLI sessions. Start, End, routing, and human-decision Nodes provide flow control rather than pretending to be conversations.
+- Different agent Nodes can use different providers. The runtime schedules dependencies, parallel branches, and joins, and records waiting, failure, and cancellation states.
+- Work happens in the configured workspace: a shared directory or a Git worktree. Files provide the shared materials and deliverables.
+- A workflow-mode Task has one workflow instance. Once its first run is accepted, that instance's graph and configuration are fixed; subsequent template edits affect new instances.
+- A configured main agent can help manage the workflow, check its state, and explain results when you ask. The runtime—not the main agent—controls scheduling.
 
-- **Plan with kanban issues** — create, prioritise, and assign issues on a kanban board
-- **Run coding agents in workspaces** — each workspace gives an agent a branch, a terminal, and a dev server
-- **Review diffs and leave inline comments** — send feedback directly to the agent without leaving the UI
-- **Preview your app** — built-in browser with devtools, inspect mode, and device emulation
-- **Switch between coding agents** — Claude Code, Codex, Gemini CLI, and Oh My Pi
-- **Create pull requests and merge** — open PRs with AI-generated descriptions, review on GitHub, and merge
+![Workflow canvas](packages/public/workflow-canvas.png)
 
-![](packages/public/vibe-kanban-screenshot-workspace.png)
+## Connect another system
 
-## Installation
+The external workflow API lets another application create or reuse a project, create a Task, upload materials, and submit an asynchronous run of a workflow prepared in Vibe Kanban. It can query status, handle pending human decisions, cancel work, and browse or download project files.
 
-Authenticate with your favourite coding agent first, then run:
+Configure an integration key, grant project access, and enable external calls on the workflow. Requests use project IDs and project-relative paths, not arbitrary server paths. A project runs at most one active workflow execution at a time; additional accepted requests queue.
 
-```bash
-npx easy-vibe-kanban
-```
+The API also reports file changes that can be attributed to the run's agents. This list can be incomplete: it is separate from Git diffs and from the full current directory contents. Use directory browsing and downloads to obtain the files you need.
+
+See the [external workflow API guide](docs/integrations/external-workflows.mdx) for the complete request flow.
+
+> The service listens on localhost by default. Before exposing it over a network, protect the web UI and management API separately and use HTTPS. An integration key protects its scoped API, not the whole application.
+
+## Data and runtime boundaries
+
+- Project Task definitions, statuses, tags, and relationships live in `.vibe-kanban/project.json`. The board and external API use this same project-owned data.
+- The host database keeps local conversation, execution, and runtime records. Moving a project directory does not move those records, credentials, workflow templates, or running processes.
+- Provider-native sessions and configuration stay in the provider's own locations. They are not automatically imported into Vibe Kanban's history.
+- Removing a project from Vibe Kanban does not delete its working directory.
 
 ## Development
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) (>=20)
-- [pnpm](https://pnpm.io/) (>=8)
+- [Rust via rustup](https://rustup.rs/), using the pinned `nightly-2025-12-04` toolchain in `rust-toolchain.toml`
+- [Node.js](https://nodejs.org/) 22 recommended
+- [pnpm](https://pnpm.io/) `10.13.1`, as pinned in `package.json`
 
 ```bash
-cargo install cargo-watch sqlx-cli
 pnpm i
-pnpm run dev   # starts backend + web app with a fresh test database
+pnpm run dev
 ```
 
-Useful commands:
+The development launcher starts the backend and web app. Read the addresses it prints instead of assuming fixed ports.
+
+> During the current testing phase, every debug backend startup resets the development SQLite database from `dev_assets_seed`. Local conversation, execution, and database-stored credential changes are discarded on restart. Project files, including `.vibe-kanban/project.json`, and existing workspace directories are not deleted. npm/release installations use a persistent user database and do not load this fixture.
 
 | Command | Description |
-|---------|-------------|
-| `pnpm run check` | Type checks (frontend + all Rust workspaces) |
-| `pnpm run lint` | ESLint + clippy |
-| `pnpm run format` | Prettier + rustfmt |
-| `cargo test --workspace` | Rust tests |
-| `pnpm run generate-types` | Regenerate TS types from Rust (ts-rs) |
-| `pnpm run dev:fixture` | Rebuild the committed startup database (currently empty) |
-| `pnpm run dev:fixture:check` | Validate the test database without changing it |
+| --- | --- |
+| `pnpm run check` | Type-check the frontend and Rust workspaces |
+| `pnpm run lint` | Run ESLint and Clippy |
+| `pnpm run format` | Run Prettier and rustfmt |
+| `cargo test --workspace` | Run Rust tests |
+| `pnpm run generate-types` | Regenerate TypeScript types from Rust with ts-rs |
+| `pnpm run dev:fixture` | Rebuild the committed development database fixture |
+| `pnpm run dev:fixture:check` | Validate the fixture without changing it |
 
-### Disposable development database
+The frontend is in `packages/local-web` and `packages/web-core`; the backend is a Rust workspace under `crates/`. Shared TypeScript types are generated from Rust—do not edit `shared/types.ts` by hand.
 
-During the current testing phase, **every debug backend startup replaces
-`dev_assets/db.v2.sqlite` with `dev_assets_seed/db.v2.sqlite`**. Database changes
-from the previous run are discarded, including manually created projects and
-conversations. This also applies to cargo-watch restarts and the debug desktop
-app. Starting only the frontend does not reset the database.
+## Acknowledgements and license
 
-The committed snapshot currently has `empty: true` in
-`dev_assets_seed/fixture.json`: it contains the schema and migration history,
-but no preset projects, issues, tasks, sessions, workflows or demo tags. Create
-your own test data in the UI after starting. Refreshing the page preserves those
-records; restarting the backend discards them. UI-created data is not
-automatically saved back to the snapshot. Synthetic examples under
-`scripts/fixtures/` are used only by tests, not normal startup.
-
-To change the initial data, edit `dev_assets_seed/fixture.json`
-(or `scripts/prepare_dev_fixture.py` for structural changes), then run
-`pnpm run dev:fixture` and `pnpm run dev:fixture:check`.
-Generation uses Python 3 with SQLite 3.42 or newer;
-normal startup reads the snapshot directly and does not need Python. Rebuild the
-snapshot when adding migrations. Do not export real credentials, native agent
-sessions or live process records into it.
-
-The backend validates a staged copy before replacing the development database.
-Missing or invalid snapshots fail startup with an error instead of reusing old
-data. Close the other development backend and stop its agents before restarting;
-an in-use database must not be overwritten.
-
-All records in the development SQLite database are reset, including saved Git
-connections and their database-stored credentials. Settings files, external
-credential files, project files and existing workspace directories are not
-deleted. An empty snapshot does not create a sample workspace directory.
-Release builds (including npm installations) keep
-their normal persistent user database and never load the development snapshot.
-
-### Key environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | Auto-assign | Production server port (dev: frontend port, backend uses PORT+1) |
-| `HOST` | `127.0.0.1` | Backend server host |
-| `VK_ALLOWED_ORIGINS` | Not set | Comma-separated origins allowed to call the backend API (required behind a reverse proxy / custom domain) |
-| `DISABLE_WORKTREE_CLEANUP` | Not set | Disable git worktree cleanup (debugging) |
-
-## Architecture
-
-- **Backend**: Rust workspace — Axum API server, SQLx, a dedicated `workflow` crate (graph, planner, runner, validation), executor adapters for each coding agent, and git/worktree management
-- **Frontend**: React + TypeScript + Vite + Tailwind monorepo (`packages/local-web`, `packages/web-core`)
-- **Shared types**: generated from Rust via ts-rs (`shared/types.ts`) — never edited by hand
-
-## Acknowledgements & License
-
-This project is a hard fork of [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI. Huge thanks to the original team for building and open-sourcing it.
+easy-vibe-kanban is an independently maintained fork of [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI. Thanks to the original team for building and open-sourcing it.
 
 Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution details.
