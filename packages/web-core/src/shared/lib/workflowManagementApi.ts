@@ -3,6 +3,8 @@ import type {
   WorkflowMainSessionView,
   WorkflowNotificationPage,
   WorkflowNotificationView,
+  WorkflowSubmission,
+  AcceptedWorkflowSubmission,
 } from 'shared/types';
 import { handleApiResponse } from '@/shared/lib/api';
 import { makeLocalApiRequest } from './localApiTransport';
@@ -10,6 +12,25 @@ import { makeLocalApiRequest } from './localApiTransport';
 const BASE = '/api/workflow-management';
 
 export const workflowManagementApi = {
+  async submit(
+    instanceId: string,
+    payload: WorkflowSubmission,
+    hostId?: string | null
+  ): Promise<AcceptedWorkflowSubmission> {
+    return handleApiResponse(
+      await makeLocalApiRequest(
+        `${BASE}/instances/${encodeURIComponent(instanceId)}/submit`,
+        {
+          method: 'POST',
+          hostScope: 'explicit',
+          hostId,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      )
+    );
+  },
+
   async prepareMainSession(
     payload: {
       project_id: string;

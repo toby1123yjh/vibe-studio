@@ -188,7 +188,9 @@ impl OrchestrationRunRecord {
         plan: &OrchestrationPlanSnapshot,
     ) -> Result<Uuid, OrchestrationPersistenceError> {
         plan.validate_current()?;
-        let mut transaction = pool.begin().await?;
+        // Acquire the writer before the idempotency read. A deferred WAL
+        // snapshot cannot be upgraded while another connection is writing.
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         if let Some(existing) = sqlx::query_as::<_, ExistingOrchestrationRun>(
             r#"
             SELECT id, request_id, correlation_id, plan_snapshot
@@ -271,7 +273,7 @@ impl OrchestrationEventRecord {
         pool: &SqlitePool,
         event: &OrchestrationEventEnvelope,
     ) -> Result<OrchestrationReducerApply, OrchestrationPersistenceError> {
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         let applied = append_and_project_in_transaction(&mut *transaction, event).await?;
         transaction.commit().await?;
         Ok(applied)
@@ -480,6 +482,61 @@ impl OrchestrationAgentRunLinkRecord {
 }
 
 impl OrchestrationOutboxRecord {
+    /// Internal cancellation producers can race or retry with a new timestamp
+    /// and diagnostic reason. Retain the first exact command for the same
+    /// operation and target; all other command types keep strict idempotency.
+    pub async fn enqueue_cancellation(
+        pool: &SqlitePool,
+        id: Uuid,
+        command: &AgentRunPortCommandEnvelope,
+    ) -> Result<Uuid, OrchestrationPersistenceError> {
+        Ok(Self::enqueue_cancellation_with_outcome(pool, id, command)
+            .await?
+            .0)
+    }
+
+    pub async fn enqueue_cancellation_with_outcome(
+        pool: &SqlitePool,
+        id: Uuid,
+        command: &AgentRunPortCommandEnvelope,
+    ) -> Result<(Uuid, bool), OrchestrationPersistenceError> {
+        command.validate_current()?;
+        if !matches!(&command.command, AgentRunPortCommand::Cancel { .. }) {
+            return Err(OrchestrationPersistenceError::IdempotencyConflict {
+                entity: "orchestration cancellation",
+                key: command.idempotency_key.clone(),
+            });
+        }
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let existing = sqlx::query_as::<_, ExistingOutboxCommand>(
+            "SELECT id, command_envelope FROM orchestration_outbox WHERE idempotency_key = ?",
+        )
+        .bind(&command.idempotency_key)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let outcome = if let Some(existing) = existing {
+            let original = &existing.command_envelope.0;
+            if original.schema_version != command.schema_version
+                || original.command_id != command.command_id
+                || original.agent_run_id != command.agent_run_id
+                || original.orchestration_run_id != command.orchestration_run_id
+                || original.orchestration_node_execution_id
+                    != command.orchestration_node_execution_id
+                || !matches!(&original.command, AgentRunPortCommand::Cancel { .. })
+            {
+                return Err(OrchestrationPersistenceError::IdempotencyConflict {
+                    entity: "orchestration cancellation",
+                    key: command.idempotency_key.clone(),
+                });
+            }
+            (existing.id, false)
+        } else {
+            enqueue_outbox_in_transaction(&mut transaction, id, command).await?
+        };
+        transaction.commit().await?;
+        Ok(outcome)
+    }
+
     pub async fn enqueue(
         pool: &SqlitePool,
         id: Uuid,
@@ -493,7 +550,7 @@ impl OrchestrationOutboxRecord {
         id: Uuid,
         command: &AgentRunPortCommandEnvelope,
     ) -> Result<(Uuid, bool), OrchestrationPersistenceError> {
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         let outcome = enqueue_outbox_in_transaction(&mut *transaction, id, command).await?;
         transaction.commit().await?;
         Ok(outcome)
@@ -819,7 +876,7 @@ impl OrchestrationInboxRecord {
         pool: &SqlitePool,
         orchestration_run_id: Uuid,
     ) -> Result<Option<Self>, OrchestrationPersistenceError> {
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         let candidate = sqlx::query_as::<_, ExistingInboxIdentity>(
             "SELECT id, orchestration_run_id, source_agent_run_id, event_envelope FROM orchestration_inbox WHERE orchestration_run_id = ? AND consumption_status = 'pending' ORDER BY received_at ASC, id ASC LIMIT 1",
         )
@@ -916,7 +973,7 @@ impl OrchestrationInboxRecord {
         target_node_execution_id: Option<Uuid>,
         consumed_at: DateTime<Utc>,
     ) -> Result<bool, OrchestrationPersistenceError> {
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         let inserted = record_consumption_in_transaction(
             &mut transaction,
             inbox_id,
@@ -943,7 +1000,7 @@ impl OrchestrationInboxRecord {
         follow_up: Option<(Uuid, &AgentRunPortCommandEnvelope)>,
         consumed_at: DateTime<Utc>,
     ) -> Result<bool, OrchestrationPersistenceError> {
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         let inbox_run_id: Uuid =
             sqlx::query_scalar("SELECT orchestration_run_id FROM orchestration_inbox WHERE id = ?")
                 .bind(inbox_id)
@@ -1142,7 +1199,7 @@ impl OrchestrationConsumptionRecord {
         join_node_execution_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<Option<SerialEachQueueItem>, OrchestrationPersistenceError> {
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         let run_status: OrchestrationRunStatus = sqlx::query_scalar(
             "SELECT status FROM orchestration_runs WHERE id = (SELECT orchestration_run_id FROM orchestration_node_executions WHERE id = ?)",
         )
@@ -1481,7 +1538,7 @@ mod tests {
         OrchestrationReducerApply, OrchestrationRetryPolicy, RemainingUpstreamsPolicy,
         WorkspaceMode,
     };
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
     use super::*;
 
@@ -1495,7 +1552,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        initialize_test_schema(&pool).await;
+        pool
+    }
 
+    async fn initialize_test_schema(pool: &SqlitePool) {
         sqlx::raw_sql(
             r#"
             CREATE TABLE workspaces (id BLOB PRIMARY KEY);
@@ -1506,16 +1567,95 @@ mod tests {
             );
             "#,
         )
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
         sqlx::raw_sql(include_str!(
             "../../migrations/20260811000000_agent_runtime_v1.sql"
         ))
-        .execute(&pool)
+        .execute(pool)
         .await
         .expect("create runtime schema");
-        pool
+    }
+
+    async fn setup_file_pool() -> (std::path::PathBuf, SqlitePool) {
+        let path =
+            std::env::temp_dir().join(format!("vk-orchestration-writer-{}.sqlite", Uuid::new_v4()));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(true)
+                    .foreign_keys(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .busy_timeout(std::time::Duration::from_secs(5)),
+            )
+            .await
+            .unwrap();
+        initialize_test_schema(&pool).await;
+        (path, pool)
+    }
+
+    #[tokio::test]
+    async fn orchestration_start_waits_for_an_independent_sqlite_writer() {
+        let (path, pool) = setup_file_pool().await;
+        let run_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let correlation_id = Uuid::new_v4();
+        let plan = plan();
+        {
+            let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            sqlx::query("INSERT INTO workspaces (id) VALUES (?)")
+                .bind(Uuid::new_v4())
+                .execute(&mut *writer)
+                .await
+                .unwrap();
+            let start = OrchestrationRunRecord::persist_before_dispatch(
+                &pool,
+                run_id,
+                request_id,
+                "contended-start",
+                correlation_id,
+                &plan,
+            );
+            tokio::pin!(start);
+            // A deferred reader-to-writer upgrade fails immediately in WAL mode.
+            // The launch must wait at BEGIN IMMEDIATE before reading its snapshot.
+            tokio::select! {
+                result = &mut start => panic!("Launch did not wait for the writer: {result:?}"),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
+            }
+            writer.commit().await.unwrap();
+            assert_eq!(start.await.unwrap(), run_id);
+        }
+        let replay = OrchestrationRunRecord::persist_before_dispatch(
+            &pool,
+            run_id,
+            request_id,
+            "contended-start",
+            correlation_id,
+            &plan,
+        )
+        .await
+        .unwrap();
+        assert_eq!(replay, run_id);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orchestration_runs WHERE id=?")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        pool.close().await;
+        drop(pool);
+        // SQLite workers can finish releasing their OS handles after pool
+        // close on Windows. Cleanup is not the writer-contention assertion.
+        if let Err(error) = std::fs::remove_file(&path) {
+            eprintln!(
+                "Retained temporary test database {}: {error}",
+                path.display()
+            );
+        }
     }
 
     fn plan() -> OrchestrationPlanSnapshot {
@@ -1708,8 +1848,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn outbox_idempotency_rejects_command_payload_drift() {
-        let pool = setup_pool().await;
+    async fn outbox_strict_idempotency_and_internal_cancellation_replay() {
+        let (path, pool) = setup_file_pool().await;
         let plan = plan();
         let run_id = Uuid::new_v4();
         OrchestrationRunRecord::persist_before_dispatch(
@@ -1768,6 +1908,51 @@ mod tests {
                 ..
             })
         ));
+
+        // Background reconciliation and an explicit stop can race. Their
+        // original operation/target are identical, but their diagnostics and
+        // clocks differ. Keep exactly one complete accepted Cancel envelope.
+        let mut first_cancel = command.clone();
+        first_cancel.idempotency_key = "concurrent-internal-cancel".to_string();
+        first_cancel.command_id = Uuid::new_v4();
+        let mut second_cancel = first_cancel.clone();
+        second_cancel.correlation_id = Uuid::new_v4();
+        second_cancel.created_at += Duration::seconds(1);
+        second_cancel.command = AgentRunPortCommand::Cancel {
+            reason: "fail_fast sibling cancellation".to_string(),
+        };
+        let (first, second) = tokio::join!(
+            OrchestrationOutboxRecord::enqueue_cancellation(&pool, Uuid::new_v4(), &first_cancel),
+            OrchestrationOutboxRecord::enqueue_cancellation(&pool, Uuid::new_v4(), &second_cancel),
+        );
+        assert_eq!(first.unwrap(), second.unwrap());
+        let rows = sqlx::query_as::<_, ExistingOutboxCommand>(
+            "SELECT id, command_envelope FROM orchestration_outbox WHERE idempotency_key = ?",
+        )
+        .bind(&first_cancel.idempotency_key)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        let original = &rows[0].command_envelope.0;
+        assert!(original == &first_cancel || original == &second_cancel);
+        first_cancel.agent_run_id = Uuid::new_v4();
+        assert!(matches!(
+            OrchestrationOutboxRecord::enqueue_cancellation(&pool, Uuid::new_v4(), &first_cancel)
+                .await,
+            Err(OrchestrationPersistenceError::IdempotencyConflict {
+                entity: "orchestration cancellation",
+                ..
+            })
+        ));
+        pool.close().await;
+        drop(pool);
+        if let Err(error) = std::fs::remove_file(&path) {
+            eprintln!(
+                "Retained temporary test database {}: {error}",
+                path.display()
+            );
+        }
     }
 
     #[tokio::test]

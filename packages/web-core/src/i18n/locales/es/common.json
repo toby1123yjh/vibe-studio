@@ -1358,6 +1358,10 @@
       "newStageDescription": "Group related Nodes in one stage."
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "División de tareas",
+        "summary": "Crea subtareas en archivos"
+      },
       "start": {
         "label": "Start",
         "summary": "Entry point"
@@ -1389,11 +1393,79 @@
         "attemptB": "Attempt B"
       }
     },
+    "split": {
+      "output": "Salida",
+      "defaultPrompt": "Divide el trabajo entrante en subtareas independientes. Escribe tasks.json y un archivo de instrucciones por subtarea en el directorio de control del flujo. Incluye dependencias y referencias a los archivos de origen.",
+      "instructions": "Instrucciones de división",
+      "fixedScope": "Ámbito de asignación",
+      "scopeHint": "Conecta los agentes ejecutores candidatos y dirige cada uno a la misma salida de resumen. El agente principal asigna el trabajo dentro de estas conexiones.",
+      "executors": "Ejecutores candidatos",
+      "summaryExit": "Salida de resumen",
+      "scopeErrors": {
+        "missingExecutors": "Conecta el nodo de división a al menos un agente ejecutor.",
+        "invalidExecutor": "El nodo de división solo puede conectar directamente con agentes ejecutores distintos.",
+        "competingExecutorInputs": "Un ejecutor de subtareas no puede tener otro activador de entrada.",
+        "missingSummary": "Cada ejecutor necesita una conexión predeterminada a la salida de resumen.",
+        "differentSummaries": "Todos los ejecutores deben conectar con la misma salida de resumen.",
+        "invalidSummary": "La salida de resumen debe ser un nodo Agent, Transform o End independiente.",
+        "competingSummaryInputs": "La salida de resumen no puede recibir activadores externos al ámbito de división.",
+        "overlappingScopes": "Los ámbitos de división no pueden compartir ejecutores ni salidas de resumen."
+      },
+      "subtasks": "Subtareas internas",
+      "progress": "{{completed}} / {{total}} completadas",
+      "failedCount": "{{count}} fallidas",
+      "controlFiles": "Lista de tareas y plan de asignación",
+      "waitingDispatch": "Esperando asignación del agente principal",
+      "mainHandover": "Turno de asignación del agente principal",
+      "openMainSession": "Abrir sesión principal",
+      "openExecutionSession": "Abrir sesión de ejecución",
+      "stagesHint": "Las etapas se ejecutan en orden. Las subtareas de una misma etapa se ejecutan en paralelo con sesiones independientes.",
+      "stage": "Etapa {{index}}",
+      "pendingAssignments": "Pendiente de asignación",
+      "unassigned": "Sin ejecutor asignado",
+      "dependsOn": "Depende de: {{titles}}",
+      "handoffFiles": "Archivos de traspaso y entrega",
+      "requestFile": "Archivo de requisitos",
+      "currentFileHint": "Vista previa y descarga del archivo actual. Esta referencia no permite restaurar contenido anterior modificado o eliminado.",
+      "downloadFile": "Descargar archivo",
+      "loadingFile": "Cargando archivo…",
+      "fileFailed": "No se pudo leer este archivo del flujo.",
+      "fileTruncated": "Vista previa truncada. Descarga el archivo para leer todo su contenido.",
+      "downloadToView": "Descarga el archivo para verlo.",
+      "requestPartialSummary": "Resumir el trabajo completado",
+      "partialSummaryHint": "Crea un resumen parcial con los resultados disponibles e indica las subtareas pendientes. El trabajo en curso termina primero, sin detenerse.",
+      "partialSummaryRequest": "Crea una entrega parcial del lote de división aceptado en {{path}}. Lee los archivos de traspaso disponibles e indica cada subtarea ausente y su motivo.",
+      "partialSummaryFailed": "No se pudo solicitar el resumen parcial.",
+      "partialSummaryAccepted": "Resumen parcial aceptado. Se ejecutará cuando termine el trabajo actual.",
+      "openPartialSummary": "Abrir resumen parcial",
+      "partialDelivery": "Entrega parcial",
+      "fullDelivery": "Entrega completa",
+      "partialDeliveryHint": "El resumen solo incluye el trabajo completado. Las siguientes subtareas siguen pendientes.",
+      "missingSubtasks": "Subtareas pendientes",
+      "deliveryFilesHint": "Las referencias de traspaso pueden incluir materiales existentes. Los cambios de archivos del agente se muestran por separado debajo.",
+      "openSourceRun": "Abrir ejecución de origen",
+      "states": {
+        "pending": "Pendiente",
+        "accepted": "Aceptado",
+        "dispatching": "Asignando",
+        "running": "En ejecución",
+        "partial": "Parcialmente completado",
+        "succeeded": "Correcto",
+        "failed": "Fallido",
+        "cancelled": "Detenido",
+        "queued": "En cola",
+        "blocked": "Dependencia no satisfecha",
+        "claimed": "Iniciando",
+        "completed": "Completado",
+        "unknown": "Estado desconocido"
+      }
+    },
     "nodePicker": {
       "addNode": "Añadir nodo",
       "chooseNodeType": "Elegir tipo de nodo",
       "descriptions": {
         "agent": "Agente de IA que realiza una tarea",
+        "task_splitter": "Crea subtareas como archivos para que el agente principal las asigne",
         "condition": "Distribuye el trabajo entre ramas conectadas",
         "human_gate": "Espera la aprobación de una persona",
         "transform": "Transforma datos entre nodos",

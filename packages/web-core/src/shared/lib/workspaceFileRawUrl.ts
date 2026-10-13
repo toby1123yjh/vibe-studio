@@ -1,3 +1,4 @@
+/** Scope current-file previews from any local API to the selected host. */
 export function scopeWorkspaceFileRawUrl(
   rawUrl: string | null | undefined,
   hostId: string | null

@@ -18,29 +18,27 @@ describe('workflow node catalog sections', () => {
         id: 'execution',
         label: 'Execution',
         labelKey: 'workflow.editor.sections.execution',
-        types: ['agent'],
+        types: ['agent', 'task_splitter', 'arena'],
       },
       {
         id: 'control',
         label: 'Control',
         labelKey: 'workflow.editor.sections.control',
-        types: ['condition', 'human_gate'],
+        types: ['condition', 'human_gate', 'transform'],
       },
     ]);
     expect(sections.flatMap((section) => section.types)).not.toContain('start');
     expect(sections.flatMap((section) => section.types)).not.toContain('end');
-    expect(sections.flatMap((section) => section.types)).not.toContain('arena');
-    expect(sections.flatMap((section) => section.types)).not.toContain(
-      'transform'
-    );
   });
 
-  it('keeps structural and hidden nodes out of manual authoring', () => {
+  it('keeps structural nodes out of manual authoring', () => {
     expect(isWorkflowNodeAuthorable('agent')).toBe(true);
     expect(isWorkflowNodeAuthorable('condition')).toBe(true);
     expect(isWorkflowNodeAuthorable('human_gate')).toBe(true);
     expect(isWorkflowNodeAuthorable('start')).toBe(false);
     expect(isWorkflowNodeAuthorable('end')).toBe(false);
-    expect(isWorkflowNodeAuthorable('arena')).toBe(false);
+    expect(isWorkflowNodeAuthorable('task_splitter')).toBe(true);
+    expect(isWorkflowNodeAuthorable('transform')).toBe(true);
+    expect(isWorkflowNodeAuthorable('arena')).toBe(true);
   });
 });

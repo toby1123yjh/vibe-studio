@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use db::models::{
     scratch::DraftWorkspaceRepo,
@@ -38,6 +41,10 @@ use server::{
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use ts_rs::TS;
 use uuid::Uuid;
+use workflow::files::{
+    WorkflowFileRef, WorkflowHandoff, control_file_path, readable_file, sha256_bytes,
+    write_json_atomic, write_text_atomic,
+};
 
 // Production helpers only accept; these fixtures explicitly play the existing
 // dispatcher role with fake ports after a successful queue claim.
@@ -631,6 +638,12 @@ async fn setup_workflow_pool() -> SqlitePool {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../db/migrations/20261013000000_workflow_file_driven.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("apply file-driven workflow fixture schema");
     sqlx::query("INSERT INTO fixture_project_root(directory_path) VALUES (?)")
         .bind(project_directories.path().to_string_lossy().as_ref())
         .execute(&pool)
@@ -1152,6 +1165,15 @@ impl WorkflowWorkspaceResolver for FakeWorkspaceResolver {
             .expect("workspace requests")
             .push(request.clone());
 
+        let root: String = sqlx::query_scalar("SELECT directory_path FROM fixture_project_root")
+            .fetch_one(&self.pool)
+            .await?;
+        let workspace_id = request.existing_workspace_id.unwrap_or(self.workspace_id);
+        let directory = PathBuf::from(root).join(format!("workspace-{workspace_id}"));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .map_err(|error| ApiError::BadRequest(format!("create fixture workspace: {error}")))?;
+
         sqlx::query(
             r#"
             INSERT INTO workspaces (id, container_ref, workspace_kind, container_ownership, branch)
@@ -1159,19 +1181,14 @@ impl WorkflowWorkspaceResolver for FakeWorkspaceResolver {
             ON CONFLICT(id) DO NOTHING
             "#,
         )
-        .bind(request.existing_workspace_id.unwrap_or(self.workspace_id))
-        .bind(
-            std::env::current_dir()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-        )
+        .bind(workspace_id)
+        .bind(directory.to_string_lossy().as_ref())
         .bind(format!("workflow-{}", request.run_id))
         .execute(&self.pool)
         .await
         .map_err(ApiError::Database)?;
 
-        Ok(request.existing_workspace_id.unwrap_or(self.workspace_id))
+        Ok(workspace_id)
     }
 
     async fn cleanup_created_main_workspace(&self, workspace_id: Uuid) -> Result<(), ApiError> {
@@ -1184,8 +1201,165 @@ impl WorkflowWorkspaceResolver for FakeWorkspaceResolver {
     }
 }
 
+async fn fixture_workspace_root(
+    pool: &SqlitePool,
+    workspace_id: Uuid,
+) -> Result<PathBuf, ApiError> {
+    let root: String = sqlx::query_scalar("SELECT container_ref FROM workspaces WHERE id=?")
+        .bind(workspace_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(PathBuf::from(root))
+}
+
+// A fake Agent is still a real file producer. Its chat reply does not create
+// an accepted handoff, and the workflow execution id is not the orchestration id.
+async fn write_fake_agent_delivery(
+    pool: &SqlitePool,
+    request: &AgentNodeRequest,
+    output: &str,
+) -> Result<(), ApiError> {
+    let execution_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM node_executions WHERE run_id=? AND node_id=? AND iteration=?",
+    )
+    .bind(request.run_id)
+    .bind(&request.node_id)
+    .bind(request.iteration)
+    .fetch_one(pool)
+    .await?;
+    write_fake_delivery(
+        pool,
+        request.run_id,
+        request.workspace_id,
+        execution_id,
+        output,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn write_fake_delivery(
+    pool: &SqlitePool,
+    run_id: Uuid,
+    workspace_id: Uuid,
+    execution_id: Uuid,
+    output: &str,
+) -> Result<(WorkflowFileRef, WorkflowFileRef), ApiError> {
+    let root = fixture_workspace_root(pool, workspace_id).await?;
+    let summary_path = format!(".vibe-kanban/workflows/{run_id}/results/{execution_id}.md");
+    let index_path = format!(".vibe-kanban/workflows/{run_id}/handoffs/{execution_id}.json");
+    let handoff = WorkflowHandoff {
+        schema_version: 1,
+        run_id: run_id.to_string(),
+        node_execution_id: execution_id.to_string(),
+        summary_path: Some(summary_path.clone()),
+        artifact_paths: Vec::new(),
+    };
+    let fixture_error = |error: workflow::files::WorkflowFileError| {
+        ApiError::BadRequest(format!("write fixture workflow delivery: {error}"))
+    };
+    let summary = control_file_path(&root, &summary_path)
+        .await
+        .map_err(fixture_error)?;
+    write_text_atomic(&summary, output)
+        .await
+        .map_err(fixture_error)?;
+    let index = control_file_path(&root, &index_path)
+        .await
+        .map_err(fixture_error)?;
+    write_json_atomic(&index, &handoff)
+        .await
+        .map_err(fixture_error)?;
+    let bytes = serde_json::to_vec_pretty(&handoff)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok((
+        WorkflowFileRef {
+            path: index_path,
+            sha256: sha256_bytes(&bytes),
+        },
+        WorkflowFileRef {
+            path: summary_path,
+            sha256: sha256_bytes(output.as_bytes()),
+        },
+    ))
+}
+
+async fn accepted_delivery_contents(
+    pool: &SqlitePool,
+    run_id: Uuid,
+    execution_id: Uuid,
+) -> Vec<String> {
+    let (accepted_run_id, path, hash, files): (Uuid, String, String, String) = sqlx::query_as(
+        "SELECT run_id,handoff_path,handoff_sha256,files_json FROM workflow_node_handoffs WHERE node_execution_id=?",
+    )
+    .bind(execution_id)
+    .fetch_one(pool)
+    .await
+    .expect("successful execution has an accepted handoff");
+    assert_eq!(accepted_run_id, run_id);
+    assert_eq!(
+        path,
+        format!(".vibe-kanban/workflows/{run_id}/handoffs/{execution_id}.json")
+    );
+    let workspace_id: Uuid =
+        sqlx::query_scalar("SELECT workspace_id FROM workflow_runs WHERE id=?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let root = fixture_workspace_root(pool, workspace_id).await.unwrap();
+    let bytes = tokio::fs::read(readable_file(&root, &path).await.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(sha256_bytes(&bytes), hash);
+    let handoff: WorkflowHandoff = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(handoff.schema_version, 1);
+    assert_eq!(handoff.run_id, run_id.to_string());
+    assert_eq!(handoff.node_execution_id, execution_id.to_string());
+    let references: Vec<WorkflowFileRef> = serde_json::from_str(&files).unwrap();
+    let mut paths = handoff.artifact_paths;
+    if let Some(summary) = handoff.summary_path {
+        paths.insert(0, summary);
+    }
+    paths.dedup();
+    assert_eq!(
+        references
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>(),
+        paths
+    );
+    let mut contents = Vec::new();
+    for reference in references {
+        let path = readable_file(&root, &reference.path).await.unwrap();
+        let bytes = tokio::fs::read(path).await.unwrap();
+        assert_eq!(sha256_bytes(&bytes), reference.sha256);
+        contents.push(String::from_utf8(bytes).expect("fixture delivery is UTF-8 text"));
+    }
+    contents
+}
+
+async fn assert_run_delivery(pool: &SqlitePool, run: &WorkflowRunResponse, expected: &str) {
+    let end = run
+        .nodes
+        .iter()
+        .filter(|node| node.node_id == "end" && node.status == NodeExecutionStatus::Succeeded)
+        .min_by_key(|node| node.iteration)
+        .expect("successful workflow has a completed End execution");
+    let handoff = format!(
+        "Read workflow handoff: `.vibe-kanban/workflows/{}/handoffs/{}.json`",
+        run.id, end.id
+    );
+    assert_eq!(run.output_text.as_deref(), Some(handoff.as_str()));
+    assert_eq!(
+        accepted_delivery_contents(pool, run.id, end.id).await,
+        vec![expected]
+    );
+}
+
 #[derive(Debug)]
 struct FakeAgentExecutor {
+    pool: SqlitePool,
     session_id: Uuid,
     execution_process_id: Uuid,
     output_text: String,
@@ -1193,16 +1367,18 @@ struct FakeAgentExecutor {
 }
 
 impl FakeAgentExecutor {
-    fn new(session_id: Uuid, output_text: impl Into<String>) -> Self {
-        Self::with_execution_process(session_id, Uuid::new_v4(), output_text)
+    fn new(pool: &SqlitePool, session_id: Uuid, output_text: impl Into<String>) -> Self {
+        Self::with_execution_process(pool, session_id, Uuid::new_v4(), output_text)
     }
 
     fn with_execution_process(
+        pool: &SqlitePool,
         session_id: Uuid,
         execution_process_id: Uuid,
         output_text: impl Into<String>,
     ) -> Self {
         Self {
+            pool: pool.clone(),
             session_id,
             execution_process_id,
             output_text: output_text.into(),
@@ -1218,6 +1394,7 @@ impl FakeAgentExecutor {
 #[async_trait::async_trait]
 impl WorkflowAgentExecutor for FakeAgentExecutor {
     async fn run_agent(&self, request: AgentNodeRequest) -> Result<AgentNodeExecution, ApiError> {
+        write_fake_agent_delivery(&self.pool, &request, &self.output_text).await?;
         self.requests.lock().expect("agent requests").push(request);
 
         Ok(AgentNodeExecution::Completed {
@@ -1229,12 +1406,21 @@ impl WorkflowAgentExecutor for FakeAgentExecutor {
     }
 }
 
-#[derive(Debug, Default)]
-struct BoundSessionAgentExecutor;
+#[derive(Debug)]
+struct BoundSessionAgentExecutor {
+    pool: SqlitePool,
+}
+
+impl BoundSessionAgentExecutor {
+    fn new(pool: &SqlitePool) -> Self {
+        Self { pool: pool.clone() }
+    }
+}
 
 #[async_trait::async_trait]
 impl WorkflowAgentExecutor for BoundSessionAgentExecutor {
     async fn run_agent(&self, request: AgentNodeRequest) -> Result<AgentNodeExecution, ApiError> {
+        write_fake_agent_delivery(&self.pool, &request, "bound session completed").await?;
         Ok(AgentNodeExecution::Completed {
             session_id: request.session_id.ok_or_else(|| {
                 ApiError::BadRequest("Workflow Agent Task has no bound Session".to_string())
@@ -1283,6 +1469,7 @@ impl WorkflowAgentExecutor for StartedAgentExecutor {
 
 #[derive(Debug)]
 struct AsyncThenCompleteAgentExecutor {
+    pool: SqlitePool,
     first_session_id: Uuid,
     first_execution_process_id: Uuid,
     second_session_id: Uuid,
@@ -1292,12 +1479,14 @@ struct AsyncThenCompleteAgentExecutor {
 
 impl AsyncThenCompleteAgentExecutor {
     fn new(
+        pool: &SqlitePool,
         first_session_id: Uuid,
         first_execution_process_id: Uuid,
         second_session_id: Uuid,
         second_execution_process_id: Uuid,
     ) -> Self {
         Self {
+            pool: pool.clone(),
             first_session_id,
             first_execution_process_id,
             second_session_id,
@@ -1315,7 +1504,10 @@ impl AsyncThenCompleteAgentExecutor {
 impl WorkflowAgentExecutor for AsyncThenCompleteAgentExecutor {
     async fn run_agent(&self, request: AgentNodeRequest) -> Result<AgentNodeExecution, ApiError> {
         let node_id = request.node_id.clone();
-        self.requests.lock().expect("agent requests").push(request);
+        self.requests
+            .lock()
+            .expect("agent requests")
+            .push(request.clone());
 
         if node_id == "agent-a" {
             return Ok(AgentNodeExecution::Started {
@@ -1326,6 +1518,7 @@ impl WorkflowAgentExecutor for AsyncThenCompleteAgentExecutor {
             });
         }
 
+        write_fake_agent_delivery(&self.pool, &request, "agent B done").await?;
         Ok(AgentNodeExecution::Completed {
             session_id: self.second_session_id,
             orchestration_node_execution_id: self.second_execution_process_id,
@@ -1337,6 +1530,7 @@ impl WorkflowAgentExecutor for AsyncThenCompleteAgentExecutor {
 
 #[derive(Debug)]
 struct FailOnceAgentExecutor {
+    pool: SqlitePool,
     session_id: Uuid,
     output_text: String,
     remaining_failures: Mutex<usize>,
@@ -1344,8 +1538,9 @@ struct FailOnceAgentExecutor {
 }
 
 impl FailOnceAgentExecutor {
-    fn new(session_id: Uuid, output_text: impl Into<String>) -> Self {
+    fn new(pool: &SqlitePool, session_id: Uuid, output_text: impl Into<String>) -> Self {
         Self {
+            pool: pool.clone(),
             session_id,
             output_text: output_text.into(),
             remaining_failures: Mutex::new(1),
@@ -1361,14 +1556,21 @@ impl FailOnceAgentExecutor {
 #[async_trait::async_trait]
 impl WorkflowAgentExecutor for FailOnceAgentExecutor {
     async fn run_agent(&self, request: AgentNodeRequest) -> Result<AgentNodeExecution, ApiError> {
-        self.requests.lock().expect("agent requests").push(request);
+        self.requests
+            .lock()
+            .expect("agent requests")
+            .push(request.clone());
 
-        let mut remaining_failures = self.remaining_failures.lock().expect("remaining failures");
-        if *remaining_failures > 0 {
-            *remaining_failures -= 1;
-            return Err(ApiError::BadRequest("agent failed once".to_string()));
+        {
+            let mut remaining_failures =
+                self.remaining_failures.lock().expect("remaining failures");
+            if *remaining_failures > 0 {
+                *remaining_failures -= 1;
+                return Err(ApiError::BadRequest("agent failed once".to_string()));
+            }
         }
 
+        write_fake_agent_delivery(&self.pool, &request, &self.output_text).await?;
         Ok(AgentNodeExecution::Completed {
             session_id: self.session_id,
             orchestration_node_execution_id: Uuid::new_v4(),
@@ -1487,7 +1689,10 @@ impl WorkflowArenaWinnerApplier for FakeArenaWinnerApplier {
         self.requests.lock().expect("winner requests").push(request);
 
         match self.result.lock().expect("winner result").clone() {
-            Ok(output_text) => Ok(ArenaWinnerExecution { output_text }),
+            Ok(output_text) => Ok(ArenaWinnerExecution {
+                output_text,
+                artifact_paths: Vec::new(),
+            }),
             Err(message) => Err(ApiError::BadRequest(message)),
         }
     }
@@ -1586,6 +1791,38 @@ impl AgentRunReconciliationBoundary for FakeCanonicalReconciliationBoundary {
             FakeCanonicalOutcome::Failed => ("failed", true, self.output_text.as_deref()),
             FakeCanonicalOutcome::Cancelled => ("cancelled", true, None),
         };
+        if matches!(self.outcome, FakeCanonicalOutcome::Completed) {
+            // This fake replaces the whole canonical reconciliation boundary,
+            // including acceptance after the successful native terminal event.
+            let executions: Vec<(Uuid, Uuid)> = sqlx::query_as(
+                "SELECT n.id,r.workspace_id FROM node_executions n JOIN workflow_runs r ON r.id=n.run_id WHERE n.run_id=? AND n.status IN ('running','cancelling')",
+            )
+            .bind(run_id)
+            .fetch_all(pool)
+            .await?;
+            for (execution_id, workspace_id) in executions {
+                let (index, summary) = write_fake_delivery(
+                    pool,
+                    run_id,
+                    workspace_id,
+                    execution_id,
+                    self.output_text
+                        .as_deref()
+                        .expect("completed fixture has output"),
+                )
+                .await?;
+                sqlx::query(
+                    "INSERT INTO workflow_node_handoffs(node_execution_id,run_id,handoff_path,handoff_sha256,files_json) VALUES (?,?,?,?,?)",
+                )
+                .bind(execution_id)
+                .bind(run_id)
+                .bind(index.path)
+                .bind(index.sha256)
+                .bind(serde_json::to_string(&vec![summary]).unwrap())
+                .execute(pool)
+                .await?;
+            }
+        }
         sqlx::query(
             r#"
             UPDATE node_executions
@@ -1937,7 +2174,7 @@ async fn run_unbound_workflow_attempt_passes_direct_folder_to_workspace_resolver
     .await
     .unwrap();
     let resolver = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(Uuid::new_v4(), "unused");
+    let agent = FakeAgentExecutor::new(&pool, Uuid::new_v4(), "unused");
     let run = run_workflow_attempt_runtime(
         &pool,
         attempt.id,
@@ -2555,7 +2792,7 @@ async fn workflow_runner_trigger_creates_run_workspace_and_node_executions() {
     .expect("insert agent workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent final output");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent final output");
 
     let run = trigger_workflow_run(
         &pool,
@@ -2632,7 +2869,7 @@ async fn running_workflow_attempt_updates_latest_run_workspace_and_status() {
     .expect("create workflow attempt");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(Uuid::new_v4(), "unused");
+    let agent = FakeAgentExecutor::new(&pool, Uuid::new_v4(), "unused");
     let run = run_workflow_attempt_runtime(
         &pool,
         attempt.id,
@@ -2806,7 +3043,7 @@ async fn accepted_workflow_runs_keep_snapshot_fifo_and_stable_node_sessions() {
     start_accepted_workflow_run(
         &pool,
         first_id,
-        &BoundSessionAgentExecutor,
+        &BoundSessionAgentExecutor::new(&pool),
         &NoopWorkflowArenaCreator,
     )
     .await
@@ -2876,7 +3113,7 @@ async fn accepted_workflow_runs_keep_snapshot_fifo_and_stable_node_sessions() {
     start_accepted_workflow_run(
         &pool,
         second_id,
-        &BoundSessionAgentExecutor,
+        &BoundSessionAgentExecutor::new(&pool),
         &NoopWorkflowArenaCreator,
     )
     .await
@@ -3058,7 +3295,7 @@ async fn workflow_agent_node_materializes_one_child_task_and_agent_binding() {
             repos: None,
         },
         &workspace,
-        &BoundSessionAgentExecutor,
+        &BoundSessionAgentExecutor::new(&pool),
     )
     .await
     .expect("run Agent workflow attempt");
@@ -3146,7 +3383,7 @@ async fn workflow_structural_nodes_never_materialize_tasks() {
             repos: None,
         },
         &workspace,
-        &FakeAgentExecutor::new(Uuid::new_v4(), "unused"),
+        &FakeAgentExecutor::new(&pool, Uuid::new_v4(), "unused"),
     )
     .await
     .expect("initialize structural workflow");
@@ -3209,7 +3446,7 @@ async fn workflow_arena_node_and_group_share_one_child_task() {
             repos: None,
         },
         &workspace,
-        &FakeAgentExecutor::new(Uuid::new_v4(), "unused"),
+        &FakeAgentExecutor::new(&pool, Uuid::new_v4(), "unused"),
         &arena,
     )
     .await
@@ -3301,7 +3538,7 @@ async fn workflow_initialization_failure_rolls_back_runtime_materialization() {
             repos: None,
         },
         &workspace,
-        &BoundSessionAgentExecutor,
+        &BoundSessionAgentExecutor::new(&pool),
     )
     .await;
     assert!(result.is_err(), "node materialization must fail");
@@ -3442,7 +3679,7 @@ async fn workflow_runner_resolves_project_id_from_local_issue_for_system_workflo
     .expect("insert historical run reference");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent final output");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent final output");
 
     let run = trigger_workflow_run(
         &pool,
@@ -3490,7 +3727,7 @@ async fn workflow_runner_trigger_binds_existing_workspace() {
     .expect("insert agent workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, fallback_workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent final output");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent final output");
 
     let run = trigger_workflow_run(
         &pool,
@@ -3542,6 +3779,7 @@ async fn workflow_runner_agent_node_uses_main_workspace_and_stores_session_outpu
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
     let agent = FakeAgentExecutor::with_execution_process(
+        &pool,
         session_id,
         execution_process_id,
         "implemented feature",
@@ -3576,7 +3814,30 @@ async fn workflow_runner_agent_node_uses_main_workspace_and_stores_session_outpu
     assert!(
         agent_requests[0]
             .prompt
-            .contains("Implement this: Add workflow task orchestration")
+            .contains("Implement this: Source execution:")
+    );
+    let start = run
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "start")
+        .unwrap();
+    assert!(agent_requests[0].prompt.contains(&format!(
+        ".vibe-kanban/workflows/{}/handoffs/{}.json",
+        run.id, start.id
+    )));
+    assert!(
+        agent_requests[0]
+            .prompt
+            .contains(&format!(".vibe-kanban/workflows/{}/request.md", run.id))
+    );
+    assert!(
+        !agent_requests[0]
+            .prompt
+            .contains("Add workflow task orchestration")
+    );
+    assert_eq!(
+        accepted_delivery_contents(&pool, run.id, start.id).await,
+        vec!["Add workflow task orchestration"]
     );
 
     let agent_node = run
@@ -3595,7 +3856,16 @@ async fn workflow_runner_agent_node_uses_main_workspace_and_stores_session_outpu
         agent_node.output_text.as_deref(),
         Some("implemented feature")
     );
-    assert_eq!(run.output_text.as_deref(), Some("implemented feature"));
+    assert!(agent_requests[0].prompt.contains(&format!(
+        ".vibe-kanban/workflows/{}/handoffs/{}.json",
+        run.id, agent_node.id
+    )));
+    assert_ne!(agent_node.id, execution_process_id);
+    assert_eq!(
+        accepted_delivery_contents(&pool, run.id, agent_node.id).await,
+        vec!["implemented feature"]
+    );
+    assert_run_delivery(&pool, &run, "implemented feature").await;
 }
 
 #[tokio::test]
@@ -3626,6 +3896,7 @@ async fn workflow_reconcile_completed_agent_process_resumes_downstream_nodes() {
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
     let agent = AsyncThenCompleteAgentExecutor::new(
+        &pool,
         first_session_id,
         first_execution_process_id,
         second_session_id,
@@ -3670,6 +3941,20 @@ async fn workflow_reconcile_completed_agent_process_resumes_downstream_nodes() {
     assert_eq!(requests[1].node_id, "agent-b");
     assert!(requests[1].prompt.contains("# Workflow Agent Envelope"));
     assert!(requests[1].prompt.contains("Agent B prompt"));
+    let first_node = reconciled
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "agent-a")
+        .unwrap();
+    assert!(requests[1].prompt.contains(&format!(
+        ".vibe-kanban/workflows/{}/handoffs/{}.json",
+        running.id, first_node.id
+    )));
+    assert!(!requests[1].prompt.contains("agent A done"));
+    assert_eq!(
+        accepted_delivery_contents(&pool, reconciled.id, first_node.id).await,
+        vec!["agent A done"]
+    );
     assert_eq!(reconciled.status, WorkflowRunStatus::Succeeded);
     assert_eq!(
         node_status(&reconciled.nodes, "agent-a"),
@@ -3683,6 +3968,7 @@ async fn workflow_reconcile_completed_agent_process_resumes_downstream_nodes() {
         node_status(&reconciled.nodes, "end"),
         NodeExecutionStatus::Succeeded
     );
+    assert_run_delivery(&pool, &reconciled, "agent B done").await;
 }
 
 #[tokio::test]
@@ -3771,7 +4057,7 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
     .expect("insert fan-in workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "reviewed branch");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "reviewed branch");
 
     let run = trigger_workflow_run(
         &pool,
@@ -3803,7 +4089,32 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
             .prompt
             .contains("Review the current worktree.")
     );
-    assert_eq!(agent_requests[0].prompt, agent_requests[1].prompt);
+    assert_eq!(
+        agent_requests[0]
+            .prompt
+            .split("\n\n## Required file delivery\n")
+            .next(),
+        agent_requests[1]
+            .prompt
+            .split("\n\n## Required file delivery\n")
+            .next()
+    );
+    assert_ne!(agent_requests[0].prompt, agent_requests[1].prompt);
+    for request in &agent_requests {
+        let execution = run
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "review" && node.iteration == request.iteration)
+            .unwrap();
+        assert!(request.prompt.contains(&format!(
+            ".vibe-kanban/workflows/{}/handoffs/{}.json",
+            run.id, execution.id
+        )));
+        assert_eq!(
+            accepted_delivery_contents(&pool, run.id, execution.id).await,
+            vec!["reviewed branch"]
+        );
+    }
 
     let review_iterations = run
         .nodes
@@ -3846,7 +4157,7 @@ async fn workflow_human_gate_sets_run_awaiting_human() {
     .expect("insert human workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "should not run yet");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "should not run yet");
 
     let run = trigger_workflow_run(
         &pool,
@@ -3900,7 +4211,7 @@ async fn workflow_arena_node_creates_group_and_waits_for_winner() {
     .expect("insert arena workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent should not run");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent should not run");
     let arena = FakeArenaCreator::new(arena_group_id);
 
     let run = trigger_workflow_run_with_arena(
@@ -3936,7 +4247,21 @@ async fn workflow_arena_node_creates_group_and_waits_for_winner() {
     let arena_input = arena_node.input_text.as_deref().expect("arena input text");
     assert!(arena_input.contains("# Workflow Agent Envelope"));
     assert!(arena_input.contains("- Type: Arena step"));
-    assert!(arena_input.contains("Implement candidates from Plan: Build draw-more workflow"));
+    assert!(arena_input.contains("Implement candidates from Source execution:"));
+    let plan = run
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "plan")
+        .unwrap();
+    assert!(arena_input.contains(&format!(
+        ".vibe-kanban/workflows/{}/handoffs/{}.json",
+        run.id, plan.id
+    )));
+    assert!(!arena_input.contains("Plan: Build draw-more workflow"));
+    assert_eq!(
+        accepted_delivery_contents(&pool, run.id, plan.id).await,
+        vec!["Plan: Build draw-more workflow"]
+    );
 
     let arena_requests = arena.requests();
     assert_eq!(arena_requests.len(), 1);
@@ -4007,7 +4332,7 @@ async fn workflow_arena_winner_selection_applies_winner_and_resumes_downstream_n
     .expect("insert arena workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent should not run");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent should not run");
     let arena = FakeArenaCreator::new(arena_group_id);
     let winner = FakeArenaWinnerApplier::succeeds("Winner applied from Candidate B");
 
@@ -4049,10 +4374,7 @@ async fn workflow_arena_winner_selection_applies_winner_and_resumes_downstream_n
         node_status(&completed.nodes, "end"),
         NodeExecutionStatus::Succeeded
     );
-    assert_eq!(
-        completed.output_text.as_deref(),
-        Some("Winner applied from Candidate B")
-    );
+    assert_run_delivery(&pool, &completed, "Winner applied from Candidate B").await;
 
     let arena_node = completed
         .nodes
@@ -4062,6 +4384,10 @@ async fn workflow_arena_winner_selection_applies_winner_and_resumes_downstream_n
     assert_eq!(
         arena_node.output_text.as_deref(),
         Some("Winner applied from Candidate B")
+    );
+    assert_eq!(
+        accepted_delivery_contents(&pool, completed.id, arena_node.id).await,
+        vec!["Winner applied from Candidate B"]
     );
 
     let requests = winner.requests();
@@ -4099,7 +4425,7 @@ async fn workflow_arena_winner_apply_failure_fails_run_with_conflict_text() {
     .expect("insert arena workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent should not run");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent should not run");
     let arena = FakeArenaCreator::new(arena_group_id);
     let winner = FakeArenaWinnerApplier::fails("winner diff conflict in src/main.rs");
 
@@ -4174,7 +4500,7 @@ async fn workflow_arena_winner_selection_requires_awaiting_arena_node() {
     .expect("insert arena workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "agent should not run");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "agent should not run");
     let arena = FakeArenaCreator::new(arena_group_id);
     let winner = FakeArenaWinnerApplier::succeeds("Winner should not apply");
 
@@ -4247,7 +4573,7 @@ async fn workflow_human_approve_resumes_downstream_nodes() {
     .expect("insert human workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "approved implementation");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "approved implementation");
 
     let run = trigger_workflow_run(
         &pool,
@@ -4280,11 +4606,22 @@ async fn workflow_human_approve_resumes_downstream_nodes() {
     assert_eq!(agent.requests().len(), 1);
     let approved_prompt = agent.requests()[0].prompt.clone();
     assert!(approved_prompt.contains("# Workflow Agent Envelope"));
-    assert!(approved_prompt.contains("After approval: Ship the plan"));
+    assert!(approved_prompt.contains("After approval: Source execution:"));
+    let gate = resumed
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "gate")
+        .unwrap();
+    assert!(approved_prompt.contains(&format!(
+        ".vibe-kanban/workflows/{}/handoffs/{}.json",
+        resumed.id, gate.id
+    )));
+    assert!(!approved_prompt.contains("Ship the plan"));
     assert_eq!(
-        resumed.output_text.as_deref(),
-        Some("approved implementation")
+        accepted_delivery_contents(&pool, resumed.id, gate.id).await,
+        vec!["Ship the plan"]
     );
+    assert_run_delivery(&pool, &resumed, "approved implementation").await;
 }
 
 #[tokio::test]
@@ -4311,7 +4648,7 @@ async fn workflow_human_reject_fails_run() {
     .expect("insert human workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "should not run");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "should not run");
 
     let run = trigger_workflow_run(
         &pool,
@@ -4445,7 +4782,7 @@ async fn standalone_agent_retry_is_rejected_without_resetting_historical_executi
     .expect("insert agent workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FailOnceAgentExecutor::new(session_id, "retry succeeded");
+    let agent = FailOnceAgentExecutor::new(&pool, session_id, "retry succeeded");
 
     let failed = trigger_workflow_run(
         &pool,
@@ -4507,7 +4844,7 @@ async fn standalone_transform_retry_never_falls_back_to_a_mutated_publication() 
     .expect("insert transform workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "unused");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "unused");
 
     let failed = trigger_workflow_run(
         &pool,
@@ -4601,7 +4938,7 @@ async fn workflow_retry_rejects_run_without_immutable_snapshot() {
         &pool,
         run_id,
         "transform",
-        &FakeAgentExecutor::new(Uuid::new_v4(), "unused"),
+        &FakeAgentExecutor::new(&pool, Uuid::new_v4(), "unused"),
     )
     .await;
 
@@ -4635,7 +4972,7 @@ async fn workflow_run_rejects_condition_without_router_config() {
     .expect("insert condition workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "unused");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "unused");
 
     let result = trigger_workflow_run(
         &pool,
@@ -4849,7 +5186,7 @@ async fn workflow_events_records_run_and_node_status_changes() {
     .expect("insert human workflow");
 
     let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
-    let agent = FakeAgentExecutor::new(session_id, "approved implementation");
+    let agent = FakeAgentExecutor::new(&pool, session_id, "approved implementation");
     let run = trigger_workflow_run(
         &pool,
         workflow_id,

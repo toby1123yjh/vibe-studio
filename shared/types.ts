@@ -50,6 +50,22 @@ files: Array<WorkflowFileChange>, collection_status: WorkflowFileCollectionStatu
  */
 reasons: Array<string>, };
 
+export type WorkflowFileReferenceView = { path: string, sha256: string, };
+
+export type WorkflowHandoffView = { node_execution_id: string, run_id: string, handoff_path: string, files: Array<WorkflowFileReferenceView>, };
+
+export type WorkflowHandoverView = { state: string, session_id: string, agent_run_id: string | null, run_attempt_id: string | null, error_text: string | null, };
+
+export type WorkflowSplitSubtaskView = { id: string, subtask_id: string, title: string, instruction_path: string, node_id: string | null, stage_index: number, state: string, depends_on: Array<string>, node_execution_id: string | null, session_id: string | null, agent_run_id: string | null, error_text: string | null, handoff_path: string | null, };
+
+export type WorkflowSplitBatchView = { id: string, run_id: string, node_execution_id: string, splitter_node_id: string, summary_node_id: string, manifest_path: string, manifest_sha256: string, dispatch_path: string | null, state: string, source_batch_id: string | null, summary_node_execution_id: string | null, error_text: string | null, handover: WorkflowHandoverView | null, subtasks: Array<WorkflowSplitSubtaskView>, };
+
+export type WorkflowMissingSubtaskView = { subtask_id: string, title: string, state: string, reason: string | null, };
+
+export type WorkflowDeliveryCompleteness = "full" | "partial";
+
+export type WorkflowDeliveryView = { completeness: WorkflowDeliveryCompleteness, source_run_id: string | null, source_batch_id: string | null, missing_subtasks: Array<WorkflowMissingSubtaskView>, };
+
 export type WorkflowExternalAccessRequest = { enabled: boolean, };
 
 export type RespondWorkflowNodeRequest = { node_execution_id: string, message: string | null, };
@@ -78,9 +94,17 @@ export type WorkflowSubmissionAction = "start" | "retry" | "rework";
 
 export type WorkflowActivePolicy = "after_current" | "stop_then_run";
 
-export type WorkflowSubmission = { request_id: string, action: WorkflowSubmissionAction, input_text?: string, material_paths: Array<string>, source_run_id?: string, source_node_execution_id?: string, scope: WorkflowSubmissionScope, active_policy?: WorkflowActivePolicy, source_message_id?: string, };
+export type WorkflowSubmission = { request_id: string, action: WorkflowSubmissionAction, input_text?: string, material_paths: Array<string>, source_run_id?: string, source_node_execution_id?: string, scope: WorkflowSubmissionScope, active_policy?: WorkflowActivePolicy, source_message_id?: string, delivery_intent?: WorkflowDeliveryCompleteness, source_batch_id?: string, };
 
 export type AcceptedWorkflowSubmission = { request_id: string, project_id: string, issue_id: string, instance_id: string, run_id: string, phase: string, };
+
+export type WorkflowDispatchRequest = { request_id: string, batch_id: string,
+/**
+ * Project-relative path to the dispatch.json written by the main Agent.
+ */
+dispatch_path: string, };
+
+export type AcceptedWorkflowDispatch = { request_id: string, batch_id: string, run_id: string, assigned_count: number, stage_count: number, };
 
 export type WorkflowStopView = { run_id: string, instance_id: string, status: WorkflowRunStatus, stop_status: WorkflowStopStatus, affected_run_ids: Array<string>, unresolved_source_run_ids: Array<string>, };
 
@@ -407,7 +431,7 @@ reused_results: Array<WorkflowReuseView>, };
 
 export type WorkflowRunRuntimeView = { run_id: string, status: WorkflowRunStatus, active_node_count: number, pending_node_count: number, waiting_node_count: number, failed_node_count: number, completed_node_count: number, reused_node_count: number, skipped_node_count: number, node_work: Array<WorkflowNodeWorkView>, };
 
-export type WorkflowRunResponse = { id: string, orchestration_run_id: string | null, workflow_id: string, attempt_id: string | null, task_id: string, workspace_id: string | null, trigger_source: string, input_text: string, output_text: string | null, status: WorkflowRunStatus, started_at: string | null, finished_at: string | null, error_text: string | null, created_at: string, updated_at: string, nodes: Array<WorkflowNodeExecutionResponse>, runtime_view?: WorkflowRunRuntimeView, queue_phase?: string, };
+export type WorkflowRunResponse = { id: string, orchestration_run_id: string | null, workflow_id: string, attempt_id: string | null, task_id: string, workspace_id: string | null, trigger_source: string, input_text: string, output_text: string | null, status: WorkflowRunStatus, started_at: string | null, finished_at: string | null, error_text: string | null, created_at: string, updated_at: string, nodes: Array<WorkflowNodeExecutionResponse>, split_batches: Array<WorkflowSplitBatchView>, handoffs: Array<WorkflowHandoffView>, delivery: WorkflowDeliveryView | null, request_path: string | null, runtime_view?: WorkflowRunRuntimeView, queue_phase?: string, };
 
 export type WorkflowNodeExecutionResponse = { id: string, run_id: string, execution_id: string | null, node_id: string, node_type: string, iteration: bigint, status: NodeExecutionStatus, input_text: string | null, output_text: string | null, session_id: string | null, orchestration_node_execution_id: string | null, agent_run_id: string | null, projection_status: ProjectionStatus | null, execution_process_id: string | null, arena_group_id: string | null, tokens_used: bigint | null, cost_estimate: number | null, started_at: string | null, finished_at: string | null, error_text: string | null, created_at: string, updated_at: string, };
 
@@ -684,6 +708,8 @@ export type WorkspaceFileDirectoryResponse = { workspace_id: string, repo_id: st
 export type WorkspaceFileContentKind = "text" | "image" | "binary" | "unsupported";
 
 export type WorkspaceFileContent = { workspace_id: string, repo_id: string, repo_name: string, path: string, name: string, kind: WorkspaceFileContentKind, mime_type: string | null, language: string | null, content: string | null, raw_url: string | null, size_bytes: bigint, truncated: boolean, };
+
+export type WorkflowFileContent = { run_id: string, workspace_id: string, path: string, name: string, kind: WorkspaceFileContentKind, mime_type: string | null, language: string | null, content: string | null, raw_url: string | null, size_bytes: number, truncated: boolean, };
 
 export type WorkspaceRepoInput = { repo_id: string, target_branch: string, };
 

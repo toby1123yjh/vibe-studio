@@ -332,8 +332,16 @@ impl LocalContainerService {
         let mut terminal_events = self.agent_run_port.subscribe_terminal_events();
         let container = self.clone();
         tokio::spawn(async move {
+            container.recover_reserved_queued_follow_ups().await;
+            let mut retry_tick = tokio::time::interval(Duration::from_secs(2));
+            retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                match terminal_events.recv().await {
+                tokio::select! {
+                    _ = retry_tick.tick() => {
+                        container.recover_reserved_queued_follow_ups().await;
+                        container.reconcile_queued_follow_ups().await;
+                    },
+                    received = terminal_events.recv() => match received {
                     Ok(event) => container.handle_agent_run_terminal(event).await,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(
@@ -342,9 +350,111 @@ impl LocalContainerService {
                         );
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    },
                 }
             }
         });
+    }
+
+    async fn recover_reserved_queued_follow_ups(&self) {
+        let pending = match reserved_queued_follow_ups(&self.db.pool).await {
+            Ok(pending) => pending,
+            Err(error) => {
+                tracing::error!(%error, "failed to load accepted queued follow-ups for recovery");
+                return;
+            }
+        };
+        for (agent_run_id, session_id) in pending {
+            let _session_guard = self.queued_message_service.lock_session(session_id).await;
+            // Recheck after the Session lock: a user stop or another launch may
+            // have settled this reservation since the initial scan.
+            if !reserved_queued_follow_ups(&self.db.pool)
+                .await
+                .is_ok_and(|current| current.contains(&(agent_run_id, session_id)))
+            {
+                continue;
+            }
+            let latest: Result<Option<Uuid>, sqlx::Error> = sqlx::query_scalar(
+                "SELECT id FROM agent_runs WHERE session_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+            ).bind(session_id).fetch_optional(&self.db.pool).await;
+            match latest {
+                Ok(Some(id)) if id == agent_run_id => {}
+                Ok(Some(_)) => {
+                    if let Err(error) = self
+                        .agent_run_port
+                        .fail_reserved(
+                            agent_run_id,
+                            "A newer Session Run superseded this queued launch".into(),
+                        )
+                        .await
+                    {
+                        tracing::warn!(%agent_run_id, %error, "superseded queued launch could not settle");
+                    }
+                    continue;
+                }
+                _ => continue,
+            }
+            let busy: Result<bool, sqlx::Error> = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM agent_runs r LEFT JOIN agent_run_state s ON s.agent_run_id=r.id WHERE r.session_id=? AND r.id<>? AND (s.agent_run_id IS NULL OR s.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed')))",
+            ).bind(session_id).bind(agent_run_id).fetch_one(&self.db.pool).await;
+            if !matches!(busy, Ok(false)) {
+                continue;
+            }
+            let attempts: Result<Vec<Uuid>, sqlx::Error> = sqlx::query_scalar(
+                "SELECT a.id FROM agent_run_attempts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.session_id=? AND r.id<>?",
+            ).bind(session_id).bind(agent_run_id).fetch_all(&self.db.pool).await;
+            let Ok(attempts) = attempts else {
+                continue;
+            };
+            let mut settled = true;
+            for attempt_id in attempts {
+                if !matches!(
+                    self.agent_run_port
+                        .reconcile_terminal_process(attempt_id)
+                        .await,
+                    Ok(true)
+                ) {
+                    settled = false;
+                    break;
+                }
+            }
+            if !settled {
+                continue;
+            }
+            if let Err(error) = self.agent_run_port.launch_reserved(agent_run_id).await {
+                tracing::warn!(%agent_run_id, %error, "accepted queued follow-up could not resume its original launch");
+                // A rejected workspace/preflight must become a visible failure,
+                // rather than a forever-pending Session or automatic new Run.
+                if let Err(failure) = self
+                    .agent_run_port
+                    .fail_reserved(agent_run_id, error.to_string())
+                    .await
+                {
+                    tracing::warn!(%agent_run_id, %failure, "queued launch outcome requires reconciliation");
+                }
+            }
+        }
+    }
+
+    async fn reconcile_queued_follow_ups(&self) {
+        for session_id in self.queued_message_service.queued_session_ids() {
+            let latest: Result<Option<Uuid>, sqlx::Error> = sqlx::query_scalar(
+                "SELECT id FROM agent_runs WHERE session_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+            ).bind(session_id).fetch_optional(&self.db.pool).await;
+            let Ok(Some(agent_run_id)) = latest else {
+                continue;
+            };
+            if let Ok(snapshot) = self.agent_run_port.query(agent_run_id).await
+                && snapshot.state.status == AgentRunStatus::Succeeded
+            {
+                self.handle_agent_run_terminal(AgentRunTerminalEvent {
+                    agent_run_id,
+                    session_id,
+                    status: AgentRunStatus::Succeeded,
+                })
+                .await;
+            }
+        }
     }
 
     async fn handle_agent_run_terminal(&self, event: AgentRunTerminalEvent) {
@@ -354,7 +464,7 @@ impl LocalContainerService {
             .queued_message_service
             .lock_session(event.session_id)
             .await;
-        let Some(queued_message) = self.queued_message_service.take_queued(event.session_id) else {
+        let Some(queued_message) = self.queued_message_service.get_queued(event.session_id) else {
             return;
         };
 
@@ -363,32 +473,63 @@ impl LocalContainerService {
                 agent_run_id = %event.agent_run_id,
                 session_id = %event.session_id,
                 status = ?event.status,
-                "discarding queued follow-up after unsuccessful canonical AgentRun"
+                "retaining queued follow-up after unsuccessful canonical AgentRun"
             );
             return;
         }
 
-        if let Err(error) =
-            Scratch::delete(&self.db.pool, event.session_id, &ScratchType::DraftFollowUp).await
-        {
-            tracing::warn!(
-                agent_run_id = %event.agent_run_id,
-                session_id = %event.session_id,
-                %error,
-                "failed to delete scratch before consuming queued follow-up"
-            );
+        // A terminal outcome may arrive before the provider and host exit.
+        // A delayed old event must also never start over a newer user turn.
+        let busy: Result<bool,sqlx::Error> = sqlx::query_scalar(
+            "SELECT NOT EXISTS(SELECT 1 FROM (SELECT id FROM agent_runs WHERE session_id=?1 ORDER BY created_at DESC,id DESC LIMIT 1) latest WHERE latest.id=?2) OR EXISTS(SELECT 1 FROM agent_runs r LEFT JOIN agent_run_state s ON s.agent_run_id=r.id WHERE r.session_id=?1 AND (s.agent_run_id IS NULL OR s.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed')))",
+        ).bind(event.session_id).bind(event.agent_run_id).fetch_one(&self.db.pool).await;
+        if !matches!(busy, Ok(false)) {
+            return;
+        }
+        let attempts: Result<Vec<Uuid>,sqlx::Error> = sqlx::query_scalar(
+            "SELECT a.id FROM agent_run_attempts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.session_id=?",
+        ).bind(event.session_id).fetch_all(&self.db.pool).await;
+        let Ok(attempts) = attempts else {
+            return;
+        };
+        if attempts.is_empty() {
+            return;
+        }
+        for attempt_id in attempts {
+            if !matches!(
+                self.agent_run_port
+                    .reconcile_terminal_process(attempt_id)
+                    .await,
+                Ok(true)
+            ) {
+                return;
+            }
         }
 
         match self
             .start_queued_follow_up(event.session_id, &queued_message.data)
             .await
         {
-            Ok(next_agent_run_id) => tracing::info!(
+            Ok(next_agent_run_id) => {
+                self.queued_message_service.take_queued(event.session_id);
+                if let Err(error) =
+                    Scratch::delete(&self.db.pool, event.session_id, &ScratchType::DraftFollowUp)
+                        .await
+                {
+                    tracing::warn!(session_id=%event.session_id, %error, "failed to delete consumed follow-up draft");
+                }
+                // The message is now a durable canonical Run. A lost launch
+                // response must not put it back into the queue with a new ID.
+                if let Err(error) = self.agent_run_port.launch_reserved(next_agent_run_id).await {
+                    tracing::warn!(agent_run_id=%next_agent_run_id, %error, "queued follow-up was accepted but launch needs reconciliation");
+                }
+                tracing::info!(
                 agent_run_id = %event.agent_run_id,
                 next_agent_run_id = %next_agent_run_id,
                 session_id = %event.session_id,
                 "started queued follow-up after canonical AgentRun completion"
-            ),
+                );
+            }
             Err(error) => tracing::error!(
                 agent_run_id = %event.agent_run_id,
                 session_id = %event.session_id,
@@ -995,7 +1136,8 @@ impl LocalContainerService {
         Ok(())
     }
 
-    /// Start a canonical AgentRun from a queued message.
+    /// Reserve a canonical AgentRun; the consumer moves the queue only after
+    /// acceptance and launches this exact identity afterwards.
     async fn start_queued_follow_up(
         &self,
         session_id: Uuid,
@@ -1065,10 +1207,35 @@ impl LocalContainerService {
         .map_err(|error| ContainerError::Other(anyhow!(error)))?;
 
         self.agent_run_port
-            .create(request, attempt)
+            .reserve(request, attempt)
             .await
             .map_err(|error| ContainerError::Other(anyhow!(error)))
     }
+}
+
+/// Only an accepted queued User turn with an untouched process reservation is
+/// eligible. Setup gates, System handovers, handed-off or unknown hosts and
+/// issued MCP credentials belong to their existing recovery owners.
+async fn reserved_queued_follow_ups(pool: &SqlitePool) -> Result<Vec<(Uuid, Uuid)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT r.id, r.session_id
+        FROM agent_runs r
+        JOIN agent_run_state s ON s.agent_run_id=r.id
+        JOIN agent_run_attempts a ON a.agent_run_id=r.id
+        JOIN agent_process_registry p ON p.run_attempt_id=a.id
+        WHERE s.status='pending' AND a.status='pending'
+          AND r.idempotency_key LIKE 'session:%:request:%:queued'
+          AND json_extract(r.request_envelope, '$.input.role')='user'
+          AND p.registry_status='reserved'
+          AND p.host_endpoint IS NULL AND p.host_token IS NULL
+          AND p.host_pid IS NULL AND p.pid IS NULL
+          AND p.host_instance_id IS NULL AND p.process_started_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM agent_run_launch_gates g WHERE g.agent_run_id=r.id)
+          AND NOT EXISTS(SELECT 1 FROM workflow_main_session_bindings b WHERE b.actual_main_agent_run_id=r.id)
+        ORDER BY r.created_at,r.id
+        "#,
+    ).fetch_all(pool).await
 }
 
 fn build_queued_agent_run_requests(
@@ -2036,6 +2203,103 @@ mod tests {
             assert_eq!(request.workspace.mode, expected_mode);
             assert_eq!(attempt.workspace.mode, expected_mode);
         }
+    }
+
+    #[tokio::test]
+    async fn queued_reservation_recovery_keeps_original_identity_and_excludes_other_launch_owners()
+    {
+        use db::models::agent_runtime::AgentRunRecord;
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("../db/migrations").run(&pool).await.unwrap();
+        let workspace = runtime_workspace(WorkspaceKind::DirectFolder);
+        let session_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO workspaces(id,container_ref,workspace_kind,container_ownership,branch) VALUES (?,'fixture','direct_folder','external','direct-folder')")
+            .bind(workspace.id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO sessions(id,workspace_id,executor) VALUES (?,?,'CODEX')")
+            .bind(session_id)
+            .bind(workspace.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (request, attempt) = build_queued_agent_run_requests(
+            session_id,
+            &workspace,
+            "fixture".into(),
+            &queued_follow_up_data(),
+            None,
+        )
+        .unwrap();
+        AgentRunRecord::persist_identity_before_launch(&pool, &request, &attempt)
+            .await
+            .unwrap();
+        let expected = vec![(request.agent_run_id, session_id)];
+        assert_eq!(reserved_queued_follow_ups(&pool).await.unwrap(), expected);
+        assert_eq!(
+            reserved_queued_follow_ups(&pool).await.unwrap(),
+            expected,
+            "scans cannot allocate another identity"
+        );
+        sqlx::query(
+            "INSERT INTO agent_run_launch_gates(agent_run_id,setup_action) VALUES (?,'{}')",
+        )
+        .bind(request.agent_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            reserved_queued_follow_ups(&pool).await.unwrap().is_empty(),
+            "setup gates have a separate recovery owner"
+        );
+        sqlx::query("DELETE FROM agent_run_launch_gates WHERE agent_run_id=?")
+            .bind(request.agent_run_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE agent_process_registry SET host_endpoint='endpoint',host_token='token' WHERE run_attempt_id=?")
+            .bind(attempt.run_attempt_id).execute(&pool).await.unwrap();
+        assert!(
+            reserved_queued_follow_ups(&pool).await.unwrap().is_empty(),
+            "an accepted host handoff must attach, never respawn"
+        );
+        sqlx::query("UPDATE agent_process_registry SET host_endpoint=NULL,host_token=NULL WHERE run_attempt_id=?")
+            .bind(attempt.run_attempt_id).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE agent_runs SET request_envelope=json_set(request_envelope,'$.input.role','system') WHERE id=?")
+            .bind(request.agent_run_id).execute(&pool).await.unwrap();
+        assert!(
+            reserved_queued_follow_ups(&pool).await.unwrap().is_empty(),
+            "System handover has its own durable event"
+        );
+        sqlx::query("UPDATE agent_runs SET request_envelope=json_set(request_envelope,'$.input.role','user'),idempotency_key='ordinary-user-run' WHERE id=?")
+            .bind(request.agent_run_id).execute(&pool).await.unwrap();
+        assert!(
+            reserved_queued_follow_ups(&pool).await.unwrap().is_empty(),
+            "a pending state alone does not authorize recovery"
+        );
+        sqlx::query("UPDATE agent_runs SET idempotency_key=? WHERE id=?")
+            .bind(&request.idempotency_key)
+            .bind(request.agent_run_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE agent_run_state SET status='cancelled' WHERE agent_run_id=?")
+            .bind(request.agent_run_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            reserved_queued_follow_ups(&pool).await.unwrap().is_empty(),
+            "stopped reservations cannot be revived"
+        );
+        let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_runs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(runs, 1);
     }
 
     #[tokio::test]

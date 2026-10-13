@@ -55,6 +55,19 @@ export const WORKFLOW_NODE_SCHEMAS: Record<
       },
     ],
   },
+  task_splitter: {
+    type: 'task_splitter',
+    label: 'Task Splitter',
+    fields: [
+      { key: 'display_name', type: 'text', label: 'Task title' },
+      {
+        key: 'prompt_template',
+        type: 'textarea',
+        label: 'Split instructions',
+        rows: 5,
+      },
+    ],
+  },
   condition: {
     type: 'condition',
     label: 'Condition',

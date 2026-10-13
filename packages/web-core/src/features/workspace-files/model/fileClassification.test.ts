@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceFileContent } from 'shared/types';
-import { classifyWorkspaceFile } from './fileClassification';
+import { classifyWorkspaceFile } from '@/shared/lib/fileClassification';
 
 function content(
   overrides: Partial<WorkspaceFileContent>

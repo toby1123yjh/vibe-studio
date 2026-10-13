@@ -18,6 +18,8 @@ pub mod tag;
 pub mod task;
 pub mod workflow;
 pub mod workflow_file_changes;
+pub mod workflow_files;
+pub mod workflow_handover;
 pub mod workflow_management;
 pub mod workflow_queue;
 pub mod workspace;

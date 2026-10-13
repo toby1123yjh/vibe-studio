@@ -99,6 +99,9 @@ pub struct ArenaWinnerRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArenaWinnerExecution {
     pub output_text: String,
+    /// Readable, applied files relative to the main Agent working directory.
+    /// Deleted paths are changes, but cannot be handed to a file consumer.
+    pub artifact_paths: Vec<String>,
 }
 
 #[async_trait]
@@ -831,6 +834,9 @@ async fn apply_deployment_arena_winner(
 
     let mut changed_files = 0usize;
     let mut changed_repos = Vec::new();
+    let mut artifact_paths = Vec::new();
+    let control_root = super::runner::workflow_control_root(pool, main_workspace.id).await?;
+    let canonical_control_root = tokio::fs::canonicalize(&control_root).await?;
 
     for main_repo in &main_repos {
         let winner_repo = winner_by_repo_id.get(&main_repo.repo.id).ok_or_else(|| {
@@ -860,6 +866,27 @@ async fn apply_deployment_arena_winner(
         deployment.git().apply_patch(&main_repo_path, &patch)?;
         changed_files += file_paths.len();
         changed_repos.push(main_repo.repo.name.clone());
+        for relative in file_paths {
+            let path = main_repo_path.join(&relative);
+            // Git deletions and symlinks outside the workspace are not readable
+            // deliverables. Report file changes separately from this index.
+            if let Ok(path) = tokio::fs::canonicalize(path).await {
+                if path.starts_with(&canonical_control_root)
+                    && tokio::fs::metadata(&path).await?.is_file()
+                {
+                    artifact_paths.push(
+                        path.strip_prefix(&canonical_control_root)
+                            .map_err(|_| {
+                                ApiError::BadRequest(
+                                    "Arena artifact is outside its workspace".into(),
+                                )
+                            })?
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
+                }
+            }
+        }
     }
 
     mark_arena_winner(pool, request.arena_group_id, &candidate).await?;
@@ -894,7 +921,12 @@ async fn apply_deployment_arena_winner(
         )
         .await;
 
-    Ok(ArenaWinnerExecution { output_text })
+    artifact_paths.sort();
+    artifact_paths.dedup();
+    Ok(ArenaWinnerExecution {
+        output_text,
+        artifact_paths,
+    })
 }
 
 async fn arena_candidate_run_state(

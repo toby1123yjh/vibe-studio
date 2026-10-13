@@ -100,6 +100,7 @@ pub fn validate_graph(graph: &WorkflowGraph) -> Result<ValidatedGraph, Validatio
     let adjacency = adjacency_map(graph);
     reject_duplicate_condition_targets(graph)?;
     reject_cycles(graph, &adjacency)?;
+    crate::dispatch::dispatch_scopes(graph).map_err(ValidationError::new)?;
 
     let start_node_id = start_nodes[0].id.as_str();
     let reachable = reachable_nodes(start_node_id, &adjacency);

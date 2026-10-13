@@ -1,5 +1,6 @@
 import {
   Bot,
+  ListTree,
   GitBranch,
   Layers,
   Play,
@@ -14,6 +15,7 @@ const NODE_ICONS: Record<WorkflowNodeKind, LucideIcon> = {
   start: Play,
   end: Square,
   agent: Bot,
+  task_splitter: ListTree,
   condition: GitBranch,
   human_gate: User,
   transform: Layers,

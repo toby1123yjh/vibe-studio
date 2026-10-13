@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   type DragEvent,
   type MouseEvent,
@@ -304,7 +305,9 @@ const BaseNode = ({ id, data, type, selected }: BaseNodeProps) => {
   const issueCount = validationIssues.length;
   const structural = nodeKind === 'start' || nodeKind === 'end';
   const agentDisplay =
-    nodeKind === 'agent' ? getWorkflowAgentDisplay(data) : null;
+    nodeKind === 'agent' || nodeKind === 'task_splitter'
+      ? getWorkflowAgentDisplay(data)
+      : null;
   const authoringCardClasses = cn(
     WORKFLOW_CANVAS_NODE_SURFACE_CLASSES.card,
     'border-secondary',
@@ -542,6 +545,7 @@ const nodeTypes = {
   start: BaseNode,
   end: BaseNode,
   agent: BaseNode,
+  task_splitter: BaseNode,
   condition: BaseNode,
   human_gate: BaseNode,
   transform: BaseNode,
@@ -888,7 +892,7 @@ export function WorkflowCanvas({
   graph,
   validationIssues = EMPTY_VALIDATION_ISSUES,
   selectedNodeId,
-  selectedNodeIds = selectedNodeId ? [selectedNodeId] : [],
+  selectedNodeIds: explicitSelectedNodeIds,
   selectedEdgeId,
   readOnly = false,
   onChange,
@@ -906,6 +910,10 @@ export function WorkflowCanvas({
   onEdgeDelete,
   onNodeContextMenu,
 }: WorkflowCanvasProps) {
+  const selectedNodeIds = useMemo(
+    () => explicitSelectedNodeIds ?? (selectedNodeId ? [selectedNodeId] : []),
+    [explicitSelectedNodeIds, selectedNodeId]
+  );
   const { effectiveTheme } = useTheme();
   const reducedMotion = useReducedMotion();
   const { t } = useTranslation('common');
@@ -1143,13 +1151,7 @@ export function WorkflowCanvas({
       });
       return changed ? next : current;
     });
-  }, [
-    selectedEdgeId,
-    selectedNodeId,
-    selectedNodeIds.join('|'),
-    setNodes,
-    setEdges,
-  ]);
+  }, [selectedEdgeId, selectedNodeId, selectedNodeIds, setNodes, setEdges]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<WorkflowCanvasFlowNode>[]) => {

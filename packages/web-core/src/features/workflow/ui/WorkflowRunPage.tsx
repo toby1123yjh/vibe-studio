@@ -151,6 +151,14 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
                   })
                 : t(`workflow.runStatus.${workflowNodeStatusKey(run.status)}`)}
             </span>
+            {run.delivery?.completeness === 'partial' ? (
+              <span
+                className="rounded bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                data-testid="workflow-partial-delivery"
+              >
+                {t('workflow.split.partialDelivery')}
+              </span>
+            ) : null}
             <span className="text-xs text-low">
               {t('workflow.runPage.progress', {
                 completed: summary.completedSteps,
@@ -184,7 +192,7 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <WorkflowRunResult key={run.id} run={run} />
+          <WorkflowRunResult key={run.id} run={run} projectId={projectId} />
           {showCancel ? (
             <Button
               type="button"

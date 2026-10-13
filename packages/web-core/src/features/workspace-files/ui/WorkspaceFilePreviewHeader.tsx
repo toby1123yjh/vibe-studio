@@ -16,16 +16,14 @@ import { useTheme } from '@/shared/hooks/useTheme';
 import { useOpenInEditor } from '@/shared/hooks/useOpenInEditor';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import type { WorkspaceFileContent } from 'shared/types';
-import type {
-  WorkspaceFileDisplayInfo,
-  WorkspaceFilePreviewTarget,
-} from '../model/types';
-import { scopeWorkspaceFileRawUrl } from '../model/workspaceFileRawUrl';
+import type { WorkspaceFilePreviewTarget } from '../model/types';
+import type { FileDisplayInfo } from '@/shared/lib/fileClassification';
+import { scopeWorkspaceFileRawUrl } from '@/shared/lib/workspaceFileRawUrl';
 
 interface WorkspaceFilePreviewHeaderProps {
   target: WorkspaceFilePreviewTarget;
   content?: WorkspaceFileContent | null;
-  displayInfo?: WorkspaceFileDisplayInfo | null;
+  displayInfo?: FileDisplayInfo | null;
   isRefreshing?: boolean;
   onRefresh: () => void;
   onClearTarget?: () => void;

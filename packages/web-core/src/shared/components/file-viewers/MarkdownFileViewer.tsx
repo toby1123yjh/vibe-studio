@@ -2,7 +2,7 @@ import { MarkdownPreview } from '@/shared/components/MarkdownPreview';
 import { getActualTheme } from '@/shared/lib/theme';
 import { useTheme } from '@/shared/hooks/useTheme';
 
-interface MarkdownFileViewerProps {
+export interface MarkdownFileViewerProps {
   content: string;
 }
 

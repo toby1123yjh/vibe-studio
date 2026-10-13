@@ -42,6 +42,7 @@ pub mod ssh_session;
 pub mod tags;
 pub mod terminal;
 pub mod webrtc;
+pub mod workflow_files;
 pub mod workflow_management;
 pub mod workflows;
 pub mod workspaces;
@@ -67,6 +68,7 @@ pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
         .merge(git_import::router())
         .merge(integrations::admin_router())
         .merge(workflow_management::router())
+        .merge(workflow_files::router())
         .merge(events::router(&deployment))
         .merge(approvals::router())
         .merge(scratch::router(&deployment))

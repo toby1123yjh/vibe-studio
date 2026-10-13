@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::{
     arena::DeploymentWorkflowArenaCreator,
+    handover,
     management::{deliver_stop_intents, resolve_waiting_submissions},
     runner::{
         AgentRunReconciliationBoundary, DeploymentAgentRunReconciliationBoundary,
@@ -148,6 +149,9 @@ pub async fn tick(deployment: &DeploymentImpl) -> Result<(), ApiError> {
     let executor = DeploymentWorkflowAgentExecutor::new(deployment.clone());
     let arena = DeploymentWorkflowArenaCreator::new(deployment.clone());
     let boundary = DeploymentAgentRunReconciliationBoundary::new(deployment.clone());
+    // Schedule handover cleanup even if another child stop is unreachable.
+    // Workers consult the durable stop fence before doing any new work.
+    handover::process_pending(deployment).await?;
     deliver_stop_intents(
         pool,
         &DeploymentWorkflowRunCanceller::new(deployment.clone()),
@@ -175,7 +179,9 @@ pub async fn tick(deployment: &DeploymentImpl) -> Result<(), ApiError> {
             )
             .await?;
             sync_attempt_from_run(pool, &run).await?;
-            WorkflowQueueEntry::release_terminal(pool, id).await?;
+            if !handover::has_unsettled(pool, id).await? {
+                WorkflowQueueEntry::release_terminal(pool, id).await?;
+            }
             Ok(())
         }
         .await;

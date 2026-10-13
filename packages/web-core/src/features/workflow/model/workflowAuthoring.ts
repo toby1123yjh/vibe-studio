@@ -11,6 +11,10 @@ import {
   type WorkflowNodePosition,
 } from './workflowGraph';
 import { coerceWorkflowNodeExecutorConfig } from './workflowAgentNodeDraft';
+import {
+  getWorkflowSplitScopes,
+  type WorkflowSplitScopeIssueCode,
+} from './workflowSplitScope';
 
 export const WORKFLOW_SEMANTIC_HANDLE_IDS = {
   input: 'input',
@@ -60,7 +64,8 @@ export type WorkflowAuthoringIssueCode =
   | 'duplicate-connection'
   | 'required-field'
   | 'unconnected-branch'
-  | 'too-few-candidates';
+  | 'too-few-candidates'
+  | 'splitter-scope';
 
 export interface WorkflowAuthoringIssue {
   code: WorkflowAuthoringIssueCode;
@@ -68,6 +73,7 @@ export interface WorkflowAuthoringIssue {
   nodeId?: string;
   edgeId?: string;
   field?: string;
+  splitScopeCode?: WorkflowSplitScopeIssueCode;
 }
 
 export interface WorkflowIdFactory {
@@ -360,7 +366,7 @@ export function validateWorkflowAuthoringGraph(
         requiredIssue(node.id, 'display_name', 'Give this Node a title.')
       );
     }
-    if (node.type === 'agent') {
+    if (node.type === 'agent' || node.type === 'task_splitter') {
       if (!node.data.prompt_template?.trim()) {
         issues.push(
           requiredIssue(node.id, 'prompt_template', 'Add the Task prompt.')
@@ -456,6 +462,14 @@ export function validateWorkflowAuthoringGraph(
         field: 'attempts',
       });
     }
+  }
+  for (const issue of getWorkflowSplitScopes(graph).issues) {
+    issues.push({
+      code: 'splitter-scope',
+      nodeId: issue.nodeId,
+      splitScopeCode: issue.code,
+      message: issue.code,
+    });
   }
   return issues;
 }

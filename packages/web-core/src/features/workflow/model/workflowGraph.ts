@@ -31,6 +31,7 @@ export type WorkflowNodeKind =
   | 'start'
   | 'end'
   | 'agent'
+  | 'task_splitter'
   | 'condition'
   | 'human_gate'
   | 'transform'
@@ -42,6 +43,7 @@ const WORKFLOW_NODE_KINDS: readonly WorkflowNodeKind[] = [
   'start',
   'end',
   'agent',
+  'task_splitter',
   'condition',
   'human_gate',
   'transform',
@@ -272,6 +274,7 @@ const WORKFLOW_TIDY_NODE_SIZES = {
   start: { width: 140, height: 64 },
   end: { width: 140, height: 64 },
   agent: { width: 280, height: 150 },
+  task_splitter: { width: 300, height: 166 },
   condition: { width: 260, height: 132 },
   human_gate: { width: 260, height: 132 },
   transform: { width: 260, height: 132 },
@@ -285,6 +288,7 @@ const WORKFLOW_NODE_INITIAL_SIZES = {
   start: { width: 140, height: 64 },
   end: { width: 140, height: 64 },
   agent: { width: 232, height: 64 },
+  task_splitter: { width: 232, height: 72 },
   condition: { width: 232, height: 64 },
   human_gate: { width: 232, height: 64 },
   transform: { width: 232, height: 64 },
@@ -295,10 +299,11 @@ const WORKFLOW_TIDY_NODE_KIND_ORDER = {
   start: 0,
   condition: 1,
   agent: 2,
-  human_gate: 3,
-  transform: 4,
-  arena: 5,
-  end: 6,
+  task_splitter: 3,
+  human_gate: 4,
+  transform: 5,
+  arena: 6,
+  end: 7,
 } as const satisfies Record<WorkflowNodeKind, number>;
 
 export function normalizeWorkflowPortHandle(
@@ -598,7 +603,8 @@ export function migrateWorkflowGraph(
   graph: WorkflowGraph | LegacyWorkflowGraph
 ): WorkflowGraph {
   const canvas = normalizeWorkflowCanvas(graph.canvas);
-  const { canvas: _canvas, ...graphWithoutCanvas } = graph;
+  const graphWithoutCanvas = { ...graph };
+  delete graphWithoutCanvas.canvas;
   const migrated = {
     ...graphWithoutCanvas,
     version: WORKFLOW_GRAPH_VERSION,
@@ -844,7 +850,8 @@ export function fromReactFlowGraph(
   baseGraph?: WorkflowGraph
 ): WorkflowGraph {
   const canvas = normalizeWorkflowCanvas(baseGraph?.canvas);
-  const { canvas: _canvas, ...baseGraphWithoutCanvas } = baseGraph ?? {};
+  const baseGraphWithoutCanvas = { ...baseGraph };
+  delete baseGraphWithoutCanvas.canvas;
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const nextGraph = {
     ...baseGraphWithoutCanvas,

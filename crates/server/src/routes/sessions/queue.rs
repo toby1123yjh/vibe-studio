@@ -77,9 +77,14 @@ async fn cancel_queued_message(
     Extension(session): Extension<Session>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<QueueStatus>>, ApiError> {
+    let guard = deployment
+        .queued_message_service()
+        .lock_session(session.id)
+        .await;
     deployment
         .queued_message_service()
         .cancel_queued(session.id);
+    drop(guard);
 
     deployment
         .track_if_analytics_allowed(

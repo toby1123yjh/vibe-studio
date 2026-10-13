@@ -29,20 +29,6 @@ export interface WorkspaceFilePreviewTarget {
   sessionId?: string;
 }
 
-export type WorkspaceFileViewKind =
-  | 'code'
-  | 'text'
-  | 'markdown'
-  | 'image'
-  | 'unsupported';
-
-export interface WorkspaceFileDisplayInfo {
-  viewKind: WorkspaceFileViewKind;
-  language: string | null;
-  label: string;
-  isPreviewable: boolean;
-}
-
 export interface WorkspaceFileTreeNode {
   id: string;
   repoId: string;

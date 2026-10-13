@@ -20,6 +20,7 @@ use db::models::{
     workflow_file_changes::{
         WorkflowFileChangeSummary, WorkflowFileChanges, WorkflowFileCollectionStatus,
     },
+    workflow_files::{WorkflowDeliveryView, WorkflowHandoffView, WorkflowSplitBatchView},
     workspace_repo::CreateWorkspaceRepo,
 };
 use deployment::Deployment;
@@ -240,6 +241,12 @@ pub struct WorkflowRunResponse {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub nodes: Vec<WorkflowNodeExecutionResponse>,
+    #[serde(default)]
+    pub split_batches: Vec<WorkflowSplitBatchView>,
+    #[serde(default)]
+    pub handoffs: Vec<WorkflowHandoffView>,
+    pub delivery: Option<WorkflowDeliveryView>,
+    pub request_path: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub runtime_view: Option<WorkflowRunRuntimeView>,
@@ -1006,11 +1013,12 @@ pub async fn ensure_agent_node_sessions(
     graph: &mut WorkflowGraph,
 ) -> Result<bool, ApiError> {
     let mut changed = false;
-    for node in graph
-        .nodes
-        .iter_mut()
-        .filter(|node| node.kind == WorkflowNodeKind::Agent)
-    {
+    for node in graph.nodes.iter_mut().filter(|node| {
+        matches!(
+            node.kind,
+            WorkflowNodeKind::Agent | WorkflowNodeKind::TaskSplitter
+        )
+    }) {
         if node.data.session_id.is_some() {
             continue;
         }
@@ -1274,7 +1282,43 @@ pub async fn delete_issue_workflow_attempt(
         ));
     }
 
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let run_ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM workflow_runs WHERE attempt_id=? OR workflow_id=?")
+            .bind(attempt.id)
+            .bind(attempt.workflow_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    for run_id in run_ids {
+        if !crate::workflow_runtime::management::source_boundary_settled_in(&mut tx, run_id).await?
+        {
+            return Err(ApiError::Conflict("Stop all workflow Runs and wait for their real processes to exit before deleting this instance.".into()));
+        }
+    }
+    // Historical references are restrictive so a single source cannot vanish.
+    // Whole-instance deletion removes dependent records before their sources.
+    for query in [
+        "DELETE FROM workflow_run_deliveries WHERE run_id IN (SELECT id FROM workflow_runs WHERE attempt_id=? OR workflow_id=?)",
+        "DELETE FROM workflow_run_submissions WHERE run_id IN (SELECT id FROM workflow_runs WHERE attempt_id=? OR workflow_id=?)",
+        "DELETE FROM workflow_result_reuse WHERE run_id IN (SELECT id FROM workflow_runs WHERE attempt_id=? OR workflow_id=?)",
+        "UPDATE workflow_split_subtasks SET source_subtask_id=NULL WHERE batch_id IN (SELECT b.id FROM workflow_split_batches b JOIN workflow_runs r ON r.id=b.run_id WHERE r.attempt_id=? OR r.workflow_id=?)",
+        "UPDATE workflow_split_batches SET source_batch_id=NULL WHERE run_id IN (SELECT id FROM workflow_runs WHERE attempt_id=? OR workflow_id=?)",
+        "DELETE FROM workflow_split_batches WHERE run_id IN (SELECT id FROM workflow_runs WHERE attempt_id=? OR workflow_id=?)",
+    ] {
+        sqlx::query(query)
+            .bind(attempt.id)
+            .bind(attempt.workflow_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("DELETE FROM workflow_main_session_bindings WHERE workflow_id=?")
+        .bind(attempt.workflow_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM workflow_main_session_requests WHERE workflow_id=?")
+        .bind(attempt.workflow_id)
+        .execute(&mut *tx)
+        .await?;
 
     sqlx::query("UPDATE workflow_attempts SET latest_run_id = NULL WHERE id = ?")
         .bind(attempt.id)
@@ -1421,6 +1465,8 @@ pub async fn accept_workflow_attempt<W: WorkflowWorkspaceResolver>(
                 .latest_run_id
                 .map(|_| WorkflowActivePolicy::AfterCurrent),
             source_message_id: None,
+            delivery_intent: None,
+            source_batch_id: None,
         },
         Some(run_id),
         &request.trigger_source,

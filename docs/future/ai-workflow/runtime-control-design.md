@@ -3,6 +3,10 @@ title: 'Workflow 运行时控制设计'
 description: 'Workflow 调度职责、主 Agent 管理契约及实现与验证边界。'
 ---
 
+## 本次 P0 扩展设计入口
+
+2026-10-13 的新范围已集中到[工作流 P0 文档总览](./p0-file-driven-workflow/README.mdx)，包含需求、技术设计和实施与验收计划。整体方案已获批准，核心代码已落地，实际进度与验证结果在新目录维护。本文保留旧实现基线及验收记录，不再维护本次新增设计正文。拆分待分发事件是对下文旧“不自动唤醒”规则的限定扩展，普通通知仍不启动 Agent；新范围不沿用旧范围的验收结论。
+
 ## 已确认的方向
 
 2026-09-30 确认调度、调用入口与配置方向；2026-10-01 确认会话、聊天触发规则，以及 Issue 与工作流实例的一对一关系；2026-10-02 区分模板修改、实例配置修改与交付修改，并最终收敛为工作流实例首次受理执行后固定流程配置；2026-10-03 确认后台结果持久交回原主会话、离线时不自动启动 Agent，以及主 Agent 管理实例、判断重做范围和执行中追加要求的处理方式，运行时校验和执行的分工。
@@ -348,7 +352,7 @@ MCP 工具通过共用服务校验项目、Issue、实例、会话和允许调�
 
 局部重做的下游边界、结果交回范围及用户停止的依赖取消范围均已确认。主会话关联、作用域 MCP、通知、执行历史和停止衔接的契约已齐备；任务 PRD 已无损收敛并保留原验收编号，实施计划和上下文清单已核对。整体方案已于 2026-10-03 获最新明确批准，不再追加零碎产品确认。新的执行记录不等于支持画布环形连线；若后续需要图内循环，仍须另行说明每轮输入输出、执行身份、恢复和取消，不能只删除环检测。
 
-开发机实施依据见 [任务 PRD](../../../.trellis/tasks/09-24-project-workflow-integration/prd.md)、[技术设计](../../../.trellis/tasks/09-24-project-workflow-integration/design.md)、[实施与验收计划](../../../.trellis/tasks/09-24-project-workflow-integration/implement.md) 和 [管理契约](../../../.trellis/spec/workflow/backend/workflow-management-contracts.md)。`.trellis/` 按仓库规则保留本地、不发布；远程读者可通过本文链接的生产代码和测试核对。管理迁移已新增绑定、来源引用、停止意图与通知等持久结构，但没有新增循环协议或脚本引擎。
+此前开发机实施依据见 [历史任务 PRD](../../../.trellis/tasks/09-24-project-workflow-integration/prd.md)、[历史技术设计](../../../.trellis/tasks/09-24-project-workflow-integration/design.md)、[历史实施与验收计划](../../../.trellis/tasks/09-24-project-workflow-integration/implement.md) 和 [管理契约](../../../.trellis/spec/workflow/backend/workflow-management-contracts.md)。`.trellis/` 按仓库规则保留本地、不发布；远程读者可通过本文链接的生产代码和测试核对。管理迁移已新增绑定、来源引用、停止意图与通知等持久结构，但没有新增循环协议或脚本引擎。当前 P0 实施依据见本文开头的新目录入口。
 
 ## 验证记录与未完成验收
 

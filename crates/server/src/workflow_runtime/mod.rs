@@ -1,6 +1,7 @@
 pub mod arena;
 pub mod condition_router;
 pub mod envelope;
+pub mod handover;
 pub mod management;
 pub mod mcp_launch;
 pub mod queue;

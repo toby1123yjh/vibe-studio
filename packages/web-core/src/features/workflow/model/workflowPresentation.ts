@@ -9,6 +9,7 @@ const NODE_KIND_LABELS: Record<WorkflowNodeKind, string> = {
   start: 'Start',
   end: 'End',
   agent: 'Agent',
+  task_splitter: 'Task Splitter',
   condition: 'Condition',
   human_gate: 'Human Gate',
   transform: 'Transform',
@@ -19,6 +20,7 @@ const NODE_KIND_I18N_KEYS: Record<WorkflowNodeKind, string> = {
   start: 'workflow.nodes.start.label',
   end: 'workflow.nodes.end.label',
   agent: 'workflow.nodes.agent.label',
+  task_splitter: 'workflow.nodes.taskSplitter.label',
   condition: 'workflow.nodes.condition.label',
   human_gate: 'workflow.nodes.humanGate.label',
   transform: 'workflow.nodes.transform.label',
@@ -88,6 +90,11 @@ const NODE_VISUALS: Record<WorkflowNodeKind, WorkflowNodeVisual> = {
     accentClass: 'bg-sky-500',
     iconClass: 'bg-sky-500/10 text-sky-300',
     badgeClass: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+  },
+  task_splitter: {
+    accentClass: 'bg-orange-500',
+    iconClass: 'bg-orange-500/10 text-orange-300',
+    badgeClass: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
   },
   condition: {
     accentClass: 'bg-amber-500',
@@ -193,6 +200,12 @@ export function getWorkflowNodeSummary(
       return translate(t, 'workflow.nodes.agent.summary', 'Role: {{role}}', {
         role: String(data.role_template_id || 'custom'),
       });
+    case 'task_splitter':
+      return translate(
+        t,
+        'workflow.nodes.taskSplitter.summary',
+        'Creates file-backed subtasks'
+      );
     case 'condition':
       return translate(
         t,
@@ -262,6 +275,13 @@ export function getWorkflowNodeMetadata(
         {
           label: translate(t, 'workflow.metadata.role', 'Role'),
           value: formatToken(data.role_template_id, 'custom'),
+        },
+      ];
+    case 'task_splitter':
+      return [
+        {
+          label: translate(t, 'workflow.split.output', 'Output'),
+          value: 'tasks.json',
         },
       ];
     case 'condition':

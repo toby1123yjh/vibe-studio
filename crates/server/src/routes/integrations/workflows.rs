@@ -453,6 +453,8 @@ async fn submit_run(
                 .latest_run_id
                 .map(|_| WorkflowActivePolicy::AfterCurrent),
             source_message_id: None,
+            delivery_intent: None,
+            source_batch_id: None,
         },
         Some(reserved.resource_id),
         "external",

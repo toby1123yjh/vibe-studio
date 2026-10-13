@@ -116,7 +116,8 @@ export function getWorkflowCanvasNodeState({
     case 'cancelled':
       return 'skipped';
     default:
-      return nodeType === 'agent' && !hasConfiguredAgentData(data)
+      return (nodeType === 'agent' || nodeType === 'task_splitter') &&
+        !hasConfiguredAgentData(data)
         ? 'draft'
         : 'configured';
   }

@@ -107,6 +107,7 @@ pub enum WorkflowNodeKind {
     Start,
     End,
     Agent,
+    TaskSplitter,
     Condition,
     HumanGate,
     Transform,

@@ -1959,6 +1959,10 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 nodes: Vec::new(),
+                split_batches: Vec::new(),
+                handoffs: Vec::new(),
+                delivery: None,
+                request_path: None,
                 runtime_view: None,
             },
         )

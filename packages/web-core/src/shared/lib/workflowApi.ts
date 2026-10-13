@@ -1,5 +1,7 @@
 import { getCurrentHostId } from '@/shared/providers/HostIdProvider';
 import { makeLocalApiRequest } from '@/shared/lib/localApiTransport';
+import { handleApiResponse } from '@/shared/lib/api';
+import { scopeWorkspaceFileRawUrl } from '@/shared/lib/workspaceFileRawUrl';
 import type {
   WorkflowTemplateListResponse,
   WorkflowTemplateResponse,
@@ -12,6 +14,7 @@ import type {
   WorkflowAttemptListResponse,
   WorkflowAttemptResponse,
   WorkflowRunResponse,
+  WorkflowFileContent,
   WorkflowActionResponse,
   WorkflowRevisionConflict,
   WorkflowFileChangeSummary,
@@ -154,6 +157,26 @@ export function createWorkflowApi(hostId?: string | null) {
   const localFetch = (path: string, init?: RequestInit) =>
     localRequest(path, init, hostId);
   return {
+    async fileContent(
+      runId: string,
+      path: string,
+      signal?: AbortSignal
+    ): Promise<WorkflowFileContent> {
+      const query = new URLSearchParams({ path });
+      return handleApiResponse(
+        await makeLocalApiRequest(
+          `/api/workflow-runs/${encodeURIComponent(runId)}/files/content?${query}`,
+          { signal, hostScope: 'explicit', hostId }
+        )
+      );
+    },
+
+    fileRawUrl(runId: string, path: string): string {
+      const query = new URLSearchParams({ path });
+      const rawUrl = `/api/workflow-runs/${encodeURIComponent(runId)}/files/raw?${query}`;
+      return scopeWorkspaceFileRawUrl(rawUrl, hostId ?? null) ?? rawUrl;
+    },
+
     async fileChanges(runId: string): Promise<WorkflowFileChangeSummary> {
       return getJson(
         await localFetch(`/workflow-runs/${runId}/file-changes`),

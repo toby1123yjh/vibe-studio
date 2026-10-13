@@ -433,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_mode_has_exactly_six_tools_and_no_arbitrary_session_launch() {
+    fn workflow_mode_has_file_dispatch_and_no_arbitrary_session_launch() {
         assert_eq!(
             tool_names(McpServer::workflow_mode_router()),
             BTreeSet::from([
@@ -441,6 +441,7 @@ mod tests {
                 "workflow_list".to_owned(),
                 "workflow_get".to_owned(),
                 "workflow_submit".to_owned(),
+                "workflow_dispatch".to_owned(),
                 "workflow_stop".to_owned(),
                 "workflow_respond".to_owned(),
             ])

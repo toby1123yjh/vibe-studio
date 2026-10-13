@@ -6,6 +6,9 @@ import type {
   WorkflowNodeWorkView,
   WorkflowRunResponse,
   WorkflowRunRuntimeView,
+  WorkflowSplitBatchView,
+  WorkflowSplitSubtaskView,
+  WorkflowSubmission,
 } from 'shared/types';
 
 export const WORKFLOW_NODE_ACTIVE_SLOW_THRESHOLD_MS = 5 * 60 * 1000;
@@ -86,6 +89,109 @@ export type WorkflowNodeTaskTarget =
 export interface WorkflowRunActionGate {
   canCancel: boolean;
   cancellationPending: boolean;
+}
+
+export interface WorkflowSplitProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  running: number;
+}
+
+export interface WorkflowSplitStage {
+  index: number;
+  subtasks: WorkflowSplitSubtaskView[];
+}
+
+/** Counts accepted subtasks only. A successful summary never completes missing work. */
+export function getWorkflowSplitProgress(
+  subtasks: WorkflowSplitSubtaskView[]
+): WorkflowSplitProgress {
+  return {
+    total: subtasks.length,
+    completed: subtasks.filter((task) => task.state === 'succeeded').length,
+    failed: subtasks.filter((task) => task.state === 'failed').length,
+    running: subtasks.filter((task) => task.state === 'running').length,
+  };
+}
+
+export function getWorkflowSplitStages(
+  batch: WorkflowSplitBatchView
+): WorkflowSplitStage[] {
+  const stages = new Map<number, WorkflowSplitSubtaskView[]>();
+  for (const task of batch.subtasks) {
+    const tasks = stages.get(task.stage_index) ?? [];
+    tasks.push(task);
+    stages.set(task.stage_index, tasks);
+  }
+  return [...stages]
+    .sort(([left], [right]) => left - right)
+    .map(([index, subtasks]) => ({ index, subtasks }));
+}
+
+export function getWorkflowSplitBatchesForNode(
+  run: WorkflowRunResponse,
+  nodeId: string
+): WorkflowSplitBatchView[] {
+  return run.split_batches.filter(
+    (batch) =>
+      batch.splitter_node_id === nodeId ||
+      batch.summary_node_id === nodeId ||
+      batch.subtasks.some((task) => task.node_id === nodeId)
+  );
+}
+
+export function getWorkflowSplitNodeProgress(
+  run: WorkflowRunResponse,
+  nodeId: string
+): WorkflowSplitProgress | null {
+  const subtasks = run.split_batches.flatMap((batch) =>
+    batch.splitter_node_id === nodeId
+      ? batch.subtasks
+      : batch.subtasks.filter((task) => task.node_id === nodeId)
+  );
+  return subtasks.length ? getWorkflowSplitProgress(subtasks) : null;
+}
+
+/** This only enables an explicit submission. The backend checks source freshness and files. */
+export function canRequestWorkflowPartialSummary(
+  run: WorkflowRunResponse,
+  batch: WorkflowSplitBatchView
+): boolean {
+  return Boolean(
+    run.attempt_id &&
+      run.status !== 'pending' &&
+      run.status !== 'cancelling' &&
+      run.status !== 'canceled' &&
+      batch.run_id === run.id &&
+      batch.summary_node_id &&
+      batch.subtasks.some(
+        (task) => task.state === 'succeeded' && task.handoff_path
+      ) &&
+      batch.subtasks.some((task) =>
+        ['failed', 'cancelled', 'blocked'].includes(task.state)
+      )
+  );
+}
+
+export function buildWorkflowPartialSummarySubmission(
+  run: WorkflowRunResponse,
+  batch: WorkflowSplitBatchView,
+  requestId: string,
+  requirements: string
+): WorkflowSubmission | null {
+  if (!canRequestWorkflowPartialSummary(run, batch)) return null;
+  return {
+    request_id: requestId,
+    action: 'rework',
+    source_run_id: run.id,
+    source_batch_id: batch.id,
+    delivery_intent: 'partial',
+    scope: { type: 'from_nodes', node_ids: [batch.summary_node_id] },
+    active_policy: 'after_current',
+    input_text: requirements,
+    material_paths: [batch.manifest_path],
+  };
 }
 
 export function getWorkflowRuntimeView(
@@ -269,7 +375,8 @@ export function getWorkflowNodeExecutionTarget(
   }
 
   if (
-    execution.node_type === 'agent' &&
+    (execution.node_type === 'agent' ||
+      execution.node_type === 'task_splitter') &&
     execution.session_id &&
     getWorkflowNodeActionGate(work).canOpenSession
   ) {
@@ -389,7 +496,7 @@ function normalizeBackendRuntimeView(
       (canonicalWork.runtime_health as string) === 'projection_degraded'
         ? 'degraded'
         : hasCanonicalIdentity ||
-            canonicalWork.node_type !== 'agent' ||
+            !['agent', 'task_splitter'].includes(canonicalWork.node_type) ||
             canonicalWork.status === 'reused' ||
             canonicalWork.status === 'skipped'
           ? 'current'

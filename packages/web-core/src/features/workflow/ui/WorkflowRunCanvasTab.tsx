@@ -86,6 +86,9 @@ import {
   getWorkflowNodeWork,
   getWorkflowRuntimeAttentionItems,
   getWorkflowRuntimeView,
+  getWorkflowSplitBatchesForNode,
+  getWorkflowSplitNodeProgress,
+  type WorkflowSplitProgress,
   type WorkflowRuntimeAttentionItem,
   type WorkflowRuntimeAuthority,
 } from '../model/workflowRuntimeView';
@@ -103,6 +106,8 @@ import {
 } from './WorkflowCanvas';
 import { workflowNodeStatusKey } from './workflowI18n';
 import { getWorkflowNodeIcon } from './workflowNodeIcons';
+import { WorkflowSplitBatchDetails } from './WorkflowSplitBatchDetails';
+import { WorkflowFileReferences } from './WorkflowFileReferences';
 
 export interface WorkflowRunCanvasTabProps {
   projectId: string;
@@ -114,6 +119,8 @@ interface RunNodeData extends WorkflowNodeData {
   runtimeAuthority?: WorkflowRuntimeAuthority;
   nodeId: string;
   nodeType: WorkflowNodeKind;
+  splitProgress?: WorkflowSplitProgress | null;
+  awaitingDispatch?: boolean;
 }
 
 interface ConditionBranchOption {
@@ -139,6 +146,7 @@ const nodeTypes = {
   start: RunNode,
   end: RunNode,
   agent: RunNode,
+  task_splitter: RunNode,
   condition: RunNode,
   human_gate: RunNode,
   transform: RunNode,
@@ -150,15 +158,22 @@ function RunNode({ data }: { data: RunNodeData }) {
   const type = data.nodeType;
   const structural = type === 'start' || type === 'end';
   const Icon = getWorkflowNodeIcon(type);
-  const nodeState = getWorkflowCanvasNodeState({
-    data,
-    executionStatus: data.runtimeStatus,
-    nodeType: type,
-  });
-  const stateLabel = data.runtimeStatus
-    ? t(`workflow.nodeStatus.${workflowNodeStatusKey(data.runtimeStatus)}`)
-    : t('workflow.runCanvas.notExecutedYet');
-  const agentDisplay = type === 'agent' ? getWorkflowAgentDisplay(data) : null;
+  const nodeState = data.awaitingDispatch
+    ? 'waiting'
+    : getWorkflowCanvasNodeState({
+        data,
+        executionStatus: data.runtimeStatus,
+        nodeType: type,
+      });
+  const stateLabel = data.awaitingDispatch
+    ? t('workflow.split.waitingDispatch')
+    : data.runtimeStatus
+      ? t(`workflow.nodeStatus.${workflowNodeStatusKey(data.runtimeStatus)}`)
+      : t('workflow.runCanvas.notExecutedYet');
+  const agentDisplay =
+    type === 'agent' || type === 'task_splitter'
+      ? getWorkflowAgentDisplay(data)
+      : null;
   const sourceHandles = getWorkflowNodeSourceHandles({
     id: data.nodeId,
     type,
@@ -268,6 +283,11 @@ function RunNode({ data }: { data: RunNodeData }) {
         >
           {stateLabel}
         </span>
+        {data.splitProgress ? (
+          <p className="mt-half text-xs text-low">
+            {t('workflow.split.progress', { ...data.splitProgress })}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -460,10 +480,17 @@ export function WorkflowRunCanvasTab({
           runtimeAuthority: work?.runtime_authority,
           nodeId: node.id,
           nodeType: node.type,
+          splitProgress: getWorkflowSplitNodeProgress(run, node.id),
+          awaitingDispatch: run.split_batches.some(
+            (batch) =>
+              batch.splitter_node_id === node.id &&
+              batch.state === 'pending' &&
+              !batch.dispatch_path
+          ),
         },
       } satisfies ReactFlowNode<RunNodeData, WorkflowNodeKind>;
     });
-  }, [graph, selectedNodeId, workMap]);
+  }, [graph, run, selectedNodeId, workMap]);
   const edges = useMemo(() => {
     if (!graph) return [];
     return toReactFlowEdges(graph).map((edge) => ({
@@ -817,6 +844,13 @@ function WorkflowRunNodeDetailsDialog({
   const isGateActionPending = gatePending && gateSubmission?.nodeId === node.id;
   const output = execution?.output_text?.trim();
   const error = execution?.error_text?.trim();
+  const splitBatches = getWorkflowSplitBatchesForNode(run, node.id);
+  const executionIds = new Set(
+    run.nodes.filter((item) => item.node_id === node.id).map((item) => item.id)
+  );
+  const handoffs = run.handoffs.filter((handoff) =>
+    executionIds.has(handoff.node_execution_id)
+  );
   const reusedResults = work?.status === 'reused' ? work.reused_results : [];
   const waitingPrompt =
     work?.status === 'awaiting_human' || work?.status === 'awaiting_arena'
@@ -857,6 +891,32 @@ function WorkflowRunNodeDetailsDialog({
             <span>{statusLabel}</span>
           </div>
         </section>
+
+        {splitBatches.map((batch) => (
+          <WorkflowSplitBatchDetails
+            key={batch.id}
+            batch={batch}
+            graph={graph}
+            projectId={projectId}
+            run={run}
+            workspaceHref={workspaceHref}
+          />
+        ))}
+
+        {handoffs.length > 0 ? (
+          <section className="space-y-half">
+            <h3 className="text-xs font-semibold text-high">
+              {t('workflow.split.handoffFiles')}
+            </h3>
+            <WorkflowFileReferences
+              runId={run.id}
+              files={handoffs.flatMap((handoff) => [
+                { path: handoff.handoff_path },
+                ...handoff.files,
+              ])}
+            />
+          </section>
+        ) : null}
 
         {waitingPrompt ? (
           <section className="rounded border border-warning/40 bg-warning/10 p-base">

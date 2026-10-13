@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scopeWorkspaceFileRawUrl } from './workspaceFileRawUrl';
+import { scopeWorkspaceFileRawUrl } from '@/shared/lib/workspaceFileRawUrl';
 
 describe('workspace file raw urls', () => {
   it('leaves local raw urls unchanged without a host id', () => {

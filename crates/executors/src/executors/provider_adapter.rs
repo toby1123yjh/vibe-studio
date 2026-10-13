@@ -938,7 +938,7 @@ fn is_provider_error(object: Option<&serde_json::Map<String, Value>>, event_type
             .get("is_error")
             .and_then(Value::as_bool)
             .unwrap_or(false)
-        || object.contains_key("api_error_status")
+        || error_marker(object.get("api_error_status"))
         || error_marker(object.get("error"))
         || object
             .get("subtype")
@@ -2074,6 +2074,27 @@ mod tests {
             .unwrap();
         assert_eq!(
             success.typed,
+            TypedProviderEvent::Lifecycle(AgentRunStatus::Succeeded)
+        );
+    }
+
+    #[test]
+    fn claude_success_with_null_api_error_status_is_not_an_error() {
+        let event = DirectProvider::ClaudeCode
+            .decode_native_frame(&frame(
+                DirectProvider::ClaudeCode,
+                serde_json::json!({
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": false,
+                    "api_error_status": null,
+                    "terminal_reason": "completed",
+                    "result": "Files delivered successfully"
+                }),
+            ))
+            .unwrap();
+        assert_eq!(
+            event.typed,
             TypedProviderEvent::Lifecycle(AgentRunStatus::Succeeded)
         );
     }

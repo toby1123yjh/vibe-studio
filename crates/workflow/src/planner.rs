@@ -55,6 +55,7 @@ pub struct ReadyPlan {
 }
 
 pub fn plan_ready_nodes(graph: &WorkflowGraph, snapshot: &RunSnapshot) -> ReadyPlan {
+    let batch_managed = crate::dispatch::batch_managed_nodes(graph);
     let executions = execution_snapshots(graph, snapshot);
     let incoming = incoming_edges(graph);
     let nodes_by_id = graph
@@ -66,6 +67,7 @@ pub fn plan_ready_nodes(graph: &WorkflowGraph, snapshot: &RunSnapshot) -> ReadyP
     let ready_nodes = executions
         .iter()
         .filter(|execution| execution.status == NodeExecutionStatus::Pending)
+        .filter(|execution| !batch_managed.contains(&execution.node_id))
         .filter_map(|execution| {
             let node = nodes_by_id.get(execution.node_id.as_str())?;
             if execution_is_ready(
@@ -119,6 +121,9 @@ pub fn triggered_execution_count(
     snapshot: &RunSnapshot,
     target_node_id: &str,
 ) -> i64 {
+    if crate::dispatch::batch_managed_nodes(graph).contains(target_node_id) {
+        return 0;
+    }
     let executions = execution_snapshots(graph, snapshot);
     let incoming = incoming_edges(graph);
     incoming
@@ -226,7 +231,10 @@ fn ready_node(node: &WorkflowNode, iteration: i64) -> ReadyNode {
         node_id: node.id.clone(),
         iteration,
         kind: node.kind.clone(),
-        writes_main_worktree: node.kind == WorkflowNodeKind::Agent,
+        writes_main_worktree: matches!(
+            node.kind,
+            WorkflowNodeKind::Agent | WorkflowNodeKind::TaskSplitter
+        ),
     }
 }
 

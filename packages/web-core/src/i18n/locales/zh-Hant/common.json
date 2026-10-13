@@ -488,6 +488,10 @@
       "newStageDescription": "把相關智能體放在同一階段內。"
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "任務拆分",
+        "summary": "產生檔案形式的子任務"
+      },
       "start": {
         "label": "開始",
         "summary": "工作流入口"
@@ -519,11 +523,79 @@
         "attemptB": "執行 B"
       }
     },
+    "split": {
+      "output": "輸出",
+      "defaultPrompt": "將輸入工作拆成獨立子任務，在工作流程控制目錄中寫入 tasks.json 和每項子任務的說明檔案。記錄依賴關係，並引用相關來源檔案。",
+      "instructions": "拆分要求",
+      "fixedScope": "可分配範圍",
+      "scopeHint": "將此節點連到候選 Agent 執行節點，每個執行節點都連到同一個彙總出口。主 Agent 在這些連線範圍內安排分工。",
+      "executors": "候選執行節點",
+      "summaryExit": "彙總出口",
+      "scopeErrors": {
+        "missingExecutors": "請將拆分節點連接到至少一個 Agent 執行節點。",
+        "invalidExecutor": "拆分節點只能直接連接到不同的 Agent 執行節點。",
+        "competingExecutorInputs": "拆分的執行節點不能再接收其他入口的觸發。",
+        "missingSummary": "每個執行節點都需要一條預設連線通向彙總出口。",
+        "differentSummaries": "所有執行節點必須連接到同一個彙總出口。",
+        "invalidSummary": "彙總出口必須是獨立的 Agent、Transform 或 End 節點。",
+        "competingSummaryInputs": "彙總出口不能接收此拆分範圍以外的觸發。",
+        "overlappingScopes": "不同拆分範圍不能共用執行節點或彙總出口。"
+      },
+      "subtasks": "內部子任務",
+      "progress": "已完成 {{completed}} / {{total}} 項",
+      "failedCount": "{{count}} 項失敗",
+      "controlFiles": "任務清單與分工檔案",
+      "waitingDispatch": "等待主 Agent 分工",
+      "mainHandover": "主 Agent 分工輪次",
+      "openMainSession": "開啟主會話",
+      "openExecutionSession": "開啟執行會話",
+      "stagesHint": "各階段依序執行；同一階段的子任務並行執行，使用獨立會話。",
+      "stage": "階段 {{index}}",
+      "pendingAssignments": "等待分配",
+      "unassigned": "尚未分配執行節點",
+      "dependsOn": "依賴：{{titles}}",
+      "handoffFiles": "交接與交付檔案",
+      "requestFile": "需求檔案",
+      "currentFileHint": "預覽和下載的是目前檔案；此引用無法還原已修改或刪除的歷史內容。",
+      "downloadFile": "下載檔案",
+      "loadingFile": "正在讀取檔案…",
+      "fileFailed": "無法讀取此工作流程檔案。",
+      "fileTruncated": "預覽已截斷，下載檔案可查看完整內容。",
+      "downloadToView": "下載檔案後查看。",
+      "requestPartialSummary": "彙總已完成部分",
+      "partialSummaryHint": "根據既有成果產生部分彙總，並列明未完成項。仍在執行的工作會先結束，不會被停止。",
+      "partialSummaryRequest": "針對 {{path}} 中已受理的拆分批次產生部分交付。讀取可用的交接檔案，明確列出每個缺失子任務及其原因。",
+      "partialSummaryFailed": "無法請求部分彙總。",
+      "partialSummaryAccepted": "已受理部分彙總，目前工作結束後執行。",
+      "openPartialSummary": "查看部分彙總",
+      "partialDelivery": "部分交付",
+      "fullDelivery": "完整交付",
+      "partialDeliveryHint": "彙總僅包含已完成的工作，下列子任務仍未完成。",
+      "missingSubtasks": "未完成子任務",
+      "deliveryFilesHint": "節點交接引用可能包含原有材料。Agent 檔案變更另列在下方。",
+      "openSourceRun": "查看來源執行",
+      "states": {
+        "pending": "等待中",
+        "accepted": "已受理",
+        "dispatching": "正在分工",
+        "running": "執行中",
+        "partial": "部分完成",
+        "succeeded": "成功",
+        "failed": "失敗",
+        "cancelled": "已停止",
+        "queued": "排隊中",
+        "blocked": "依賴未滿足",
+        "claimed": "啟動中",
+        "completed": "已完成",
+        "unknown": "狀態未知"
+      }
+    },
     "nodePicker": {
       "addNode": "新增節點",
       "chooseNodeType": "選擇節點類型",
       "descriptions": {
         "agent": "執行任務的 AI 智能體",
+        "task_splitter": "將工作拆為子任務檔案，由主 Agent 分工",
         "condition": "在已連接的分支之間路由任務",
         "human_gate": "等待人工審批",
         "transform": "轉換節點之間的資料",

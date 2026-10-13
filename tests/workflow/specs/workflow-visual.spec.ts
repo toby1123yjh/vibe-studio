@@ -310,3 +310,302 @@ test("explicit fit animates smoothly and reacts to a reduced-motion preference c
   await page.emulateMedia({ reducedMotion: "reduce" });
   expect(await fitFrames()).toBeLessThanOrEqual(2);
 });
+
+test("split progress retains failures, independent work, and the precise execution sessions", async ({
+  page,
+}) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && request.url().includes("/api/")) {
+      mutations.push(request.url());
+    }
+  });
+  await page.goto("/visual.html?mode=file-run");
+  const splitter = page.getByTestId("workflow-run-node-plan");
+  await expect(splitter).toContainText("1 / 4 completed");
+  await splitter.click();
+  const batch = page.getByTestId("workflow-split-batch");
+  await expect(batch.getByTestId("workflow-split-progress")).toContainText(
+    "1 / 4 completed",
+  );
+  await expect(batch.getByTestId("workflow-split-progress")).toContainText(
+    "1 failed",
+  );
+  const stages = batch.getByTestId("workflow-split-stage");
+  await expect(stages).toHaveCount(2);
+  await expect(stages.nth(0).getByTestId("workflow-split-subtask")).toHaveCount(
+    3,
+  );
+  await expect(stages.nth(1)).toContainText(
+    "Depends on: Review the source material",
+  );
+  const tasks = batch.getByTestId("workflow-split-subtask");
+  await expect(tasks.nth(1)).toContainText("Failed");
+  await expect(tasks.nth(1)).toContainText("Source material was removed");
+  await expect(tasks.nth(2)).toContainText("Running");
+  await expect(tasks.nth(3)).toContainText("Dependency not met");
+  const workspaceHref =
+    "/projects/visual-project/tasks/visual-issue/workspaces/visual-workspace";
+  for (const [index, session] of [
+    "research-session",
+    "review-session",
+    "analysis-session",
+  ].entries()) {
+    await expect(
+      tasks.nth(index).getByRole("link", { name: "Open execution session" }),
+    ).toHaveAttribute("href", `${workspaceHref}?session_id=${session}`);
+  }
+  await expect(tasks.nth(3).getByRole("link")).toHaveCount(0);
+  await expect(
+    batch.getByRole("link", { name: "Open main session" }),
+  ).toHaveAttribute("href", `${workspaceHref}?session_id=main-session`);
+  expect(mutations).toEqual([]);
+
+  await page.getByRole("button", { name: "Await dispatch" }).click();
+  await expect(splitter).toContainText("Waiting for main Agent dispatch");
+  await expect(batch).toContainText("Awaiting assignment");
+  await expect(batch).toContainText("No executor assigned");
+  await expect(
+    batch.getByRole("button", { name: "Summarize completed work" }),
+  ).toHaveCount(0);
+  expect(mutations).toEqual([]);
+});
+
+test("workflow file previews fetch current content lazily and safely encode download paths", async ({
+  page,
+}) => {
+  const paths: string[] = [];
+  const filePath = "deliverables/research report.md";
+  await page.route(
+    "**/api/workflow-runs/visual-run/files/content?*",
+    async (route) => {
+      const path = new URL(route.request().url()).searchParams.get("path")!;
+      paths.push(path);
+      await route.fulfill({
+        json: {
+          success: true,
+          data: {
+            run_id: "visual-run",
+            workspace_id: "visual-workspace",
+            kind: "text",
+            path,
+            name: "research report.md",
+            mime_type: "text/markdown",
+            language: "markdown",
+            content: "# Research delivered\n\nCurrent file contents.",
+            raw_url: null,
+            size_bytes: 51,
+            truncated: false,
+          },
+        },
+      });
+    },
+  );
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-build").click();
+  const task = page.getByTestId("workflow-split-subtask").first();
+  await expect(task).toContainText(filePath);
+  expect(paths).toEqual([]);
+  await task.getByRole("button", { name: filePath, exact: true }).click();
+  const preview = page.getByRole("dialog", { name: filePath, exact: true });
+  await expect(
+    preview.getByRole("heading", { name: "Research delivered" }),
+  ).toBeVisible();
+  await expect(preview).toContainText("Preview and download the current file");
+  expect(paths).toEqual([filePath]);
+  const download = preview.getByRole("link", { name: "Download file" });
+  const href = await download.getAttribute("href");
+  const rawUrl = new URL(href!, page.url());
+  expect(rawUrl.pathname).toBe("/api/workflow-runs/visual-run/files/raw");
+  expect(rawUrl.searchParams.get("path")).toBe(filePath);
+  expect(href).not.toContain(" ");
+  await expect(download).toHaveAttribute("download", "");
+  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(preview).toHaveCount(0);
+  await expect(task).toContainText(filePath);
+});
+
+test("partial summaries are explicit, wait for current work, and retry one idempotent submission", async ({
+  page,
+}) => {
+  const bodies: Record<string, unknown>[] = [];
+  await page.route(
+    "**/api/workflow-management/instances/visual-instance/submit",
+    async (route) => {
+      bodies.push(route.request().postDataJSON());
+      if (bodies.length === 1) {
+        await route.fulfill({
+          status: 503,
+          json: { success: false, message: "Temporary submission failure" },
+        });
+      } else {
+        await route.fulfill({
+          status: 202,
+          json: {
+            success: true,
+            data: {
+              request_id: bodies[0].request_id,
+              project_id: "visual-project",
+              issue_id: "visual-issue",
+              instance_id: "visual-instance",
+              run_id: "accepted-partial-run",
+              phase: "waiting_for_source",
+            },
+          },
+        });
+      }
+    },
+  );
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-plan").click();
+  const action = page.getByTestId("workflow-partial-summary-action");
+  const submit = action.getByRole("button", {
+    name: "Summarize completed work",
+  });
+  await expect(submit).toBeEnabled();
+  expect(bodies).toEqual([]);
+  await submit.click();
+  await expect(action).toContainText("Temporary submission failure");
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0]).toMatchObject({
+    action: "rework",
+    source_run_id: "visual-run",
+    source_batch_id: "visual-batch",
+    delivery_intent: "partial",
+    scope: { type: "from_nodes", node_ids: ["end"] },
+    active_policy: "after_current",
+    material_paths: [".vibe-kanban/workflows/visual-run/tasks.json"],
+  });
+  expect(bodies[0].request_id).toEqual(expect.any(String));
+  await submit.click();
+  await expect(action).toContainText("Partial summary accepted");
+  await expect(
+    action.getByRole("button", { name: "Open partial summary" }),
+  ).toBeVisible();
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toEqual(bodies[0]);
+  await expect(submit).toHaveCount(0);
+  await expect(page.getByTestId("workflow-split-subtask").nth(1)).toContainText(
+    "Failed",
+  );
+  await expect(page.getByTestId("workflow-split-subtask").nth(2)).toContainText(
+    "Running",
+  );
+});
+
+test("a missing workflow file keeps its reference and can be retried without resubmitting work", async ({
+  page,
+}) => {
+  const filePath = "deliverables/research report.md";
+  let reads = 0;
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/") && request.method() !== "GET") {
+      mutations.push(request.url());
+    }
+  });
+  await page.route(
+    "**/api/workflow-runs/visual-run/files/content?*",
+    async (route) => {
+      reads += 1;
+      if (reads === 1) {
+        await route.fulfill({
+          status: 404,
+          json: { success: false, message: "Referenced file is missing" },
+        });
+      } else {
+        await route.fulfill({
+          json: {
+            success: true,
+            data: {
+              run_id: "visual-run",
+              workspace_id: "visual-workspace",
+              kind: "text",
+              path: filePath,
+              name: "research report.md",
+              mime_type: "text/markdown",
+              language: "markdown",
+              content: "# Restored current file",
+              raw_url: null,
+              size_bytes: 600000,
+              truncated: true,
+            },
+          },
+        });
+      }
+    },
+  );
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-plan").click();
+  await page
+    .getByTestId("workflow-split-subtask")
+    .first()
+    .getByRole("button", { name: filePath, exact: true })
+    .click();
+  const preview = page.getByRole("dialog", { name: filePath, exact: true });
+  await expect(preview.getByRole("alert")).toContainText(
+    "Could not read this workflow file",
+  );
+  await expect(preview.getByRole("alert")).toContainText(
+    "Referenced file is missing",
+  );
+  expect(reads).toBe(1);
+  await preview.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    preview.getByRole("heading", { name: "Restored current file" }),
+  ).toBeVisible();
+  await expect(preview).toContainText(
+    "Preview truncated. Download the file to read the full content.",
+  );
+  expect(reads).toBe(2);
+  expect(mutations).toEqual([]);
+  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  const batch = page.getByTestId("workflow-split-batch");
+  await expect(batch.getByTestId("workflow-split-progress")).toContainText(
+    "1 / 4 completed",
+  );
+  await expect(
+    batch.getByTestId("workflow-split-subtask").first(),
+  ).toContainText(filePath);
+});
+
+test("partial delivery keeps original missing work separate from referenced files and Agent changes", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/local/v1/workflow-runs/partial-run/file-changes",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          files: [{ path: "deliverables/final.md", change_type: "modified" }],
+          collection_status: "partial",
+          reasons: [],
+        },
+      });
+    },
+  );
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByRole("button", { name: "Show partial delivery" }).click();
+  await page
+    .getByRole("button", { name: "Execution result", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const delivery = dialog.getByTestId("workflow-delivery-completeness");
+  await expect(delivery).toContainText("Partial delivery");
+  await expect(delivery.getByTestId("workflow-delivery-missing")).toContainText(
+    "Review the source material",
+  );
+  await expect(delivery.getByTestId("workflow-delivery-missing")).toContainText(
+    "Source material was removed",
+  );
+  await expect(
+    delivery.getByRole("button", { name: "Open source run" }),
+  ).toBeVisible();
+  await expect(dialog.getByTestId("workflow-delivery-files")).toContainText(
+    "deliverables/research report.md",
+  );
+  const evidence = dialog.getByTestId("workflow-agent-file-changes");
+  await expect(evidence).toContainText("deliverables/final.md");
+  await expect(evidence).not.toContainText("deliverables/research report.md");
+  await expect(evidence).toContainText("This list may be incomplete");
+});

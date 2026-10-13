@@ -1358,6 +1358,10 @@
       "newStageDescription": "Group related Nodes in one stage."
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "작업 분할",
+        "summary": "하위 작업 파일 생성"
+      },
       "start": {
         "label": "Start",
         "summary": "Entry point"
@@ -1389,11 +1393,79 @@
         "attemptB": "Attempt B"
       }
     },
+    "split": {
+      "output": "출력",
+      "defaultPrompt": "입력 작업을 독립된 하위 작업으로 나누세요. 워크플로 제어 디렉터리에 tasks.json과 각 하위 작업의 지시 파일을 작성하고, 의존 관계와 관련 원본 파일을 명시하세요.",
+      "instructions": "분할 지침",
+      "fixedScope": "배정 범위",
+      "scopeHint": "후보 Agent 실행 노드에 연결하고 각 노드를 동일한 요약 출구에 연결하세요. 주 Agent가 이 연결 범위 내에서 작업을 배정합니다.",
+      "executors": "후보 실행 노드",
+      "summaryExit": "요약 출구",
+      "scopeErrors": {
+        "missingExecutors": "분할 노드를 하나 이상의 Agent 실행 노드에 연결하세요.",
+        "invalidExecutor": "분할 노드는 서로 다른 Agent 실행 노드에만 직접 연결할 수 있습니다.",
+        "competingExecutorInputs": "분할 실행 노드에는 다른 입력 트리거를 연결할 수 없습니다.",
+        "missingSummary": "각 실행 노드에는 요약 출구로 향하는 기본 연결 하나가 필요합니다.",
+        "differentSummaries": "모든 실행 노드를 같은 요약 출구에 연결하세요.",
+        "invalidSummary": "요약 출구는 별도의 Agent, Transform 또는 End 노드여야 합니다.",
+        "competingSummaryInputs": "요약 출구에는 분할 범위 외부의 트리거를 연결할 수 없습니다.",
+        "overlappingScopes": "분할 범위 간에 실행 노드나 요약 출구를 공유할 수 없습니다."
+      },
+      "subtasks": "내부 하위 작업",
+      "progress": "{{total}}개 중 {{completed}}개 완료",
+      "failedCount": "{{count}}개 실패",
+      "controlFiles": "작업 목록 및 배정 파일",
+      "waitingDispatch": "주 Agent 배정 대기",
+      "mainHandover": "주 Agent 배정 차례",
+      "openMainSession": "주 세션 열기",
+      "openExecutionSession": "실행 세션 열기",
+      "stagesHint": "단계는 순서대로 실행됩니다. 같은 단계의 하위 작업은 별도 세션에서 병렬 실행됩니다.",
+      "stage": "단계 {{index}}",
+      "pendingAssignments": "배정 대기",
+      "unassigned": "실행 노드 미배정",
+      "dependsOn": "의존 작업: {{titles}}",
+      "handoffFiles": "인계 및 결과 파일",
+      "requestFile": "요구사항 파일",
+      "currentFileHint": "현재 파일을 미리 보고 다운로드합니다. 이 참조로 변경되거나 삭제된 과거 내용을 복원할 수 없습니다.",
+      "downloadFile": "파일 다운로드",
+      "loadingFile": "파일 읽는 중…",
+      "fileFailed": "워크플로 파일을 읽을 수 없습니다.",
+      "fileTruncated": "미리보기가 잘렸습니다. 전체 내용은 파일을 다운로드하세요.",
+      "downloadToView": "파일을 다운로드하여 확인하세요.",
+      "requestPartialSummary": "완료된 작업 요약",
+      "partialSummaryHint": "사용 가능한 결과로 부분 요약을 만들고 미완료 작업을 명시합니다. 진행 중인 작업을 중지하지 않고 종료를 기다립니다.",
+      "partialSummaryRequest": "{{path}}의 수락된 분할 배치에서 부분 결과를 생성하세요. 사용 가능한 인계 파일을 읽고 누락된 모든 하위 작업과 이유를 명시하세요.",
+      "partialSummaryFailed": "부분 요약을 요청할 수 없습니다.",
+      "partialSummaryAccepted": "부분 요약이 수락되었습니다. 현재 작업이 끝난 후 실행됩니다.",
+      "openPartialSummary": "부분 요약 열기",
+      "partialDelivery": "부분 결과",
+      "fullDelivery": "전체 결과",
+      "partialDeliveryHint": "요약에는 완료된 작업만 포함됩니다. 다음 하위 작업은 아직 완료되지 않았습니다.",
+      "missingSubtasks": "미완료 하위 작업",
+      "deliveryFilesHint": "노드 인계에 기존 자료가 포함될 수 있습니다. Agent 파일 변경은 아래에 별도로 표시됩니다.",
+      "openSourceRun": "원본 실행 열기",
+      "states": {
+        "pending": "대기 중",
+        "accepted": "수락됨",
+        "dispatching": "배정 중",
+        "running": "실행 중",
+        "partial": "부분 완료",
+        "succeeded": "성공",
+        "failed": "실패",
+        "cancelled": "중지됨",
+        "queued": "대기열",
+        "blocked": "의존 조건 미충족",
+        "claimed": "시작 중",
+        "completed": "완료",
+        "unknown": "알 수 없는 상태"
+      }
+    },
     "nodePicker": {
       "addNode": "노드 추가",
       "chooseNodeType": "노드 유형 선택",
       "descriptions": {
         "agent": "작업을 수행하는 AI 에이전트",
+        "task_splitter": "하위 작업 파일을 만들고 주 Agent가 배정",
         "condition": "연결된 분기로 작업을 라우팅합니다",
         "human_gate": "사용자 승인을 기다립니다",
         "transform": "노드 간 데이터를 변환합니다",

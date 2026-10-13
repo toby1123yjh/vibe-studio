@@ -127,7 +127,7 @@ pub fn handle_pure_node(
         WorkflowNodeKind::Transform => handle_transform(node, context),
         WorkflowNodeKind::HumanGate => Ok(handle_human_gate(node)),
         WorkflowNodeKind::Arena => Ok(handle_arena(node)),
-        WorkflowNodeKind::Agent => Err(HandlerError::new(
+        WorkflowNodeKind::Agent | WorkflowNodeKind::TaskSplitter => Err(HandlerError::new(
             "agent nodes require an executor port and are not pure handlers",
         )),
     }

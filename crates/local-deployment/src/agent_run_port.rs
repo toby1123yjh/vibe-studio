@@ -917,8 +917,7 @@ impl LocalAgentRunPort {
         let rejected = || {
             AgentRunPortError::Rejected("Workflow main Agent scope is inconsistent, or an earlier process has not confirmed exit".into())
         };
-        if request.input.role != AgentRuntimeMessageRole::User
-            || request.session_id != attempt.session_id
+        if request.session_id != attempt.session_id
             || request.agent_run_id != attempt.agent_run_id
             || request.turn_id != attempt.turn_id
             || request.workspace != attempt.workspace
@@ -931,6 +930,15 @@ impl LocalAgentRunPort {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(port_database)?;
+        if request.input.role != AgentRuntimeMessageRole::User {
+            let authorized_handover: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM workflow_handover_events e JOIN workflow_runs r ON r.id=e.run_id JOIN workflow_attempts w ON w.id=r.attempt_id JOIN workflow_project_slots p ON p.run_id=r.id JOIN workflow_split_batches b ON b.id=e.batch_id JOIN node_executions n ON n.id=b.node_execution_id WHERE e.session_id=? AND e.agent_run_id=? AND e.run_attempt_id=? AND e.turn_id=? AND e.state='claimed' AND w.main_session_id=e.session_id AND r.status IN ('running','awaiting_human','awaiting_arena') AND b.state='accepted' AND b.dispatch_sha256 IS NULL AND n.status='succeeded' AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=r.id))",
+            ).bind(request.session_id).bind(request.agent_run_id).bind(attempt.run_attempt_id).bind(request.turn_id)
+                .fetch_one(&mut *tx).await.map_err(port_database)?;
+            if request.input.role != AgentRuntimeMessageRole::System || !authorized_handover {
+                return Err(rejected());
+            }
+        }
         let row = sqlx::query(
             "SELECT b.*,m.project_id,s.workspace_id,w.project_id AS template_project_id FROM workflow_main_session_bindings b JOIN sessions s ON s.id=b.session_id JOIN session_project_memberships m ON m.session_id=s.id JOIN workflows w ON w.id=b.workflow_id WHERE b.session_id=?",
         ).bind(request.session_id).fetch_optional(&mut *tx).await.map_err(port_database)?.ok_or_else(rejected)?;
@@ -1011,7 +1019,7 @@ impl LocalAgentRunPort {
         let changed = sqlx::query(
             "UPDATE workflow_main_session_bindings SET token_hash=?,actual_main_agent_run_id=?,actual_main_turn_id=?,actual_main_run_attempt_id=?,source_message_id=?,updated_at=? WHERE session_id=? AND token_hash IS ? AND actual_main_agent_run_id IS ? AND actual_main_turn_id IS ? AND actual_main_run_attempt_id IS ?",
         ).bind(workflow_mcp::token_hash(&token)).bind(request.agent_run_id).bind(request.turn_id)
-            .bind(attempt.run_attempt_id).bind(request.input.message_id).bind(Utc::now()).bind(request.session_id)
+            .bind(attempt.run_attempt_id).bind((request.input.role == AgentRuntimeMessageRole::User).then_some(request.input.message_id)).bind(Utc::now()).bind(request.session_id)
             .bind(old_hash).bind(old_run).bind(old_turn).bind(old_attempt).execute(&mut *tx).await.map_err(port_database)?;
         if changed.rows_affected() != 1 {
             return Err(rejected());
@@ -3546,6 +3554,28 @@ impl AgentRunPort for LocalAgentRunPort {
                         "cannot retry an active AgentRun".to_string(),
                     ));
                 }
+                // Retry shares the command lock with launch_reserved. A
+                // terminal old Run cannot bypass a newer Session reservation
+                // or enter the same native Session before a peer exits.
+                let busy: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM agent_runs r LEFT JOIN agent_run_state s ON s.agent_run_id=r.id WHERE r.session_id=? AND r.id<>? AND (s.agent_run_id IS NULL OR s.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed')))",
+                ).bind(request.session_id).bind(agent_run_id).fetch_one(&self.db.pool)
+                    .await.map_err(port_database)?;
+                if busy {
+                    return Err(AgentRunPortError::Rejected(
+                        "cannot retry while another Session Run is active or reserved".into(),
+                    ));
+                }
+                let attempts: Vec<Uuid> = sqlx::query_scalar(
+                    "SELECT a.id FROM agent_run_attempts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.session_id=?",
+                ).bind(request.session_id).fetch_all(&self.db.pool).await.map_err(port_database)?;
+                for attempt_id in attempts {
+                    if !self.reconcile_terminal_process(attempt_id).await? {
+                        return Err(AgentRunPortError::Rejected(
+                            "cannot retry before all Session processes have confirmed exit".into(),
+                        ));
+                    }
+                }
                 let provider = self.provider(&request.provider_id)?;
                 let provider_session = if *mode == RunAttemptMode::Resume {
                     require_capability(
@@ -4554,6 +4584,121 @@ mod tests {
             serde_json::to_value(before).unwrap(),
             serde_json::to_value(after).unwrap()
         );
+    }
+
+    async fn assert_retry_rejected_without_new_attempt(
+        port: &LocalAgentRunPort,
+        request: &AgentRunRequestEnvelope,
+        reason: &str,
+    ) {
+        let retry_attempt_id = Uuid::new_v4();
+        let command_id = Uuid::new_v4();
+        let command = AgentRunPortCommandEnvelope {
+            schema_version: executors::runtime::ORCHESTRATION_COMMAND_SCHEMA_VERSION,
+            command_id,
+            idempotency_key: command_id.to_string(),
+            agent_run_id: request.agent_run_id,
+            orchestration_run_id: None,
+            orchestration_node_execution_id: None,
+            correlation_id: request.correlation_id,
+            created_at: Utc::now(),
+            command: AgentRunPortCommand::Retry {
+                mode: RunAttemptMode::Restart,
+                run_attempt_id: retry_attempt_id,
+            },
+        };
+        db::models::agent_runtime::AgentRunCommandRecord::enqueue(&port.db.pool, &command)
+            .await
+            .unwrap();
+        let error = port.control(command).await.unwrap_err();
+        assert!(error.to_string().contains(reason), "{error}");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_run_attempts WHERE id=?")
+            .bind(retry_attempt_id)
+            .fetch_one(&port.db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "Rejected retry must not reserve another native attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_cannot_bypass_another_session_reservation_or_unknown_state() {
+        for missing_projection in [false, true] {
+            let port = LocalAgentRunPort::new(setup_runtime_db().await);
+            let (request, attempt) = persisted_codex_run(&port.db).await;
+            port.terminalize_failure(
+                &request,
+                &attempt,
+                AgentRunStatus::Failed,
+                AgentRuntimeError::new(AgentRuntimeErrorKind::Unknown, "original failure"),
+            )
+            .await;
+            let mut peer = request.clone();
+            peer.agent_run_id = Uuid::new_v4();
+            peer.turn_id = Uuid::new_v4();
+            peer.request_id = Uuid::new_v4();
+            peer.idempotency_key = "accepted-queued:queued".into();
+            let mut peer_attempt = attempt.clone();
+            peer_attempt.agent_run_id = peer.agent_run_id;
+            peer_attempt.turn_id = peer.turn_id;
+            peer_attempt.run_attempt_id = Uuid::new_v4();
+            peer_attempt.request_id = Uuid::new_v4();
+            peer_attempt.idempotency_key = "accepted-queued:queued:attempt:1".into();
+            AgentRunRecord::persist_identity_before_launch(&port.db.pool, &peer, &peer_attempt)
+                .await
+                .unwrap();
+            if missing_projection {
+                sqlx::query("DELETE FROM agent_run_state WHERE agent_run_id=?")
+                    .bind(peer.agent_run_id)
+                    .execute(&port.db.pool)
+                    .await
+                    .unwrap();
+            }
+            assert_retry_rejected_without_new_attempt(
+                &port,
+                &request,
+                "another Session Run is active or reserved",
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_requires_actual_exit_even_after_terminal_outcome() {
+        let mut port = LocalAgentRunPort::new(setup_runtime_db().await);
+        let registry_dir = tempfile::TempDir::new().unwrap();
+        port.process_registry =
+            AgentProcessRegistry::new(registry_dir.path().join("registry.json"));
+        let (request, attempt) = persisted_codex_run(&port.db).await;
+        // Only observe the unrelated test process. Never cancel or kill it.
+        AgentRunRecord::mark_process_started(
+            &port.db.pool,
+            attempt.run_attempt_id,
+            std::process::id(),
+            None,
+            Some("unrelated-test-process"),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        AgentRunRecord::mark_process_host_unreachable(&port.db.pool, attempt.run_attempt_id)
+            .await
+            .unwrap();
+        port.terminalize_failure(
+            &request,
+            &attempt,
+            AgentRunStatus::Failed,
+            AgentRuntimeError::new(AgentRuntimeErrorKind::Unknown, "terminal but alive"),
+        )
+        .await;
+        assert_retry_rejected_without_new_attempt(
+            &port,
+            &request,
+            "all Session processes have confirmed exit",
+        )
+        .await;
     }
 
     #[tokio::test]

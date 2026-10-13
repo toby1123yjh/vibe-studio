@@ -67,6 +67,10 @@ const baseRun = {
   created_at: '2026-06-25T00:00:00Z',
   updated_at: '2026-06-25T00:00:00Z',
   nodes: [],
+  split_batches: [],
+  handoffs: [],
+  delivery: null,
+  request_path: null,
 } satisfies WorkflowRunResponse;
 
 describe('workflow runtime view', () => {

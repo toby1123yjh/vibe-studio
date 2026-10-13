@@ -30,6 +30,11 @@ export function getWorkflowDefaultNodeData(
       return { display_name: t('workflow.nodes.end.label') };
     case 'agent':
       return { display_name: t('workflow.nodes.agent.label') };
+    case 'task_splitter':
+      return {
+        display_name: t('workflow.nodes.taskSplitter.label'),
+        prompt_template: t('workflow.split.defaultPrompt'),
+      };
     case 'condition':
       return { display_name: t('workflow.nodes.condition.label') };
     case 'human_gate':
@@ -61,6 +66,9 @@ export function getWorkflowAuthoringIssueMessage(
   issue: WorkflowAuthoringIssue,
   t: TFunction<'common'>
 ): string {
+  if (issue.code === 'splitter-scope' && issue.splitScopeCode) {
+    return t(`workflow.split.scopeErrors.${issue.splitScopeCode}`);
+  }
   const keyByCode: Partial<Record<WorkflowAuthoringIssue['code'], string>> = {
     'missing-node': 'missingNode',
     'self-connection': 'selfConnection',
@@ -103,4 +111,22 @@ export function workflowNodeStatusKey(status: string): string {
     default:
       return status;
   }
+}
+
+export function workflowSplitStateKey(state: string): string {
+  const states = new Set([
+    'pending',
+    'accepted',
+    'dispatching',
+    'running',
+    'partial',
+    'succeeded',
+    'failed',
+    'cancelled',
+    'queued',
+    'blocked',
+    'claimed',
+    'completed',
+  ]);
+  return states.has(state) ? state : 'unknown';
 }

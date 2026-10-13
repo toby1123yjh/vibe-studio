@@ -186,6 +186,15 @@ mod tests {
                 .await
                 .unwrap()
         );
+        sqlx::query("UPDATE orchestration_outbox SET delivery_status='failed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !WorkflowQueueEntry::release_terminal(&pool, run)
+                .await
+                .unwrap()
+        );
         sqlx::query("UPDATE orchestration_outbox SET delivery_status='delivered'")
             .execute(&pool)
             .await
@@ -406,7 +415,7 @@ impl WorkflowQueueEntry {
              )
              AND NOT EXISTS (
                  SELECT 1 FROM orchestration_outbox o WHERE o.orchestration_run_id IN (SELECT id FROM owned_runs)
-                   AND o.delivery_status IN ('pending','delivering')
+                   AND o.delivery_status IN ('pending','delivering','failed')
              )
              AND NOT EXISTS (SELECT 1 FROM node_executions n WHERE n.run_id = ?1 AND n.status IN ('running','cancelling','awaiting_human','awaiting_arena'))",
         ).bind(run_id).execute(&mut *tx).await?.rows_affected() == 1;

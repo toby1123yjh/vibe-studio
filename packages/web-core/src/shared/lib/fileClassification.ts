@@ -1,5 +1,18 @@
 import type { WorkspaceFileContent, WorkspaceFileEntry } from 'shared/types';
-import type { WorkspaceFileDisplayInfo, WorkspaceFileViewKind } from './types';
+
+export type FileViewKind =
+  | 'code'
+  | 'text'
+  | 'markdown'
+  | 'image'
+  | 'unsupported';
+
+export interface FileDisplayInfo {
+  viewKind: FileViewKind;
+  language: string | null;
+  label: string;
+  isPreviewable: boolean;
+}
 
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdx']);
 
@@ -121,7 +134,7 @@ export function classifyWorkspaceFile(
         'kind' | 'path' | 'name' | 'mime_type' | 'language'
       >
     | Pick<WorkspaceFileEntry, 'kind' | 'path' | 'name' | 'mime_type'>
-): WorkspaceFileDisplayInfo {
+): FileDisplayInfo {
   const path = file.path || file.name;
   const extension = getWorkspaceFileExtension(path);
   const mimeType = file.mime_type?.toLowerCase() ?? null;
@@ -158,18 +171,16 @@ export function classifyWorkspaceFile(
   return display('unsupported', null, 'Unsupported', false);
 }
 
-export function isWorkspaceFilePreviewable(
-  viewKind: WorkspaceFileViewKind
-): boolean {
+export function isWorkspaceFilePreviewable(viewKind: FileViewKind): boolean {
   return viewKind !== 'unsupported';
 }
 
 function display(
-  viewKind: WorkspaceFileViewKind,
+  viewKind: FileViewKind,
   language: string | null,
   label: string,
   isPreviewable: boolean
-): WorkspaceFileDisplayInfo {
+): FileDisplayInfo {
   return {
     viewKind,
     language,

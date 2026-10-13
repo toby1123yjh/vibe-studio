@@ -977,6 +977,17 @@ async fn monitor_process(
         cause = ExitCause::WaitFailure(error.to_string());
     }
 
+    // Finished adapters can retain a replacement stdout writer through their
+    // control peer (Codex's AppServerClient, for example). Stop their background
+    // tasks and release the peer before awaiting EOF. This is resource cleanup,
+    // not a new user cancellation or a replacement for the observed outcome.
+    if !matches!(cause, ExitCause::Process { .. })
+        && let Some(cancellation) = cancellation.as_ref()
+    {
+        cancellation.cancel();
+    }
+    drop(control);
+
     let mut drained_provider_terminal = None;
     let drain_result = tokio::time::timeout(PROCESS_OUTPUT_DRAIN_TIMEOUT, async {
         while !(stdout_closed && stderr_closed) {
@@ -1262,7 +1273,30 @@ async fn send_host_command_with_timeout(
 
 #[cfg(test)]
 mod tests {
+    use utils::command_ext::GroupSpawnNoWindowExt;
+
     use super::*;
+
+    struct RetainedOutputControl {
+        _writer: Arc<Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>>,
+    }
+
+    impl std::fmt::Debug for RetainedOutputControl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RetainedOutputControl")
+                .finish_non_exhaustive()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ExecutorControl for RetainedOutputControl {
+        async fn send(
+            &self,
+            _control: DirectControl,
+        ) -> Result<Vec<u8>, executors::executors::ExecutorError> {
+            Ok(Vec::new())
+        }
+    }
 
     fn test_payload() -> HostEventPayload {
         HostEventPayload::Terminal {
@@ -1310,6 +1344,225 @@ mod tests {
             terminal: AtomicBool::new(false),
             shutdown: Notify::new(),
         })
+    }
+
+    fn test_audit_writer(
+        path: &std::path::Path,
+        host: &SharedHost,
+    ) -> Arc<Mutex<NativeAuditWriter>> {
+        Arc::new(Mutex::new(
+            NativeAuditWriter::create_in(
+                path,
+                NativeAuditMetadata {
+                    session_id: Uuid::new_v4(),
+                    agent_run_id: Uuid::new_v4(),
+                    turn_id: Uuid::new_v4(),
+                    run_attempt_id: host.run_attempt_id,
+                    run_attempt_number: 1,
+                    provider_id: "codex".into(),
+                    runtime_profile_id: "fixture".into(),
+                    workspace_path: path.to_string_lossy().into_owned(),
+                    runtime_version: None,
+                    protocol_version: None,
+                    adapter_version: "1".into(),
+                    mapper_version: "1".into(),
+                    created_at: Utc::now(),
+                },
+            )
+            .unwrap(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn output_drain_releases_control_and_stops_adapter_tasks() {
+        for cancelled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let host = test_host(&directory.path().join("events.jsonl")).await;
+            let (mut spawned, output) =
+                executors::stdout_dup::spawn_local_output_process().unwrap();
+            let writer = test_audit_writer(directory.path(), &host);
+            let cancellation = CancellationToken::new();
+            let output: Arc<Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>> =
+                Arc::new(Mutex::new(Box::new(output)));
+            let control = Arc::new(RetainedOutputControl {
+                _writer: output.clone(),
+            });
+            let adapter_cancellation = cancellation.clone();
+            let adapter = tokio::spawn(async move {
+                adapter_cancellation.cancelled().await;
+                drop(output);
+            });
+            let (notices_tx, notices_rx) = mpsc::unbounded_channel();
+            let correlation_id = Uuid::new_v4();
+            spawn_stdout_reader(
+                DirectProvider::Codex,
+                correlation_id,
+                spawned.child.inner().stdout.take().unwrap(),
+                writer.clone(),
+                notices_tx.clone(),
+            );
+            spawn_stderr_reader(
+                correlation_id,
+                spawned.child.inner().stderr.take().unwrap(),
+                writer.clone(),
+                notices_tx,
+            );
+            let (commands_tx, commands_rx) = mpsc::channel(1);
+            let (exit_tx, exit_rx) = oneshot::channel();
+            let cancel_reply = if cancelled {
+                let (result, reply) = oneshot::channel();
+                commands_tx
+                    .send(ProcessCommand::Control {
+                        bytes: Vec::new(),
+                        control: None,
+                        cancel: true,
+                        result,
+                    })
+                    .await
+                    .unwrap();
+                Some(reply)
+            } else {
+                exit_tx.send(ExecutorExitResult::Success).unwrap();
+                None
+            };
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                monitor_process(
+                    host.clone(),
+                    DirectProvider::Codex,
+                    correlation_id,
+                    spawned.child,
+                    None,
+                    Some(cancellation.clone()),
+                    if cancelled { None } else { Some(exit_rx) },
+                    Some(control),
+                    writer,
+                    notices_rx,
+                    commands_rx,
+                ),
+            )
+            .await
+            .unwrap();
+            assert!(cancellation.is_cancelled());
+            tokio::time::timeout(Duration::from_secs(1), adapter)
+                .await
+                .unwrap()
+                .unwrap();
+            if let Some(reply) = cancel_reply {
+                reply.await.unwrap().unwrap();
+            }
+            let observations = host.response_after(0).await.unwrap();
+            assert!(observations.terminal);
+            let expected_status = if cancelled {
+                AgentRunStatus::Cancelled
+            } else {
+                AgentRunStatus::Succeeded
+            };
+            assert!(observations.events.iter().any(|event| matches!(
+                &event.payload,
+                HostEventPayload::Terminal { status, error: None, audit_manifest, .. }
+                    if *status == expected_status
+                        && audit_manifest.integrity_status == NativeAuditIntegrityStatus::Complete
+            )));
+        }
+    }
+
+    #[tokio::test]
+    async fn natural_process_exit_drains_adapter_tail_without_cancelling_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = test_host(&directory.path().join("events.jsonl")).await;
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = tokio::process::Command::new("cmd.exe");
+            command.args(["/d", "/c", "exit 0"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command.group_spawn_no_window().unwrap();
+        let output = executors::stdout_dup::create_stdout_pipe_writer(&mut child).unwrap();
+        // Make the OS exit observable before the adapter flushes its last frame.
+        assert!(child.wait().await.unwrap().success());
+        let writer = test_audit_writer(directory.path(), &host);
+        let frames_path = writer.lock().await.paths().1.to_path_buf();
+        let cancellation = CancellationToken::new();
+        let output: Arc<Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>> =
+            Arc::new(Mutex::new(Box::new(output)));
+        let control = Arc::new(RetainedOutputControl {
+            _writer: output.clone(),
+        });
+        let tail = b"{\"type\":\"result\",\"text\":\"tail after OS exit\"}\n";
+        let adapter_cancellation = cancellation.clone();
+        let adapter = tokio::spawn(async move {
+            tokio::select! {
+                _ = adapter_cancellation.cancelled() => return false,
+                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            }
+            let mut output = output.lock().await;
+            output.write_all(tail).await.unwrap();
+            output.flush().await.unwrap();
+            true
+        });
+        let (notices_tx, notices_rx) = mpsc::unbounded_channel();
+        let correlation_id = Uuid::new_v4();
+        spawn_stdout_reader(
+            DirectProvider::Codex,
+            correlation_id,
+            child.inner().stdout.take().unwrap(),
+            writer.clone(),
+            notices_tx.clone(),
+        );
+        spawn_stderr_reader(
+            correlation_id,
+            child.inner().stderr.take().unwrap(),
+            writer.clone(),
+            notices_tx,
+        );
+        let (_commands_tx, commands_rx) = mpsc::channel(1);
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            monitor_process(
+                host.clone(),
+                DirectProvider::Codex,
+                correlation_id,
+                child,
+                None,
+                Some(cancellation.clone()),
+                None,
+                Some(control),
+                writer,
+                notices_rx,
+                commands_rx,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(!cancellation.is_cancelled());
+        assert!(
+            adapter.await.unwrap(),
+            "adapter was cancelled before flushing"
+        );
+        let observations = host.response_after(0).await.unwrap();
+        assert!(observations.terminal);
+        assert!(observations.events.iter().any(|event| matches!(
+            &event.payload,
+            HostEventPayload::Terminal {
+                status: AgentRunStatus::Succeeded, error: None, audit_manifest, ..
+            } if audit_manifest.integrity_status == NativeAuditIntegrityStatus::Complete
+                && audit_manifest.frame_count == 1
+        )));
+        let content = tokio::fs::read_to_string(frames_path).await.unwrap();
+        let frame: NativeAuditFrame = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(frame.payload_bytes().unwrap(), tail);
     }
 
     #[tokio::test]

@@ -4,13 +4,13 @@ import { cn } from '@/shared/lib/utils';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { useWorkspaceFileContent } from '../model/useWorkspaceFileContent';
 import type { WorkspaceFilePreviewTarget } from '../model/types';
-import { classifyWorkspaceFile } from '../model/fileClassification';
-import { scopeWorkspaceFileRawUrl } from '../model/workspaceFileRawUrl';
+import { classifyWorkspaceFile } from '@/shared/lib/fileClassification';
+import { scopeWorkspaceFileRawUrl } from '@/shared/lib/workspaceFileRawUrl';
 import { WorkspaceFileEmptyState } from './WorkspaceFileEmptyState';
 import { WorkspaceFilePreviewHeader } from './WorkspaceFilePreviewHeader';
-import { CodeTextViewer } from './viewers/CodeTextViewer';
-import { MarkdownFileViewer } from './viewers/MarkdownFileViewer';
-import { ImageFileViewer } from './viewers/ImageFileViewer';
+import { CodeTextViewer } from '@/shared/components/file-viewers/CodeTextViewer';
+import { MarkdownFileViewer } from '@/shared/components/file-viewers/MarkdownFileViewer';
+import { ImageFileViewer } from '@/shared/components/file-viewers/ImageFileViewer';
 import { UnsupportedFileViewer } from './viewers/UnsupportedFileViewer';
 
 interface WorkspaceFilePreviewPanelProps {
@@ -93,7 +93,23 @@ export function WorkspaceFilePreviewPanel({
         ) : displayInfo?.viewKind === 'markdown' ? (
           <MarkdownFileViewer content={data.content ?? ''} />
         ) : displayInfo?.viewKind === 'image' ? (
-          <ImageFileViewer src={scopedRawUrl} alt={data.name} />
+          <ImageFileViewer
+            key={scopedRawUrl}
+            src={scopedRawUrl}
+            alt={data.name}
+            fallback={
+              <WorkspaceFileEmptyState
+                title={
+                  scopedRawUrl ? 'Image failed to load' : 'Image unavailable'
+                }
+                description={
+                  scopedRawUrl
+                    ? 'Open the raw file if you need to inspect it directly.'
+                    : 'The backend did not provide a raw image URL.'
+                }
+              />
+            }
+          />
         ) : displayInfo?.viewKind === 'code' ||
           displayInfo?.viewKind === 'text' ? (
           <CodeTextViewer

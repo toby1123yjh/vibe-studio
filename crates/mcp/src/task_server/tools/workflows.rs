@@ -50,6 +50,13 @@ enum WorkflowActivePolicy {
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum WorkflowDeliveryIntent {
+    Full,
+    Partial,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct WorkflowSubmission {
     #[schemars(
@@ -75,6 +82,24 @@ struct WorkflowSubmission {
         description = "Optional real user input message ID from this turn, never a runtime notification. Backend verifies provenance."
     )]
     source_message_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Use partial only for explicit summary of completed split work. This preserves all failed/missing items and never cancels other work."
+    )]
+    delivery_intent: Option<WorkflowDeliveryIntent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Exact accepted source split batch required for partial delivery.")]
+    source_batch_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct WorkflowDispatchRequest {
+    #[schemars(description = "Stable request key; reuse it when a reply is lost")]
+    request_id: String,
+    batch_id: Uuid,
+    #[schemars(description = "Project-relative path to the file-backed dispatch.json")]
+    dispatch_path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -170,6 +195,16 @@ impl McpServer {
         Parameters(request): Parameters<WorkflowSubmission>,
     ) -> ToolCallResult {
         self.workflow_tool("workflow_submit", &request).await
+    }
+
+    #[tool(
+        description = "Accept the file-backed dispatch plan for one task-splitter batch. The runtime validates tasks.json, frozen graph scope, hashes and dependencies before scheduling; writing the file alone never starts work."
+    )]
+    async fn workflow_dispatch(
+        &self,
+        Parameters(request): Parameters<WorkflowDispatchRequest>,
+    ) -> ToolCallResult {
+        self.workflow_tool("workflow_dispatch", &request).await
     }
 
     #[tool(
@@ -349,6 +384,7 @@ mod tests {
             "workflow_context",
             "workflow_list",
             "workflow_submit",
+            "workflow_dispatch",
             "workflow_stop",
             "workflow_respond",
         ] {

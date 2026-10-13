@@ -6,6 +6,7 @@ use db::models::{
     session::{Session, SessionError},
     workspace::{Workspace, WorkspaceKind},
 };
+use deployment::Deployment;
 use executors::{
     actions::SelectedSkill,
     executors::provider_adapter::DirectProvider,
@@ -26,7 +27,7 @@ use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
 
-pub(super) struct AgentRunLaunch {
+pub(crate) struct AgentRunLaunch {
     pub intent: AgentRunIntent,
     pub mode: RunAttemptMode,
     pub prompt: String,
@@ -36,12 +37,12 @@ pub(super) struct AgentRunLaunch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AgentRunDispatch {
+pub(crate) enum AgentRunDispatch {
     Immediate,
     Reserved,
 }
 
-pub(super) async fn has_active_agent_run_for_session(
+pub(crate) async fn has_active_agent_run_for_session(
     pool: &SqlitePool,
     session_id: Uuid,
 ) -> Result<bool, sqlx::Error> {
@@ -77,7 +78,7 @@ pub(super) async fn has_active_agent_run_for_workspace(
     .await
 }
 
-pub(super) async fn validate_session_executor(
+pub(crate) async fn validate_session_executor(
     pool: &SqlitePool,
     session: &Session,
     executor_config: &ExecutorConfig,
@@ -103,7 +104,7 @@ pub(super) async fn validate_session_executor(
     Ok(())
 }
 
-pub(super) fn direct_provider(
+pub(crate) fn direct_provider(
     executor_config: &ExecutorConfig,
 ) -> Result<DirectProvider, ApiError> {
     DirectProvider::from_base_agent(executor_config.executor).ok_or_else(|| {
@@ -114,7 +115,7 @@ pub(super) fn direct_provider(
     })
 }
 
-pub(super) async fn latest_provider_session(
+pub(crate) async fn latest_provider_session(
     pool: &SqlitePool,
     session_id: Uuid,
     provider: DirectProvider,
@@ -257,7 +258,7 @@ pub(super) fn validate_native_resume_identity(
     Ok(())
 }
 
-pub(super) async fn validate_session_provider_binding(
+pub(crate) async fn validate_session_provider_binding(
     pool: &SqlitePool,
     session_id: Uuid,
     provider: DirectProvider,
@@ -389,6 +390,74 @@ pub(super) async fn create_agent_run(
     launch: AgentRunLaunch,
     dispatch: AgentRunDispatch,
 ) -> Result<AgentRunPortSnapshot, ApiError> {
+    // Use the same gate as queued-message consumption and Session deletion.
+    // The earlier route preflight alone cannot prevent competing follow-ups
+    // or a system workflow handover from starting in the same native Session.
+    let guard = deployment
+        .queued_message_service()
+        .lock_session(session.id)
+        .await;
+    create_agent_run_under_session_guard(
+        deployment,
+        session,
+        workspace,
+        workspace_path,
+        launch,
+        AgentRunOrigin {
+            dispatch,
+            request_id: Uuid::new_v4(),
+            agent_run_id: Uuid::new_v4(),
+            turn_id: Uuid::new_v4(),
+            run_attempt_id: Uuid::new_v4(),
+            correlation_id: Uuid::new_v4(),
+            message_id: Uuid::new_v4(),
+            role: AgentRuntimeMessageRole::User,
+            created_at: Utc::now(),
+        },
+        &guard,
+    )
+    .await
+}
+
+/// System turns supply their durable origin before any launch is possible.
+/// They never enter, consume or replace the ordinary user's queued-message slot.
+pub(crate) struct AgentRunOrigin {
+    pub dispatch: AgentRunDispatch,
+    pub request_id: Uuid,
+    pub agent_run_id: Uuid,
+    pub turn_id: Uuid,
+    pub run_attempt_id: Uuid,
+    pub correlation_id: Uuid,
+    pub message_id: Uuid,
+    pub role: AgentRuntimeMessageRole,
+    pub created_at: DateTime<Utc>,
+}
+
+pub(crate) async fn create_agent_run_under_session_guard(
+    deployment: &DeploymentImpl,
+    session: &Session,
+    workspace: &Workspace,
+    workspace_path: String,
+    mut launch: AgentRunLaunch,
+    origin: AgentRunOrigin,
+    _session_guard: &tokio::sync::OwnedMutexGuard<()>,
+) -> Result<AgentRunPortSnapshot, ApiError> {
+    let pool = &deployment.db().pool;
+    let current_session = Session::find_by_id(pool, session.id)
+        .await?
+        .ok_or(SessionError::NotFound)?;
+    if current_session.workspace_id != workspace.id {
+        return Err(ApiError::Conflict(
+            "Session workspace changed before launch".into(),
+        ));
+    }
+    if has_active_agent_run_for_session(pool, session.id).await? {
+        return Err(ApiError::Conflict(
+            "A coding agent is already running for this session. Queue the follow-up instead."
+                .into(),
+        ));
+    }
+    validate_session_executor(pool, &current_session, &launch.executor_config).await?;
     crate::workflow_runtime::mcp_launch::validate_main_agent_launch(
         deployment,
         session.id,
@@ -398,6 +467,28 @@ pub(super) async fn create_agent_run(
     .await?;
     let provider = direct_provider(&launch.executor_config)?;
     let runtime_profile_id = launch.executor_config.profile_id().cache_key();
+    if launch.provider_session.is_none() {
+        // Preflight may have preceded another turn's completion. Re-read the
+        // native binding under the shared gate instead of opening a new native
+        // conversation from a stale Initial request.
+        launch.provider_session =
+            latest_provider_session(pool, session.id, provider, &runtime_profile_id).await?;
+        if launch.provider_session.is_some() && launch.intent == AgentRunIntent::Initial {
+            launch.intent = AgentRunIntent::FollowUp;
+            launch.mode = RunAttemptMode::Resume;
+        }
+    }
+    validate_session_provider_binding(
+        pool,
+        session.id,
+        provider,
+        &runtime_profile_id,
+        launch.provider_session.as_ref(),
+        &launch.executor_config,
+        launch.selected_skills.as_ref(),
+        Some(Path::new(&workspace_path)),
+    )
+    .await?;
     let capability_snapshot =
         direct_provider_capability_snapshot(provider, runtime_profile_id.clone());
     validate_required_capabilities(
@@ -406,12 +497,17 @@ pub(super) async fn create_agent_run(
         &capability_snapshot,
     )?;
 
-    let request_id = Uuid::new_v4();
-    let agent_run_id = Uuid::new_v4();
-    let turn_id = Uuid::new_v4();
-    let run_attempt_id = Uuid::new_v4();
-    let correlation_id = Uuid::new_v4();
-    let created_at = Utc::now();
+    let AgentRunOrigin {
+        dispatch,
+        request_id,
+        agent_run_id,
+        turn_id,
+        run_attempt_id,
+        correlation_id,
+        message_id,
+        role,
+        created_at,
+    } = origin;
     let idempotency_key = format!("session:{}:request:{request_id}:create", session.id);
     let workspace = WorkspaceReference {
         workspace_id: workspace.id,
@@ -435,8 +531,8 @@ pub(super) async fn create_agent_run(
         provider_id: provider.id().to_string(),
         workspace: workspace.clone(),
         input: CanonicalMessage {
-            message_id: Uuid::new_v4(),
-            role: AgentRuntimeMessageRole::User,
+            message_id,
+            role,
             content: launch.prompt,
         },
         created_at,

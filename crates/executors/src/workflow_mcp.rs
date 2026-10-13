@@ -39,11 +39,12 @@ pub const FORWARDED_ENV_KEYS: [&str; 6] = [
     TOKEN_ENV,
     READY_ADDRESS_ENV,
 ];
-pub const WORKFLOW_TOOL_NAMES: [&str; 6] = [
+pub const WORKFLOW_TOOL_NAMES: [&str; 7] = [
     "workflow_context",
     "workflow_list",
     "workflow_get",
     "workflow_submit",
+    "workflow_dispatch",
     "workflow_stop",
     "workflow_respond",
 ];

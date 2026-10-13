@@ -14,6 +14,7 @@ import {
 } from '../model/workflowNodeSchemas';
 import { getWorkflowAgentDisplay } from '../model/workflowAgentDisplay';
 import { AgentIcon } from '@/shared/components/AgentIcon';
+import { getWorkflowSplitScopes } from '../model/workflowSplitScope';
 import { WorkflowNodeFieldRenderer } from './WorkflowNodeFieldRenderer';
 import { WorkflowAgentExecutorField } from './WorkflowAgentExecutorField';
 import { Plus, Settings2, Trash2 } from 'lucide-react';
@@ -110,7 +111,18 @@ export function WorkflowNodeInspector({
   const simpleFields = schemaFields
     .filter(isSimpleField)
     .filter((field) => shouldRenderSimpleField(type, data, field))
-    .map((field) => getLocalizedField(field, t));
+    .map((field) =>
+      type === 'task_splitter' && field.key === 'prompt_template'
+        ? { ...field, label: t('workflow.split.instructions') }
+        : getLocalizedField(field, t)
+    );
+  const splitScopes = graph ? getWorkflowSplitScopes(graph) : null;
+  const splitScope = splitScopes?.scopes.find(
+    (scope) => scope.splitterNodeId === node.id
+  );
+  const splitScopeIssue = splitScopes?.issues.find(
+    (issue) => issue.nodeId === node.id
+  );
   const hasConditionBranches = schemaFields.some(
     (field) => field.type === 'condition_branches'
   );
@@ -160,7 +172,7 @@ export function WorkflowNodeInspector({
         />
       ))}
 
-      {type === 'agent' && onChange ? (
+      {type === 'agent' || type === 'task_splitter' ? (
         <WorkflowAgentExecutorField
           key={node.id}
           value={data.executor_config}
@@ -169,6 +181,46 @@ export function WorkflowNodeInspector({
             handleChange('executor_config', executorConfig)
           }
         />
+      ) : null}
+
+      {type === 'task_splitter' ? (
+        <section className="space-y-3 border-t border-secondary/60 pt-4">
+          <h3 className="text-xs font-semibold text-high">
+            {t('workflow.split.fixedScope')}
+          </h3>
+          <p className="text-xs leading-relaxed text-low">
+            {t('workflow.split.scopeHint')}
+          </p>
+          {splitScope ? (
+            <dl className="space-y-2 text-xs">
+              <div>
+                <dt className="text-low">{t('workflow.split.executors')}</dt>
+                <dd className="mt-1 space-y-1 text-high">
+                  {splitScope.candidateNodeIds.map((id) => (
+                    <p key={id}>
+                      {graph?.nodes.find((candidate) => candidate.id === id)
+                        ?.data.display_name || id}
+                    </p>
+                  ))}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-low">{t('workflow.split.summaryExit')}</dt>
+                <dd className="mt-1 text-high">
+                  {graph?.nodes.find(
+                    (candidate) => candidate.id === splitScope.summaryNodeId
+                  )?.data.display_name || splitScope.summaryNodeId}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-xs text-warning" role="status">
+              {splitScopeIssue
+                ? t(`workflow.split.scopeErrors.${splitScopeIssue.code}`)
+                : t('workflow.split.scopeErrors.missingExecutors')}
+            </p>
+          )}
+        </section>
       ) : null}
 
       {type === 'condition' ? (

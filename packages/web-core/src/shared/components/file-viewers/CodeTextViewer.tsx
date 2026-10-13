@@ -1,6 +1,6 @@
 import { cn } from '@/shared/lib/utils';
 
-interface CodeTextViewerProps {
+export interface CodeTextViewerProps {
   content: string;
   language?: string | null;
   className?: string;

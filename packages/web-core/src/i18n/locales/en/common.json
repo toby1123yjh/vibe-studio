@@ -514,6 +514,10 @@
       "newStageDescription": "Group related Nodes in one stage."
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "Task Splitter",
+        "summary": "Creates file-backed subtasks"
+      },
       "start": {
         "label": "Start",
         "summary": "Entry point"
@@ -545,11 +549,79 @@
         "attemptB": "Attempt B"
       }
     },
+    "split": {
+      "output": "Output",
+      "defaultPrompt": "Break the incoming work into independent subtasks. Write tasks.json and one instruction file per subtask under the workflow control directory. Include dependencies and point to the relevant source files.",
+      "instructions": "Splitting instructions",
+      "fixedScope": "Dispatch scope",
+      "scopeHint": "Connect this node to the candidate Agent executors. Each executor must lead to the same summary exit. The main Agent chooses assignments within these connections.",
+      "executors": "Candidate executors",
+      "summaryExit": "Summary exit",
+      "scopeErrors": {
+        "missingExecutors": "Connect the splitter to at least one Agent executor.",
+        "invalidExecutor": "The splitter can only connect directly to distinct Agent executors.",
+        "competingExecutorInputs": "A split executor cannot have another incoming trigger.",
+        "missingSummary": "Each split executor needs one default connection to the summary exit.",
+        "differentSummaries": "All split executors must connect to the same summary exit.",
+        "invalidSummary": "The summary exit must be a separate Agent, Transform, or End node.",
+        "competingSummaryInputs": "The summary exit cannot have incoming triggers outside this split scope.",
+        "overlappingScopes": "Split scopes cannot share an executor or summary exit."
+      },
+      "subtasks": "Internal subtasks",
+      "progress": "{{completed}} / {{total}} completed",
+      "failedCount": "{{count}} failed",
+      "controlFiles": "Task manifest and dispatch plan",
+      "waitingDispatch": "Waiting for main Agent dispatch",
+      "mainHandover": "Main Agent dispatch turn",
+      "openMainSession": "Open main session",
+      "openExecutionSession": "Open execution session",
+      "stagesHint": "Stages run in order. Subtasks in the same stage run in parallel with separate sessions.",
+      "stage": "Stage {{index}}",
+      "pendingAssignments": "Awaiting assignment",
+      "unassigned": "No executor assigned",
+      "dependsOn": "Depends on: {{titles}}",
+      "handoffFiles": "Handoff and delivery files",
+      "requestFile": "Requirements file",
+      "currentFileHint": "Preview and download the current file. Changed or deleted files cannot be restored from this reference.",
+      "downloadFile": "Download file",
+      "loadingFile": "Loading file…",
+      "fileFailed": "Could not read this workflow file.",
+      "fileTruncated": "Preview truncated. Download the file to read the full content.",
+      "downloadToView": "Download this file to view it.",
+      "requestPartialSummary": "Summarize completed work",
+      "partialSummaryHint": "Creates a partial summary using available results and lists unfinished subtasks. Ongoing work finishes first; it is not stopped.",
+      "partialSummaryRequest": "Create a partial delivery from the accepted split batch at {{path}}. Read the available handoff files and explicitly describe every missing subtask and its reason.",
+      "partialSummaryFailed": "Could not request a partial summary.",
+      "partialSummaryAccepted": "Partial summary accepted. It will run after the current work has settled.",
+      "openPartialSummary": "Open partial summary",
+      "partialDelivery": "Partial delivery",
+      "fullDelivery": "Full delivery",
+      "partialDeliveryHint": "The summary covers completed work only. The following subtasks remain unfinished.",
+      "missingSubtasks": "Unfinished subtasks",
+      "deliveryFilesHint": "Files referenced in node handoffs may include existing materials. Agent file changes are listed separately below.",
+      "openSourceRun": "Open source run",
+      "states": {
+        "pending": "Pending",
+        "accepted": "Accepted",
+        "dispatching": "Dispatching",
+        "running": "Running",
+        "partial": "Partially completed",
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "cancelled": "Stopped",
+        "queued": "Queued",
+        "blocked": "Dependency not met",
+        "claimed": "Starting",
+        "completed": "Completed",
+        "unknown": "Unknown state"
+      }
+    },
     "nodePicker": {
       "addNode": "Add Node",
       "chooseNodeType": "Choose Node type",
       "descriptions": {
         "agent": "AI agent that carries out a Task",
+        "task_splitter": "Create subtasks as files for the main Agent to assign",
         "condition": "Route work across connected branches",
         "human_gate": "Wait for human approval",
         "transform": "Transform data between Nodes",

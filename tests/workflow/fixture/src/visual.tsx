@@ -14,6 +14,7 @@ import { workflowTemplateQueryKeys } from "@/shared/hooks/useWorkflowTemplates";
 import { WorkflowCanvas } from "@/features/workflow/ui/WorkflowCanvas";
 import { WorkflowConfigurationFrame } from "@/features/workflow/ui/WorkflowConfigurationFrame";
 import { WorkflowRunCanvasTab } from "@/features/workflow/ui/WorkflowRunCanvasTab";
+import { WorkflowRunResult } from "@/features/workflow/ui/WorkflowRunResult";
 import {
   getWorkflowNodeActionGate,
   getWorkflowNodeExecutionForWork,
@@ -74,9 +75,25 @@ const graph: WorkflowGraph = migrateWorkflowGraph({
 const client = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 });
+const fileDriven =
+  new URLSearchParams(location.search).get("mode") === "file-run";
+const fixtureGraph: WorkflowGraph = fileDriven
+  ? {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === "plan"
+          ? {
+              ...node,
+              type: "task_splitter",
+              data: { ...node.data, display_name: "Split the task" },
+            }
+          : node,
+      ),
+    }
+  : graph;
 client.setQueryData(workflowTemplateQueryKeys.detail("visual-template"), {
   id: "visual-template",
-  graph_json: JSON.stringify(graph),
+  graph_json: JSON.stringify(fixtureGraph),
 });
 
 // Navigation must never accidentally leave the isolated fixture or run an Agent.
@@ -121,6 +138,10 @@ function makeRun(status: "running" | "succeeded"): WorkflowRunResponse {
     created_at: "2026-09-07T00:00:00Z",
     updated_at: "2026-09-07T00:00:01Z",
     nodes: [],
+    split_batches: [],
+    handoffs: [],
+    delivery: null,
+    request_path: null,
     runtime_view: {
       run_id: "visual-run",
       status,
@@ -131,7 +152,7 @@ function makeRun(status: "running" | "succeeded"): WorkflowRunResponse {
       pending_node_count: status === "running" ? 1 : 0,
       waiting_node_count: 0,
       failed_node_count: 0,
-      node_work: graph.nodes.map((node) => ({
+      node_work: fixtureGraph.nodes.map((node) => ({
         node_id: node.id,
         node_type: node.type,
         iteration: 0n,
@@ -249,13 +270,157 @@ function makeReusedRun(): WorkflowRunResponse {
   return run;
 }
 
-const runtime = new URLSearchParams(location.search).get("mode") === "run";
+function makeFileDrivenRun(): WorkflowRunResponse {
+  const run = makeRun("running");
+  run.attempt_id = "visual-instance";
+  run.request_path = ".vibe-kanban/workflows/visual-run/request.md";
+  run.split_batches = [
+    {
+      id: "visual-batch",
+      run_id: run.id,
+      node_execution_id: "split-execution",
+      splitter_node_id: "plan",
+      summary_node_id: "end",
+      manifest_path: ".vibe-kanban/workflows/visual-run/tasks.json",
+      manifest_sha256: "a".repeat(64),
+      dispatch_path: ".vibe-kanban/workflows/visual-run/dispatch.json",
+      state: "running",
+      error_text: null,
+      source_batch_id: null,
+      summary_node_execution_id: null,
+      handover: {
+        state: "completed",
+        session_id: "main-session",
+        agent_run_id: "main-run",
+        run_attempt_id: "main-attempt",
+        error_text: null,
+      },
+      subtasks: [
+        {
+          id: "research",
+          subtask_id: "research",
+          title: "Research the requirements",
+          instruction_path:
+            ".vibe-kanban/workflows/visual-run/instructions/research.md",
+          node_id: "build",
+          stage_index: 0,
+          state: "succeeded",
+          depends_on: [],
+          node_execution_id: "research-execution",
+          session_id: "research-session",
+          agent_run_id: "research-run",
+          error_text: null,
+          handoff_path:
+            ".vibe-kanban/workflows/visual-run/research/handoff.json",
+        },
+        {
+          id: "review",
+          subtask_id: "review",
+          title: "Review the source material",
+          instruction_path:
+            ".vibe-kanban/workflows/visual-run/instructions/review.md",
+          node_id: "build",
+          stage_index: 0,
+          state: "failed",
+          depends_on: [],
+          node_execution_id: "review-execution",
+          session_id: "review-session",
+          agent_run_id: "review-run",
+          error_text: "Source material was removed",
+          handoff_path: null,
+        },
+        {
+          id: "independent",
+          subtask_id: "independent",
+          title: "Prepare independent analysis",
+          instruction_path:
+            ".vibe-kanban/workflows/visual-run/instructions/analysis.md",
+          node_id: "build",
+          stage_index: 0,
+          state: "running",
+          depends_on: [],
+          node_execution_id: "analysis-execution",
+          session_id: "analysis-session",
+          agent_run_id: "analysis-run",
+          error_text: null,
+          handoff_path: null,
+        },
+        {
+          id: "followup",
+          subtask_id: "followup",
+          title: "Use the review result",
+          instruction_path:
+            ".vibe-kanban/workflows/visual-run/instructions/followup.md",
+          node_id: "build",
+          stage_index: 1,
+          state: "blocked",
+          depends_on: ["review"],
+          node_execution_id: null,
+          session_id: null,
+          agent_run_id: null,
+          error_text: "Review dependency failed",
+          handoff_path: null,
+        },
+      ],
+    },
+  ];
+  run.handoffs = [
+    {
+      node_execution_id: "research-execution",
+      run_id: run.id,
+      handoff_path: ".vibe-kanban/workflows/visual-run/research/handoff.json",
+      files: [
+        { path: "deliverables/research report.md", sha256: "b".repeat(64) },
+      ],
+    },
+  ];
+  const view = run.runtime_view!;
+  view.node_work = view.node_work.map((work) => ({
+    ...work,
+    orchestration_node_execution_id: `orchestration-${work.node_id}`,
+    active_agent_run_id: work.node_id === "build" ? "analysis-run" : null,
+  }));
+  return run;
+}
+
+function makePartialRun(): WorkflowRunResponse {
+  const run = makeFileDrivenRun();
+  run.id = "partial-run";
+  run.status = "succeeded";
+  run.split_batches = [];
+  run.output_text =
+    "Available research summarized. The review remains incomplete.";
+  run.delivery = {
+    completeness: "partial",
+    source_run_id: "visual-run",
+    source_batch_id: "visual-batch",
+    missing_subtasks: [
+      {
+        subtask_id: "review",
+        title: "Review the source material",
+        state: "failed",
+        reason: "Source material was removed",
+      },
+    ],
+  };
+  run.runtime_view = {
+    ...run.runtime_view!,
+    run_id: run.id,
+    status: "succeeded",
+  };
+  return run;
+}
+
+const runtime =
+  fileDriven || new URLSearchParams(location.search).get("mode") === "run";
 
 function Fixture() {
   const { setTheme } = useTheme();
-  const [currentGraph, setGraph] = useState(graph);
+  const [currentGraph, setGraph] = useState(fixtureGraph);
   const [selection, setSelection] = useState<string | null>(null);
-  const [run, setRun] = useState(() => makeRun("running"));
+  const [run, setRun] = useState(() =>
+    fileDriven ? makeFileDrivenRun() : makeRun("running"),
+  );
   const runtimeView = getWorkflowRuntimeView(run);
   const runtimeSummary = buildWorkflowRunDashboardSummary(run, runtimeView);
   const reusedWork = runtimeView.node_work.find(
@@ -274,6 +439,34 @@ function Fixture() {
         <button onClick={() => setTheme(ThemeMode.SYSTEM)}>System</button>
         {runtime ? (
           <>
+            {fileDriven ? (
+              <>
+                <WorkflowRunResult run={run} projectId="visual-project" />
+                <button onClick={() => setRun(makePartialRun())}>
+                  Show partial delivery
+                </button>
+                <button
+                  onClick={() => {
+                    const next = makeFileDrivenRun();
+                    next.split_batches[0].state = "pending";
+                    next.split_batches[0].dispatch_path = null;
+                    next.split_batches[0].handover!.state = "claimed";
+                    next.split_batches[0].subtasks =
+                      next.split_batches[0].subtasks.map((task) => ({
+                        ...task,
+                        state: "pending",
+                        node_id: null,
+                        node_execution_id: null,
+                        session_id: null,
+                        handoff_path: null,
+                      }));
+                    setRun(next);
+                  }}
+                >
+                  Await dispatch
+                </button>
+              </>
+            ) : null}
             <button onClick={() => setRun(makeRun("succeeded"))}>
               Complete run
             </button>

@@ -499,6 +499,10 @@
       "newStageDescription": "把相关智能体放在同一阶段内。"
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "任务拆分",
+        "summary": "生成文件形式的子任务"
+      },
       "start": {
         "label": "开始",
         "summary": "工作流入口"
@@ -530,11 +534,79 @@
         "attemptB": "执行 B"
       }
     },
+    "split": {
+      "output": "输出",
+      "defaultPrompt": "将输入工作拆成独立子任务，在工作流控制目录中写入 tasks.json 和每项子任务的说明文件。记录依赖关系，并引用相关源文件。",
+      "instructions": "拆分要求",
+      "fixedScope": "可分配范围",
+      "scopeHint": "将此节点连到候选 Agent 执行节点，每个执行节点都连到同一个汇总出口。主 Agent 在这些连线范围内安排分工。",
+      "executors": "候选执行节点",
+      "summaryExit": "汇总出口",
+      "scopeErrors": {
+        "missingExecutors": "请将拆分节点连接到至少一个 Agent 执行节点。",
+        "invalidExecutor": "拆分节点只能直接连接到不同的 Agent 执行节点。",
+        "competingExecutorInputs": "拆分的执行节点不能再接收其他入口的触发。",
+        "missingSummary": "每个执行节点都需要一条默认连线通向汇总出口。",
+        "differentSummaries": "所有执行节点必须连接到同一个汇总出口。",
+        "invalidSummary": "汇总出口必须是独立的 Agent、Transform 或 End 节点。",
+        "competingSummaryInputs": "汇总出口不能接收此拆分范围以外的触发。",
+        "overlappingScopes": "不同拆分范围不能共用执行节点或汇总出口。"
+      },
+      "subtasks": "内部子任务",
+      "progress": "已完成 {{completed}} / {{total}} 项",
+      "failedCount": "{{count}} 项失败",
+      "controlFiles": "任务清单与分工文件",
+      "waitingDispatch": "等待主 Agent 分工",
+      "mainHandover": "主 Agent 分工轮次",
+      "openMainSession": "打开主会话",
+      "openExecutionSession": "打开执行会话",
+      "stagesHint": "各阶段依次执行；同一阶段的子任务并行执行，使用独立会话。",
+      "stage": "阶段 {{index}}",
+      "pendingAssignments": "等待分配",
+      "unassigned": "尚未分配执行节点",
+      "dependsOn": "依赖：{{titles}}",
+      "handoffFiles": "交接与交付文件",
+      "requestFile": "需求文件",
+      "currentFileHint": "预览和下载的是当前文件；此引用无法恢复已修改或删除的历史内容。",
+      "downloadFile": "下载文件",
+      "loadingFile": "正在读取文件…",
+      "fileFailed": "无法读取此工作流文件。",
+      "fileTruncated": "预览已截断，下载文件可查看完整内容。",
+      "downloadToView": "下载文件后查看。",
+      "requestPartialSummary": "汇总已完成部分",
+      "partialSummaryHint": "根据已有成果生成部分汇总，并列明未完成项。仍在执行的工作会先结束，不会被停止。",
+      "partialSummaryRequest": "针对 {{path}} 中已受理的拆分批次生成部分交付。读取可用的交接文件，明确列出每个缺失子任务及其原因。",
+      "partialSummaryFailed": "无法请求部分汇总。",
+      "partialSummaryAccepted": "已受理部分汇总，当前工作结束后执行。",
+      "openPartialSummary": "查看部分汇总",
+      "partialDelivery": "部分交付",
+      "fullDelivery": "完整交付",
+      "partialDeliveryHint": "汇总仅包含已完成的工作，下列子任务仍未完成。",
+      "missingSubtasks": "未完成子任务",
+      "deliveryFilesHint": "节点交接引用可能包含原有材料。Agent 文件变更另列在下方。",
+      "openSourceRun": "查看来源执行",
+      "states": {
+        "pending": "等待中",
+        "accepted": "已受理",
+        "dispatching": "正在分工",
+        "running": "执行中",
+        "partial": "部分完成",
+        "succeeded": "成功",
+        "failed": "失败",
+        "cancelled": "已停止",
+        "queued": "排队中",
+        "blocked": "依赖未满足",
+        "claimed": "启动中",
+        "completed": "已完成",
+        "unknown": "状态未知"
+      }
+    },
     "nodePicker": {
       "addNode": "添加节点",
       "chooseNodeType": "选择节点类型",
       "descriptions": {
         "agent": "执行任务的 AI 智能体",
+        "task_splitter": "将工作拆为子任务文件，由主 Agent 分工",
         "condition": "在已连接的分支之间路由任务",
         "human_gate": "等待人工审批",
         "transform": "转换节点之间的数据",

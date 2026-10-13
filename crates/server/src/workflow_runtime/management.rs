@@ -1,10 +1,17 @@
 //! One management service for the local page, scoped main-Agent MCP and HTTP
 //! integrations. This module does not start a second scheduler or transcript.
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use api_types::CreateTaskRequest;
 use chrono::{DateTime, Utc};
-use db::models::{session::Session, workflow_management::WorkflowMainSessionBinding};
+use db::models::{
+    session::Session,
+    workflow_files::{WorkflowDeliveryCompleteness, WorkflowMissingSubtaskView},
+    workflow_management::WorkflowMainSessionBinding,
+};
 use executors::profile::ExecutorConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -13,6 +20,10 @@ use ts_rs::TS;
 use uuid::Uuid;
 use workflow::{
     WorkflowGraph,
+    dispatch::{dispatch_scope, validate_dispatch},
+    files::{
+        DispatchPlan, SplitTaskManifest, relative_control_path, sha256_bytes, validate_manifest,
+    },
     graph::WorkflowNodeKind,
     rework::{ReworkPlan, ReworkSourceExecution, plan_rework},
 };
@@ -31,6 +42,31 @@ use crate::{
         },
     },
 };
+
+#[path = "batch_rework.rs"]
+mod batch_rework;
+
+/// Submission already has a fixed workspace. Preparing its main Session may
+/// bind to that workspace, but cannot allocate another project directory.
+struct BoundMainWorkspace(Uuid);
+
+#[async_trait::async_trait]
+impl WorkflowWorkspaceResolver for BoundMainWorkspace {
+    async fn create_or_bind_main_workspace(
+        &self,
+        request: WorkflowWorkspaceRequest,
+    ) -> Result<Uuid, ApiError> {
+        if request.existing_workspace_id != Some(self.0) {
+            return Err(ApiError::Conflict(
+                "The workflow's fixed workspace is unavailable".into(),
+            ));
+        }
+        Ok(self.0)
+    }
+    async fn cleanup_created_main_workspace(&self, _: Uuid) -> Result<(), ApiError> {
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +153,30 @@ pub struct WorkflowSubmission {
     #[serde(default)]
     #[ts(optional)]
     pub source_message_id: Option<Uuid>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub delivery_intent: Option<WorkflowDeliveryCompleteness>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub source_batch_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowDispatchRequest {
+    pub request_id: String,
+    pub batch_id: Uuid,
+    /// Project-relative path to the dispatch.json written by the main Agent.
+    pub dispatch_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct AcceptedWorkflowDispatch {
+    pub request_id: String,
+    pub batch_id: Uuid,
+    pub run_id: Uuid,
+    pub assigned_count: u32,
+    pub stage_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -302,6 +362,7 @@ pub async fn read_workflow_context(
                 "rework".into(),
                 "stop".into(),
                 "respond".into(),
+                "dispatch".into(),
             ]
         },
     }))
@@ -540,7 +601,7 @@ pub async fn prepare_workflow_main_session<W: WorkflowWorkspaceResolver>(
     sqlx::query("UPDATE workflow_main_session_requests SET workspace_id=COALESCE(workspace_id,?) WHERE project_id=? AND request_id=?")
         .bind(workspace_id).bind(request.project_id).bind(&request.request_id).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO sessions(id,workspace_id,name,executor,agent_working_dir) VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
-        .bind(session_id).bind(workspace_id).bind(&template.name).bind(format!("{:?}",captured.executor)).bind(agent_working_dir).execute(&mut *tx).await?;
+        .bind(session_id).bind(workspace_id).bind(&template.name).bind(captured.executor.to_string()).bind(agent_working_dir).execute(&mut *tx).await?;
     sqlx::query("UPDATE session_project_memberships SET project_id=? WHERE session_id=?")
         .bind(request.project_id)
         .bind(session_id)
@@ -646,6 +707,8 @@ struct ManagementScope {
     source_message_id: Option<Uuid>,
     namespace: String,
     integration_id: Option<Uuid>,
+    handover_run_id: Option<Uuid>,
+    handover_batch_id: Option<Uuid>,
 }
 
 async fn resolve_scope_in(
@@ -673,7 +736,7 @@ async fn resolve_scope_in(
                 {
                     return Err(ApiError::Unauthorized);
                 }
-                let real:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_runs r JOIN agent_turns t ON t.agent_run_id=r.id WHERE r.id=? AND r.session_id=? AND t.id=? AND json_extract(t.input_message,'$.role')='user')")
+                let real:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_runs r JOIN agent_turns t ON t.agent_run_id=r.id WHERE r.id=? AND r.session_id=? AND t.id=? AND (json_extract(t.input_message,'$.role')='user' OR (json_extract(t.input_message,'$.role')='system' AND EXISTS(SELECT 1 FROM workflow_handover_events e JOIN workflow_runs w ON w.id=e.run_id JOIN workflow_attempts a ON a.id=w.attempt_id WHERE e.agent_run_id=r.id AND e.session_id=r.session_id AND e.turn_id=t.id AND e.state='claimed' AND a.main_session_id=e.session_id AND w.status IN ('running','awaiting_human','awaiting_arena') AND w.error_text IS NULL AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents s WHERE s.run_id=w.id)))))")
                     .bind(agent_run_id).bind(session_id).bind(turn_id).fetch_one(&mut *conn).await?;
                 if !real {
                     return Err(ApiError::Unauthorized);
@@ -704,6 +767,12 @@ async fn resolve_scope_in(
                     ));
                 }
             }
+            let handover: Option<(Uuid, Uuid)> = if scoped {
+                sqlx::query_as("SELECT e.run_id,e.batch_id FROM workflow_handover_events e JOIN agent_turns t ON t.id=e.turn_id WHERE e.agent_run_id=? AND e.turn_id=? AND e.session_id=? AND e.state='claimed' AND json_extract(t.input_message,'$.role')='system'")
+                    .bind(agent_run_id).bind(turn_id).bind(session_id).fetch_optional(&mut *conn).await?
+            } else {
+                None
+            };
             ManagementScope {
                 project_id,
                 issue_id: instance
@@ -727,6 +796,8 @@ async fn resolve_scope_in(
                 },
                 namespace: format!("main-session:{session_id}"),
                 integration_id: None,
+                handover_run_id: handover.map(|identity| identity.0),
+                handover_batch_id: handover.map(|identity| identity.1),
             }
         }
         WorkflowManagementCaller::Instance {
@@ -749,6 +820,8 @@ async fn resolve_scope_in(
                 source_message_id: None,
                 namespace: namespace.clone(),
                 integration_id: *integration_id,
+                handover_run_id: None,
+                handover_batch_id: None,
             }
         }
     };
@@ -797,11 +870,12 @@ async fn insert_agent_sessions_in(
     project_id: Uuid,
     working_dir: Option<&str>,
 ) -> Result<(), ApiError> {
-    for node in graph
-        .nodes
-        .iter_mut()
-        .filter(|node| node.kind == WorkflowNodeKind::Agent)
-    {
+    for node in graph.nodes.iter_mut().filter(|node| {
+        matches!(
+            node.kind,
+            WorkflowNodeKind::Agent | WorkflowNodeKind::TaskSplitter
+        )
+    }) {
         if node.data.session_id.is_some() {
             continue;
         }
@@ -866,6 +940,9 @@ pub async fn submit_workflow(
         .collect::<Result<Vec<_>, _>>()?;
     let mut read_conn = pool.acquire().await?;
     let initial_scope = resolve_scope_in(&mut read_conn, caller).await?;
+    if initial_scope.handover_run_id.is_some() {
+        return Err(ApiError::Forbidden("An automatic dispatch handover cannot submit a new Run; dispatch the accepted batch instead".into()));
+    }
     if let Some(instance_id) = initial_scope.instance_id {
         if let Some(row)=sqlx::query("SELECT run_id,request_hash FROM workflow_run_submissions WHERE caller_namespace=? AND instance_id=? AND request_id=?")
             .bind(&initial_scope.namespace).bind(instance_id).bind(&submission.request_id).fetch_optional(&mut *read_conn).await? {
@@ -885,9 +962,41 @@ pub async fn submit_workflow(
             .fetch_optional(&mut *read_conn)
             .await?
             .flatten();
+    let graph_json: String = if let Some(instance_id) = initial_scope.instance_id {
+        sqlx::query_scalar("SELECT COALESCE(a.frozen_graph_json,w.graph_json) FROM workflow_attempts a JOIN workflows w ON w.id=a.workflow_id WHERE a.id=?")
+            .bind(instance_id).fetch_one(&mut *read_conn).await?
+    } else {
+        sqlx::query_scalar("SELECT graph_json FROM workflows WHERE id=?")
+            .bind(initial_scope.workflow_id)
+            .fetch_one(&mut *read_conn)
+            .await?
+    };
+    let preflight_graph: WorkflowGraph = serde_json::from_str(&graph_json)
+        .map_err(|_| ApiError::Conflict("Workflow graph is invalid".into()))?;
     drop(read_conn);
     // Business task authority must be available before accepting runtime work.
     crate::routes::project_store::read(pool, initial_scope.project_id).await?;
+    if preflight_graph
+        .nodes
+        .iter()
+        .any(|node| node.kind == WorkflowNodeKind::TaskSplitter)
+    {
+        if let Some(issue_id) = initial_scope.issue_id {
+            prepare_workflow_main_session(
+                pool,
+                PrepareWorkflowMainSessionRequest {
+                    project_id: initial_scope.project_id,
+                    workflow_id: initial_scope.publication_id,
+                    request_id: format!("splitter-main:{issue_id}"),
+                    issue_id: Some(issue_id),
+                },
+                &BoundMainWorkspace(workspace_id),
+            )
+            .await?;
+        } else if initial_scope.main_session_id.is_none() {
+            return Err(ApiError::Conflict("A task-splitter workflow requires its original main Agent Session before acceptance".into()));
+        }
+    }
     let working_dir = Session::resolve_agent_working_dir(pool, workspace_id).await?;
     if !materials.is_empty() {
         let mut root = std::path::PathBuf::from(
@@ -912,6 +1021,11 @@ pub async fn submit_workflow(
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut scope = resolve_scope_in(&mut tx, caller).await?;
+    if scope.handover_run_id.is_some() {
+        return Err(ApiError::Forbidden(
+            "An automatic dispatch handover cannot submit a new Run".into(),
+        ));
+    }
     if scope.workspace_id != Some(workspace_id) {
         return Err(ApiError::Conflict(
             "Workflow workspace changed before acceptance".into(),
@@ -1140,13 +1254,13 @@ pub async fn submit_workflow(
     // Node Session allocation is part of acceptance, not a graph author edit.
     sqlx::query("UPDATE workflows SET graph_json=? WHERE id=? AND NOT EXISTS(SELECT 1 FROM workflow_attempts a WHERE a.workflow_id=workflows.id AND a.definition_locked_at IS NOT NULL)")
         .bind(serde_json::to_string(&graph).map_err(|_|ApiError::BadRequest("Invalid graph".into()))?).bind(scope.workflow_id).execute(&mut *tx).await?;
-    let actual_scope = if submission.action == WorkflowSubmissionAction::Retry {
+    let mut actual_scope = if submission.action == WorkflowSubmissionAction::Retry {
         let execution_id = submission.source_node_execution_id.ok_or_else(|| {
             ApiError::BadRequest(
                 "INVALID_RETRY_TARGET: Retry requires source_node_execution_id".into(),
             )
         })?;
-        let node_id:String=sqlx::query_scalar("SELECT node_id FROM node_executions WHERE id=? AND run_id=? AND status='failed' AND node_type IN ('agent','condition','transform')")
+        let node_id:String=sqlx::query_scalar("SELECT n.node_id FROM node_executions n WHERE n.id=?1 AND (n.run_id=?2 OR EXISTS(SELECT 1 FROM workflow_split_subtasks s JOIN workflow_split_batches b ON b.id=s.batch_id WHERE b.run_id=?2 AND s.node_execution_id=n.id AND s.state='failed')) AND n.status='failed' AND n.node_type IN ('agent','task_splitter','condition','transform')")
             .bind(execution_id).bind(submission.source_run_id).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::BadRequest("INVALID_RETRY_TARGET: Retry source must be an actual supported failed NodeExecution of this source Run".into()))?;
         WorkflowSubmissionScope::FromNodes {
             node_ids: vec![node_id],
@@ -1154,6 +1268,16 @@ pub async fn submit_workflow(
     } else {
         submission.scope.clone()
     };
+    let mut batch_request = submission.clone();
+    batch_request.scope = actual_scope.clone();
+    let source_batch_id =
+        match batch_rework::select_batch_in(&mut tx, &graph, &batch_request).await? {
+            Some((batch_id, normalized_scope)) => {
+                actual_scope = normalized_scope;
+                Some(batch_id)
+            }
+            None => None,
+        };
     let roots = match &actual_scope {
         WorkflowSubmissionScope::All => None,
         WorkflowSubmissionScope::FromNodes { node_ids } => Some(node_ids.as_slice()),
@@ -1180,19 +1304,16 @@ pub async fn submit_workflow(
     };
     // Known-invalid settled input is a rejection, not an accepted failed Run.
     // Only a dependency that settles after acceptance may fail its fixed plan.
+    let basis = RunPlanningBasis {
+        action: submission.action,
+        scope: actual_scope.clone(),
+        source_run_id: submission.source_run_id,
+        source_batch_id,
+        source_node_execution_id: submission.source_node_execution_id,
+        partial: submission.delivery_intent == Some(WorkflowDeliveryCompleteness::Partial),
+    };
     let settled_plan = if settled {
-        let source = if let Some(id) = submission.source_run_id {
-            source_executions_in(&mut tx, id).await?
-        } else {
-            Vec::new()
-        };
-        Some(plan_rework(&graph, roots, &source).map_err(|error| {
-            if error.starts_with("Cannot reuse") {
-                ApiError::Conflict(format!("REUSE_UNAVAILABLE: {error}"))
-            } else {
-                ApiError::BadRequest(format!("INVALID_REWORK_SCOPE: {error}"))
-            }
-        })?)
+        Some(plan_submission_in(&mut tx, &graph, workspace_id, &basis).await?)
     } else {
         None
     };
@@ -1224,8 +1345,12 @@ pub async fn submit_workflow(
         Some(&none),
     )
     .await?;
-    sqlx::query("INSERT INTO workflow_run_submissions(run_id,instance_id,caller_namespace,request_id,request_hash,action,material_paths_json,scope_json,source_run_id,source_node_execution_id,source_message_id,active_policy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(run_id).bind(instance_id).bind(&scope.namespace).bind(&submission.request_id).bind(hash).bind(action_name(submission.action)).bind(serde_json::to_string(&submission.material_paths).unwrap_or_else(|_|"[]".into())).bind(serde_json::to_string(&actual_scope).map_err(|_|ApiError::BadRequest("Invalid scope".into()))?).bind(submission.source_run_id).bind(submission.source_node_execution_id).bind(scope.source_message_id).bind(submission.active_policy.map(policy_name)).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_run_submissions(run_id,instance_id,caller_namespace,request_id,request_hash,action,material_paths_json,scope_json,source_run_id,source_node_execution_id,source_message_id,active_policy,source_batch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(run_id).bind(instance_id).bind(&scope.namespace).bind(&submission.request_id).bind(hash).bind(action_name(submission.action)).bind(serde_json::to_string(&submission.material_paths).unwrap_or_else(|_|"[]".into())).bind(serde_json::to_string(&actual_scope).map_err(|_|ApiError::BadRequest("Invalid scope".into()))?).bind(submission.source_run_id).bind(submission.source_node_execution_id).bind(scope.source_message_id).bind(submission.active_policy.map(policy_name)).bind(source_batch_id).execute(&mut *tx).await?;
+    if basis.partial {
+        sqlx::query("INSERT INTO workflow_run_deliveries(run_id,completeness,source_run_id,source_batch_id) VALUES (?,'partial',?,?) ON CONFLICT(run_id) DO UPDATE SET completeness='partial',source_run_id=excluded.source_run_id,source_batch_id=excluded.source_batch_id")
+            .bind(run_id).bind(basis.source_run_id).bind(source_batch_id).execute(&mut *tx).await?;
+    }
     if !settled && submission.active_policy == Some(WorkflowActivePolicy::StopThenRun) {
         let source_run_id = submission
             .source_run_id
@@ -1235,6 +1360,9 @@ pub async fn submit_workflow(
         cancel_pending_in(&mut tx, source_run_id).await?;
     }
     if let Some(plan) = settled_plan {
+        if let Some(batch) = &plan.batch {
+            batch_rework::apply_in(&mut tx, run_id, batch).await?;
+        }
         apply_run_plan_in(
             &mut tx,
             run_id,
@@ -1242,7 +1370,7 @@ pub async fn submit_workflow(
             workspace_id,
             Some(instance_id),
             issue_id,
-            plan,
+            plan.nodes,
         )
         .await?;
     }
@@ -1254,12 +1382,206 @@ pub async fn submit_workflow(
     Ok(view)
 }
 
-pub(super) async fn source_boundary_settled_in(
+pub(crate) async fn source_boundary_settled_in(
     conn: &mut SqliteConnection,
     run_id: Uuid,
 ) -> Result<bool, ApiError> {
-    Ok(sqlx::query_scalar("WITH owned_runs(id) AS (SELECT ?1 UNION SELECT o.id FROM orchestration_runs o JOIN node_executions n ON n.arena_group_id=o.source_definition_id WHERE n.run_id=?1 AND o.product_kind='arena') SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE id=?1 AND status IN ('succeeded','failed','canceled')) AND NOT EXISTS(SELECT 1 FROM workflow_project_slots WHERE run_id=?1) AND NOT EXISTS(SELECT 1 FROM node_executions WHERE run_id=?1 AND status IN ('running','cancelling','awaiting_human','awaiting_arena')) AND NOT EXISTS(SELECT 1 FROM orchestration_agent_run_links l LEFT JOIN agent_run_state s ON s.agent_run_id=l.agent_run_id WHERE l.orchestration_run_id IN (SELECT id FROM owned_runs) AND (s.agent_run_id IS NULL OR s.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed'))) AND NOT EXISTS(SELECT 1 FROM orchestration_agent_run_links l JOIN agent_run_attempts a ON a.agent_run_id=l.agent_run_id LEFT JOIN agent_process_registry p ON p.run_attempt_id=a.id WHERE l.orchestration_run_id IN (SELECT id FROM owned_runs) AND (p.run_attempt_id IS NULL OR p.registry_status<>'exited')) AND NOT EXISTS(SELECT 1 FROM orchestration_outbox WHERE orchestration_run_id IN (SELECT id FROM owned_runs) AND delivery_status IN ('pending','delivering'))")
-        .bind(run_id).fetch_one(&mut *conn).await?)
+    let settled: bool = sqlx::query_scalar("WITH owned_runs(id) AS (SELECT ?1 UNION SELECT o.id FROM orchestration_runs o JOIN node_executions n ON n.arena_group_id=o.source_definition_id WHERE n.run_id=?1 AND o.product_kind='arena') SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE id=?1 AND status IN ('succeeded','failed','canceled')) AND NOT EXISTS(SELECT 1 FROM workflow_project_slots WHERE run_id=?1) AND NOT EXISTS(SELECT 1 FROM node_executions WHERE run_id=?1 AND status IN ('running','cancelling','awaiting_human','awaiting_arena')) AND NOT EXISTS(SELECT 1 FROM orchestration_agent_run_links l LEFT JOIN agent_run_state s ON s.agent_run_id=l.agent_run_id WHERE l.orchestration_run_id IN (SELECT id FROM owned_runs) AND (s.agent_run_id IS NULL OR s.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed'))) AND NOT EXISTS(SELECT 1 FROM orchestration_agent_run_links l JOIN agent_run_attempts a ON a.agent_run_id=l.agent_run_id LEFT JOIN agent_process_registry p ON p.run_attempt_id=a.id WHERE l.orchestration_run_id IN (SELECT id FROM owned_runs) AND (p.run_attempt_id IS NULL OR p.registry_status<>'exited')) AND NOT EXISTS(SELECT 1 FROM orchestration_outbox WHERE orchestration_run_id IN (SELECT id FROM owned_runs) AND delivery_status IN ('pending','delivering','failed'))")
+        .bind(run_id).fetch_one(&mut *conn).await?;
+    Ok(settled && !super::handover::has_unsettled_in(conn, run_id).await?)
+}
+
+/// Accept a file-backed dispatch plan for one accepted split batch. The plan
+/// is frozen in the database only after its manifest identity and graph scope
+/// are checked; merely creating/editing dispatch.json never starts work.
+pub async fn dispatch_workflow(
+    pool: &SqlitePool,
+    caller: &WorkflowManagementCaller,
+    request: WorkflowDispatchRequest,
+) -> Result<AcceptedWorkflowDispatch, ApiError> {
+    validate_request_id(&request.request_id)?;
+    let scope = {
+        let mut conn = pool.acquire().await?;
+        resolve_scope_in(&mut conn, caller).await?
+    };
+    let row = sqlx::query(
+        "SELECT b.run_id,b.node_execution_id,b.manifest_path,b.manifest_sha256,b.state,r.attempt_id,r.graph_snapshot,r.workspace_id,n.node_id FROM workflow_split_batches b JOIN workflow_runs r ON r.id=b.run_id JOIN node_executions n ON n.id=b.node_execution_id WHERE b.id=?",
+    )
+    .bind(request.batch_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| ApiError::BadRequest("Workflow split batch not found".into()))?;
+    let run_id: Uuid = row.try_get("run_id")?;
+    let attempt_id: Option<Uuid> = row.try_get("attempt_id")?;
+    if attempt_id.is_none()
+        || scope.instance_id != attempt_id
+        || scope.workspace_id != Some(row.try_get("workspace_id")?)
+    {
+        return Err(ApiError::Forbidden(
+            "Dispatch batch is outside the current workflow instance".into(),
+        ));
+    }
+    if scope.handover_run_id.is_some_and(|id| id != run_id)
+        || scope
+            .handover_batch_id
+            .is_some_and(|id| id != request.batch_id)
+    {
+        return Err(ApiError::Forbidden(
+            "Automatic handover can dispatch only its original Run".into(),
+        ));
+    }
+    let workspace_id: Uuid = row.try_get("workspace_id")?;
+    let root = runner::workflow_control_root(pool, workspace_id).await?;
+    let dispatch_path = checked_workflow_file(&root, &request.dispatch_path).await?;
+    let dispatch_bytes = tokio::fs::read(&dispatch_path).await?;
+    let dispatch_sha = sha256_bytes(&dispatch_bytes);
+    let plan: DispatchPlan = serde_json::from_slice(&dispatch_bytes)
+        .map_err(|error| ApiError::BadRequest(format!("Invalid dispatch plan: {error}")))?;
+    let expected_sha: String = row.try_get("manifest_sha256")?;
+    let manifest_bytes = batch_rework::verify_file(
+        &root,
+        &row.try_get::<String, _>("manifest_path")?,
+        &expected_sha,
+    )
+    .await?;
+    let manifest: SplitTaskManifest = serde_json::from_slice(&manifest_bytes).map_err(|error| {
+        ApiError::BadRequest(format!("Accepted split manifest is unavailable: {error}"))
+    })?;
+    validate_manifest(&manifest).map_err(ApiError::BadRequest)?;
+    if manifest.run_id != run_id.to_string()
+        || manifest.split_execution_id != row.try_get::<Uuid, _>("node_execution_id")?.to_string()
+        || plan.manifest_sha256 != expected_sha
+    {
+        return Err(ApiError::Conflict(
+            "Accepted split manifest changed after acceptance".into(),
+        ));
+    }
+    let graph_json: String = row.try_get("graph_snapshot")?;
+    let graph: WorkflowGraph = serde_json::from_str(&graph_json)
+        .map_err(|_| ApiError::Conflict("Frozen workflow graph is invalid".into()))?;
+    let node_id: String = row.try_get("node_id")?;
+    let split_scope = dispatch_scope(&graph, &node_id).map_err(ApiError::BadRequest)?;
+    validate_dispatch(&split_scope, &manifest, &plan).map_err(ApiError::BadRequest)?;
+    for task in &manifest.tasks {
+        let bound: (String, String) = sqlx::query_as("SELECT instruction_path,instruction_sha256 FROM workflow_split_subtasks WHERE batch_id=? AND subtask_id=?")
+            .bind(request.batch_id).bind(&task.subtask_id).fetch_optional(pool).await?
+            .ok_or_else(||ApiError::Conflict("Split task acceptance is inconsistent".into()))?;
+        if bound.0 != task.instruction_path {
+            return Err(ApiError::Conflict(
+                "Accepted instruction path changed".into(),
+            ));
+        }
+        batch_rework::verify_file(&root, &bound.0, &bound.1).await?;
+    }
+    let hash = request_hash(&json!({"request":request,"dispatch_sha256":dispatch_sha}))?;
+
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let current_scope = resolve_scope_in(&mut tx, caller).await?;
+    if current_scope.instance_id != attempt_id || current_scope.workspace_id != Some(workspace_id) {
+        return Err(ApiError::Forbidden(
+            "Workflow dispatch scope changed".into(),
+        ));
+    }
+    if current_scope.handover_run_id.is_some_and(|id| id != run_id)
+        || current_scope
+            .handover_batch_id
+            .is_some_and(|id| id != request.batch_id)
+    {
+        return Err(ApiError::Forbidden(
+            "Automatic handover dispatch scope changed".into(),
+        ));
+    }
+    if let Some(existing) = sqlx::query(
+        "SELECT request_hash,result_json FROM workflow_operation_requests WHERE caller_namespace=? AND operation='workflow_dispatch' AND resource_id=? AND request_id=?",
+    )
+    .bind(&scope.namespace)
+    .bind(request.batch_id)
+    .bind(&request.request_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        if existing.try_get::<String,_>("request_hash")? != hash {
+            return Err(ApiError::Conflict("IDEMPOTENCY_CONFLICT: dispatch request or file contents changed".into()));
+        }
+        let result: String = existing.try_get("result_json")?;
+        return serde_json::from_str(&result)
+            .map_err(|_| ApiError::Conflict("Stored dispatch result is invalid".into()));
+    }
+    let changed = sqlx::query("UPDATE workflow_split_batches SET dispatch_path=?,dispatch_sha256=?,state='dispatching',updated_at=datetime('now','subsec') WHERE id=? AND state='accepted' AND EXISTS(SELECT 1 FROM workflow_runs r JOIN workflow_project_slots p ON p.run_id=r.id WHERE r.id=workflow_split_batches.run_id AND r.status IN ('running','awaiting_human','awaiting_arena') AND r.error_text IS NULL) AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=workflow_split_batches.run_id)")
+        .bind(request.dispatch_path.replace('\\', "/")).bind(&dispatch_sha).bind(request.batch_id).execute(&mut *tx).await?.rows_affected();
+    if changed != 1 {
+        return Err(ApiError::Conflict(
+            "DISPATCH_NOT_ACCEPTED: batch already dispatched or run is no longer accepting work"
+                .into(),
+        ));
+    }
+    let mut assigned_count = 0u32;
+    for (stage_index, stage) in plan.stages.iter().enumerate() {
+        for assignment in &stage.assignments {
+            let changed = sqlx::query(
+                "UPDATE workflow_split_subtasks SET stage_index=?,node_id=?,state='queued',updated_at=datetime('now','subsec') WHERE batch_id=? AND subtask_id=? AND state='pending'",
+            )
+            .bind(stage_index as i64)
+            .bind(&assignment.node_id)
+            .bind(request.batch_id)
+            .bind(&assignment.subtask_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if changed != 1 {
+                return Err(ApiError::Conflict(
+                    "Dispatch subtask disappeared during acceptance".into(),
+                ));
+            }
+            assigned_count += 1;
+        }
+    }
+    // A user turn can accept dispatch before the automatic System handover is
+    // claimed. Settle only the unlaunched event in this acceptance transaction;
+    // an already claimed Agent must still reach its real process boundary.
+    sqlx::query("UPDATE workflow_handover_events SET state='completed',error_text=NULL,updated_at=datetime('now','subsec') WHERE batch_id=? AND run_id=? AND state='pending' AND agent_run_id IS NULL")
+        .bind(request.batch_id)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await?;
+    let accepted = AcceptedWorkflowDispatch {
+        request_id: request.request_id.clone(),
+        batch_id: request.batch_id,
+        run_id,
+        assigned_count,
+        stage_count: plan.stages.len() as u32,
+    };
+    sqlx::query("INSERT INTO workflow_operation_requests(caller_namespace,operation,resource_id,request_id,request_hash,result_json) VALUES (?,?,?,?,?,?)")
+        .bind(&scope.namespace)
+        .bind("workflow_dispatch")
+        .bind(request.batch_id)
+        .bind(&request.request_id)
+        .bind(hash)
+        .bind(serde_json::to_string(&accepted).map_err(|error| ApiError::BadRequest(error.to_string()))?)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(accepted)
+}
+
+pub(super) async fn checked_workflow_file(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, ApiError> {
+    let root = tokio::fs::canonicalize(root)
+        .await
+        .map_err(|_| ApiError::Conflict("Workflow workspace is unavailable".into()))?;
+    let path = relative_control_path(&root, relative)
+        .map_err(|_| ApiError::BadRequest("Invalid workflow file path".into()))?;
+    let path = tokio::fs::canonicalize(path)
+        .await
+        .map_err(|_| ApiError::BadRequest(format!("Workflow file is unavailable: {relative}")))?;
+    if !path.starts_with(&root) || !tokio::fs::metadata(&path).await?.is_file() {
+        return Err(ApiError::BadRequest(
+            "Workflow file leaves its workspace or is not a file".into(),
+        ));
+    }
+    Ok(path)
 }
 
 async fn source_executions_in(
@@ -1291,6 +1613,92 @@ async fn source_executions_in(
         .map_err(ApiError::from)
 }
 
+struct RunPlanningBasis {
+    action: WorkflowSubmissionAction,
+    scope: WorkflowSubmissionScope,
+    source_run_id: Option<Uuid>,
+    source_batch_id: Option<Uuid>,
+    source_node_execution_id: Option<Uuid>,
+    partial: bool,
+}
+
+struct SubmissionPlan {
+    nodes: ReworkPlan,
+    batch: Option<batch_rework::BatchReworkPlan>,
+}
+
+async fn plan_submission_in(
+    conn: &mut SqliteConnection,
+    graph: &WorkflowGraph,
+    workspace_id: Uuid,
+    basis: &RunPlanningBasis,
+) -> Result<SubmissionPlan, ApiError> {
+    let batch = if let Some(batch_id) = basis.source_batch_id {
+        Some(
+            batch_rework::plan_in(
+                conn,
+                graph,
+                workspace_id,
+                basis.source_run_id.ok_or_else(|| {
+                    ApiError::Conflict("Batch reuse requires its exact source Run".into())
+                })?,
+                batch_id,
+                basis.partial,
+                basis.action,
+                &basis.scope,
+                basis.source_node_execution_id,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let nodes = if let Some(batch) = &batch {
+        batch.plan.clone()
+    } else {
+        let roots = match &basis.scope {
+            WorkflowSubmissionScope::All => None,
+            WorkflowSubmissionScope::FromNodes { node_ids } => Some(node_ids.as_slice()),
+        };
+        let source = if let Some(id) = basis.source_run_id {
+            source_executions_in(conn, id).await?
+        } else {
+            Vec::new()
+        };
+        plan_rework(graph, roots, &source).map_err(|error| {
+            if error.starts_with("Cannot reuse") {
+                ApiError::Conflict(format!("REUSE_UNAVAILABLE: {error}"))
+            } else {
+                ApiError::BadRequest(format!("INVALID_REWORK_SCOPE: {error}"))
+            }
+        })?
+    };
+    if !nodes.reuse.is_empty() {
+        let root = runner::workflow_control_root_in(conn, workspace_id).await?;
+        for binding in &nodes.reuse {
+            let id = Uuid::parse_str(&binding.source_execution_id).map_err(|_| {
+                ApiError::Conflict("Reuse requires an actual source execution".into())
+            })?;
+            batch_rework::verify_handoff_in(conn, &root, id).await?;
+        }
+    }
+    Ok(SubmissionPlan { nodes, batch })
+}
+
+async fn fail_planning_in(
+    conn: &mut SqliteConnection,
+    run_id: Uuid,
+    error: &ApiError,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE workflow_run_submissions SET planning_state='failed' WHERE run_id=? AND planning_state='pending'")
+        .bind(run_id).execute(&mut *conn).await?;
+    sqlx::query("UPDATE workflow_runs SET status='failed',error_text=?,finished_at=datetime('now','subsec'),updated_at=datetime('now','subsec') WHERE id=? AND status='pending'")
+        .bind(format!("WORKFLOW_PLANNING_FAILED: {error}")).bind(run_id).execute(&mut *conn).await?;
+    sqlx::query("UPDATE workflow_run_queue SET phase='finished' WHERE run_id=? AND phase IN ('queued','waiting_for_source','stopping_source')")
+        .bind(run_id).execute(&mut *conn).await?;
+    sync_terminal_attempt_in(conn, run_id).await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn fix_run_plan_in(
     conn: &mut SqliteConnection,
@@ -1299,21 +1707,14 @@ async fn fix_run_plan_in(
     workspace_id: Uuid,
     instance_id: Option<Uuid>,
     issue_id: Uuid,
-    scope: &WorkflowSubmissionScope,
-    source_run_id: Option<Uuid>,
+    basis: &RunPlanningBasis,
 ) -> Result<(), ApiError> {
-    let roots = match scope {
-        WorkflowSubmissionScope::All => None,
-        WorkflowSubmissionScope::FromNodes { node_ids } => Some(node_ids.as_slice()),
-    };
-    let source = if let Some(id) = source_run_id {
-        source_executions_in(conn, id).await?
-    } else {
-        Vec::new()
-    };
-    let plan = plan_rework(graph, roots, &source);
+    let plan = plan_submission_in(conn, graph, workspace_id, basis).await;
     match plan {
         Ok(plan) => {
+            if let Some(batch) = &plan.batch {
+                batch_rework::apply_in(conn, run_id, batch).await?;
+            }
             apply_run_plan_in(
                 conn,
                 run_id,
@@ -1321,20 +1722,14 @@ async fn fix_run_plan_in(
                 workspace_id,
                 instance_id,
                 issue_id,
-                plan,
+                plan.nodes,
             )
             .await
         }
-        Err(error) => {
-            sqlx::query("UPDATE workflow_run_submissions SET planning_state='failed' WHERE run_id=? AND planning_state='pending'")
-                .bind(run_id).execute(&mut *conn).await?;
-            sqlx::query("UPDATE workflow_runs SET status='failed',error_text=?,finished_at=datetime('now','subsec'),updated_at=datetime('now','subsec') WHERE id=? AND status='pending'")
-                .bind(format!("WORKFLOW_PLANNING_FAILED: {error}")).bind(run_id).execute(&mut *conn).await?;
-            sqlx::query("UPDATE workflow_run_queue SET phase='finished' WHERE run_id=? AND phase IN ('queued','waiting_for_source','stopping_source')")
-                .bind(run_id).execute(&mut *conn).await?;
-            sync_terminal_attempt_in(conn, run_id).await?;
-            Ok(())
+        Err(error @ (ApiError::BadRequest(_) | ApiError::Conflict(_))) => {
+            fail_planning_in(conn, run_id, &error).await
         }
+        Err(error) => Err(error),
     }
 }
 
@@ -1359,10 +1754,11 @@ async fn apply_run_plan_in(
             .bind(run_id).bind(id).execute(&mut *conn).await?;
     }
     let parent = runner::workflow_task_parent(conn, instance_id, issue_id).await?;
+    let batch_nodes = workflow::dispatch::batch_managed_nodes(graph);
     for node in graph
         .nodes
         .iter()
-        .filter(|node| plan.affected_node_ids.contains(&node.id))
+        .filter(|node| plan.affected_node_ids.contains(&node.id) && !batch_nodes.contains(&node.id))
     {
         runner::materialize_node_execution(conn, run_id, workspace_id, parent, node, 0).await?;
     }
@@ -1380,6 +1776,10 @@ async fn cancel_pending_in(conn: &mut SqliteConnection, run_id: Uuid) -> Result<
         sqlx::query("UPDATE workflow_runs SET status='canceled',finished_at=datetime('now','subsec'),updated_at=datetime('now','subsec') WHERE id=? AND status='pending'")
             .bind(run_id).execute(&mut *conn).await?;
         sqlx::query("UPDATE node_executions SET status='cancelled',finished_at=datetime('now','subsec') WHERE run_id=? AND status='pending'")
+            .bind(run_id).execute(&mut *conn).await?;
+        sqlx::query("UPDATE workflow_split_subtasks SET state='cancelled',updated_at=datetime('now','subsec') WHERE batch_id IN (SELECT id FROM workflow_split_batches WHERE run_id=?) AND state IN ('pending','queued')")
+            .bind(run_id).execute(&mut *conn).await?;
+        sqlx::query("UPDATE workflow_split_batches SET state='cancelled',updated_at=datetime('now','subsec') WHERE run_id=? AND state IN ('pending','accepted','dispatching','running','partial')")
             .bind(run_id).execute(&mut *conn).await?;
         sync_terminal_attempt_in(conn, run_id).await?;
     }
@@ -1403,14 +1803,37 @@ pub async fn resolve_waiting_submissions(pool: &SqlitePool) -> Result<(), ApiErr
     for id in ids {
         let result:Result<(),ApiError>=async {
             let mut tx=pool.begin_with("BEGIN IMMEDIATE").await?;
-            let row=sqlx::query("SELECT r.graph_snapshot,r.workspace_id,r.attempt_id,r.issue_id,s.scope_json,s.source_run_id FROM workflow_runs r JOIN workflow_run_submissions s ON s.run_id=r.id JOIN workflow_run_queue q ON q.run_id=r.id WHERE r.id=? AND r.status='pending' AND q.phase IN ('waiting_for_source','stopping_source') AND s.planning_state='pending'")
+            let row=sqlx::query("SELECT r.graph_snapshot,r.workspace_id,r.attempt_id,r.issue_id,s.scope_json,s.source_run_id,s.source_batch_id,s.source_node_execution_id,s.action,d.completeness FROM workflow_runs r JOIN workflow_run_submissions s ON s.run_id=r.id JOIN workflow_run_queue q ON q.run_id=r.id LEFT JOIN workflow_run_deliveries d ON d.run_id=r.id WHERE r.id=? AND r.status='pending' AND q.phase IN ('waiting_for_source','stopping_source') AND s.planning_state='pending'")
                 .bind(id).fetch_optional(&mut *tx).await?;
             let Some(row)=row else{return Ok(());};
             let source_run_id:Uuid=row.try_get("source_run_id")?;
             if !source_boundary_settled_in(&mut tx,source_run_id).await? {return Ok(());}
-            let graph:WorkflowGraph=serde_json::from_str(&row.try_get::<String,_>("graph_snapshot")?).map_err(|_|ApiError::Conflict("Accepted frozen graph is invalid".into()))?;
-            let scope:WorkflowSubmissionScope=serde_json::from_str(&row.try_get::<String,_>("scope_json")?).map_err(|_|ApiError::Conflict("Accepted scope is invalid".into()))?;
-            fix_run_plan_in(&mut tx,id,&graph,row.try_get("workspace_id")?,row.try_get("attempt_id")?,row.try_get("issue_id")?,&scope,Some(source_run_id)).await?;
+            let parsed: Result<(WorkflowGraph, WorkflowSubmissionScope, WorkflowSubmissionAction),ApiError> = (|| {
+                let graph=serde_json::from_str(&row.try_get::<String,_>("graph_snapshot")?).map_err(|_|ApiError::Conflict("Accepted frozen graph is invalid".into()))?;
+                let scope=serde_json::from_str(&row.try_get::<String,_>("scope_json")?).map_err(|_|ApiError::Conflict("Accepted scope is invalid".into()))?;
+                let action=match row.try_get::<String,_>("action")?.as_str() {
+                    "start" => WorkflowSubmissionAction::Start,
+                    "retry" => WorkflowSubmissionAction::Retry,
+                    "rework" => WorkflowSubmissionAction::Rework,
+                    _ => return Err(ApiError::Conflict("Accepted action is invalid".into())),
+                };
+                Ok((graph,scope,action))
+            })();
+            let (graph,scope,action)=match parsed {
+                Ok(value)=>value,
+                Err(error @ (ApiError::BadRequest(_) | ApiError::Conflict(_)))=>{
+                    fail_planning_in(&mut tx,id,&error).await?;
+                    tx.commit().await?;
+                    return Ok(());
+                }
+                Err(error)=>return Err(error),
+            };
+            let basis=RunPlanningBasis {
+                action, scope, source_run_id:Some(source_run_id), source_batch_id:row.try_get("source_batch_id")?,
+                source_node_execution_id:row.try_get("source_node_execution_id")?,
+                partial:row.try_get::<Option<String>,_>("completeness")?.as_deref()==Some("partial"),
+            };
+            fix_run_plan_in(&mut tx,id,&graph,row.try_get("workspace_id")?,row.try_get("attempt_id")?,row.try_get("issue_id")?,&basis).await?;
             sqlx::query("UPDATE workflow_run_queue SET phase='queued' WHERE run_id=? AND phase IN ('waiting_for_source','stopping_source') AND EXISTS(SELECT 1 FROM workflow_runs WHERE id=? AND status='pending') AND EXISTS(SELECT 1 FROM workflow_run_submissions WHERE run_id=? AND planning_state='ready')")
                 .bind(id).bind(id).bind(id).execute(&mut *tx).await?;
             tx.commit().await?;
@@ -1443,8 +1866,17 @@ pub async fn deliver_stop_intents<C: WorkflowRunCanceller>(
                 workflows::sync_attempt_from_run(pool, &run).await?;
                 db::models::workflow_queue::WorkflowQueueEntry::release_terminal(pool, run_id)
                     .await?;
+                // A drain pass can finish before a failed command's retry
+                // backoff expires. Keep the durable intent pending until all
+                // owned processes, commands and the project slot have settled.
+                let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+                if !source_boundary_settled_in(&mut tx, run_id).await? {
+                    tx.commit().await?;
+                    continue;
+                }
                 sqlx::query("UPDATE workflow_stop_intents SET state='delivered',delivered_at=datetime('now','subsec') WHERE id=? AND state='pending'")
-                    .bind(intent_id).execute(pool).await?;
+                    .bind(intent_id).execute(&mut *tx).await?;
+                tx.commit().await?;
             }
             Err(error) => {
                 tracing::warn!(%run_id,%error,"Durable workflow stop delivery will retry")
@@ -1464,6 +1896,11 @@ pub async fn stop_workflow<C: WorkflowRunCanceller>(
     validate_request_id(request_id)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let scope = resolve_scope_in(&mut tx, caller).await?;
+    if scope.handover_run_id.is_some_and(|id| id != run_id) {
+        return Err(ApiError::Forbidden(
+            "Automatic handover can stop only its original Run".into(),
+        ));
+    }
     let instance_id = scope.instance_id.ok_or_else(|| {
         ApiError::Conflict("This main Session has not accepted a workflow".into())
     })?;
@@ -1711,6 +2148,11 @@ where
     let hash = request_hash(&request)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let scope = resolve_scope_in(&mut tx, caller).await?;
+    if scope.handover_run_id.is_some_and(|id| id != request.run_id) {
+        return Err(ApiError::Forbidden(
+            "Automatic handover can respond only to its original Run".into(),
+        ));
+    }
     let row=sqlx::query("SELECT n.node_id,n.node_type,n.status,n.arena_group_id,r.status AS run_status,r.graph_snapshot FROM node_executions n JOIN workflow_runs r ON r.id=n.run_id WHERE n.id=? AND n.run_id=? AND r.attempt_id=?")
         .bind(request.node_execution_id).bind(request.run_id).bind(scope.instance_id).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::Forbidden("Interaction is not part of this bound workflow instance".into()))?;
     let node_id: String = row.try_get("node_id")?;

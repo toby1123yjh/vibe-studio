@@ -1358,6 +1358,10 @@
       "newStageDescription": "Group related Nodes in one stage."
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "タスク分割",
+        "summary": "サブタスクをファイルとして作成"
+      },
       "start": {
         "label": "Start",
         "summary": "Entry point"
@@ -1389,11 +1393,79 @@
         "attemptB": "Attempt B"
       }
     },
+    "split": {
+      "output": "出力",
+      "defaultPrompt": "入力作業を独立したサブタスクに分割してください。ワークフロー制御ディレクトリに tasks.json と各サブタスクの指示ファイルを作成し、依存関係と関連するソースファイルを記載してください。",
+      "instructions": "分割の指示",
+      "fixedScope": "割り当て範囲",
+      "scopeHint": "候補の Agent 実行ノードに接続し、各ノードを同じ集約出口に接続してください。メイン Agent はこの範囲内で担当を決めます。",
+      "executors": "実行ノードの候補",
+      "summaryExit": "集約出口",
+      "scopeErrors": {
+        "missingExecutors": "分割ノードを少なくとも1つの Agent 実行ノードに接続してください。",
+        "invalidExecutor": "分割ノードは異なる Agent 実行ノードに直接接続する必要があります。",
+        "competingExecutorInputs": "分割の実行ノードには他の入力トリガーを接続できません。",
+        "missingSummary": "各実行ノードには集約出口への既定の接続が1つ必要です。",
+        "differentSummaries": "すべての実行ノードを同じ集約出口に接続してください。",
+        "invalidSummary": "集約出口は独立した Agent、Transform、または End ノードである必要があります。",
+        "competingSummaryInputs": "集約出口には分割範囲外からの入力を接続できません。",
+        "overlappingScopes": "分割範囲の間で実行ノードや集約出口を共有できません。"
+      },
+      "subtasks": "内部サブタスク",
+      "progress": "{{total}} 件中 {{completed}} 件完了",
+      "failedCount": "{{count}} 件失敗",
+      "controlFiles": "タスク一覧と割り当てファイル",
+      "waitingDispatch": "メイン Agent の割り当て待ち",
+      "mainHandover": "メイン Agent の割り当てターン",
+      "openMainSession": "メインセッションを開く",
+      "openExecutionSession": "実行セッションを開く",
+      "stagesHint": "ステージは順番に進みます。同じステージのサブタスクは独立したセッションで並列実行されます。",
+      "stage": "ステージ {{index}}",
+      "pendingAssignments": "割り当て待ち",
+      "unassigned": "実行ノード未割り当て",
+      "dependsOn": "依存先：{{titles}}",
+      "handoffFiles": "引き継ぎと成果ファイル",
+      "requestFile": "要件ファイル",
+      "currentFileHint": "現在のファイルを表示・ダウンロードします。この参照から変更・削除された過去の内容は復元できません。",
+      "downloadFile": "ファイルをダウンロード",
+      "loadingFile": "ファイルを読み込み中…",
+      "fileFailed": "ワークフローファイルを読み込めませんでした。",
+      "fileTruncated": "プレビューは省略されています。完全な内容はファイルをダウンロードしてください。",
+      "downloadToView": "ダウンロードしてファイルを確認してください。",
+      "requestPartialSummary": "完了した作業を集約",
+      "partialSummaryHint": "利用可能な成果から部分集約を作成し、未完了の項目を明示します。進行中の作業は停止せず、完了を待ちます。",
+      "partialSummaryRequest": "{{path}} の受理済み分割バッチから部分成果を作成してください。利用可能な引き継ぎファイルを読み、欠けているすべてのサブタスクと理由を明示してください。",
+      "partialSummaryFailed": "部分集約を依頼できませんでした。",
+      "partialSummaryAccepted": "部分集約を受理しました。現在の作業が終了してから実行します。",
+      "openPartialSummary": "部分集約を開く",
+      "partialDelivery": "部分成果",
+      "fullDelivery": "完全な成果",
+      "partialDeliveryHint": "集約には完了した作業のみが含まれます。以下のサブタスクは未完了です。",
+      "missingSubtasks": "未完了のサブタスク",
+      "deliveryFilesHint": "ノードの引き継ぎには既存の資料が含まれることがあります。Agent によるファイル変更は下に別途表示します。",
+      "openSourceRun": "元の実行を開く",
+      "states": {
+        "pending": "待機中",
+        "accepted": "受理済み",
+        "dispatching": "割り当て中",
+        "running": "実行中",
+        "partial": "一部完了",
+        "succeeded": "成功",
+        "failed": "失敗",
+        "cancelled": "停止済み",
+        "queued": "キュー待ち",
+        "blocked": "依存未完了",
+        "claimed": "起動中",
+        "completed": "完了",
+        "unknown": "不明な状態"
+      }
+    },
     "nodePicker": {
       "addNode": "ノードを追加",
       "chooseNodeType": "ノードタイプを選択",
       "descriptions": {
         "agent": "タスクを実行する AI エージェント",
+        "task_splitter": "サブタスクをファイルに分割し、メイン Agent が担当を決定",
         "condition": "接続された分岐へ処理を振り分けます",
         "human_gate": "人による承認を待ちます",
         "transform": "ノード間のデータを変換します",

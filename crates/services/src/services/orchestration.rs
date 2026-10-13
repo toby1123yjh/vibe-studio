@@ -159,8 +159,21 @@ where
             }
         }
         let (outbox_id, inserted) =
-            OrchestrationOutboxRecord::enqueue_with_outcome(&self.pool, Uuid::new_v4(), &command)
-                .await?;
+            if matches!(&command.command, AgentRunPortCommand::Cancel { .. }) {
+                OrchestrationOutboxRecord::enqueue_cancellation_with_outcome(
+                    &self.pool,
+                    Uuid::new_v4(),
+                    &command,
+                )
+                .await?
+            } else {
+                OrchestrationOutboxRecord::enqueue_with_outcome(
+                    &self.pool,
+                    Uuid::new_v4(),
+                    &command,
+                )
+                .await?
+            };
         if inserted {
             self.append_event(
                 orchestration_run_id,
@@ -357,15 +370,6 @@ where
         for (node_execution_id, agent_run_id) in active_children {
             let idempotency_key =
                 format!("orchestration:{orchestration_run_id}:node:{node_execution_id}:cancel");
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM orchestration_outbox WHERE idempotency_key = ?)",
-            )
-            .bind(&idempotency_key)
-            .fetch_one(&self.pool)
-            .await?;
-            if exists {
-                continue;
-            }
             self.enqueue_command(AgentRunPortCommandEnvelope {
                 schema_version: executors::runtime::ORCHESTRATION_COMMAND_SCHEMA_VERSION,
                 command_id: stable_operation_id(orchestration_run_id, node_execution_id, "cancel"),

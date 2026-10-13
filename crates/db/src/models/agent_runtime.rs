@@ -831,7 +831,7 @@ impl AgentRunRecord {
             return Err(AgentRuntimePersistenceError::InvalidFirstAttempt);
         }
 
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         if let Some(existing) = sqlx::query_as::<_, ExistingAgentRunIdentity>(
             r#"
             SELECT ar.id AS agent_run_id,
@@ -995,7 +995,7 @@ impl AgentRunRecord {
             return Err(AgentRuntimePersistenceError::InvalidFirstAttempt);
         }
 
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
         if let Some(existing) = sqlx::query_as::<_, ExistingAgentRunIdentity>(
             r#"
             SELECT ar.id AS agent_run_id,
@@ -1221,7 +1221,7 @@ impl NativeAuditStreamRecord {
             r#"
             UPDATE native_audit_streams
             SET first_sequence = ?, last_sequence = ?, final_checksum = ?,
-                integrity_status = ?, closed_at = ?, updated_at = updated_at
+                integrity_status = ?, closed_at = ?
             WHERE run_attempt_id = ?
             "#,
         )
@@ -1438,7 +1438,7 @@ impl AgentEventRecord {
             )))
         })?;
         let event_json = serde_json::to_string(event)?;
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
 
         if let Some(existing) = sqlx::query_as::<_, ExistingAgentEvent>(
             "SELECT event_envelope FROM agent_events WHERE event_id = ?",
@@ -2289,6 +2289,72 @@ mod tests {
             .execute(&pool)
             .await
             .expect("persist explicit cancellation");
+    }
+
+    #[tokio::test]
+    async fn native_audit_finalization_persists_terminal_manifest_and_replays() {
+        use executors::runtime::{NativeAuditIntegrityStatus, NativeAuditManifest};
+
+        let pool = setup_pool().await;
+        let (session_id, workspace_id) = insert_anchors(&pool).await;
+        let (request, attempt) = requests(session_id, workspace_id, "audit-finalization");
+        AgentRunRecord::persist_identity_before_launch(&pool, &request, &attempt)
+            .await
+            .expect("persist identity");
+        let mut manifest = NativeAuditManifest {
+            audit_schema_version: 1,
+            session_id,
+            agent_run_id: request.agent_run_id,
+            turn_id: request.turn_id,
+            run_attempt_id: attempt.run_attempt_id,
+            run_attempt_number: 1,
+            provider_id: request.provider_id.clone(),
+            runtime_profile_id: request.runtime_profile_id.clone(),
+            workspace_path: request.workspace.path.clone(),
+            runtime_version: None,
+            protocol_version: None,
+            adapter_version: "adapter-1".to_string(),
+            mapper_version: "mapper-1".to_string(),
+            frame_count: 0,
+            first_sequence: None,
+            last_sequence: None,
+            final_checksum: None,
+            integrity_status: NativeAuditIntegrityStatus::Open,
+            created_at: Utc::now(),
+            closed_at: None,
+            manifest_relative_path: format!("audit/{}/manifest.json", attempt.run_attempt_id),
+            frames_relative_path: format!("audit/{}/frames.jsonl", attempt.run_attempt_id),
+            raw_content_trusted: true,
+        };
+        NativeAuditStreamRecord::insert_open(&pool, &manifest)
+            .await
+            .expect("persist open stream");
+        manifest.frame_count = 7;
+        manifest.first_sequence = Some(1);
+        manifest.last_sequence = Some(7);
+        manifest.final_checksum = Some("a".repeat(64));
+        manifest.integrity_status = NativeAuditIntegrityStatus::Complete;
+        manifest.closed_at = Some(Utc::now());
+        for _ in 0..2 {
+            NativeAuditStreamRecord::finalize(&pool, &manifest)
+                .await
+                .expect("finalize and replay against the actual runtime migration");
+        }
+        let record = sqlx::query_as::<_, NativeAuditStreamRecord>(
+            "SELECT * FROM native_audit_streams WHERE run_attempt_id = ?",
+        )
+        .bind(attempt.run_attempt_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read closed stream");
+        assert_eq!(record.session_id, session_id);
+        assert_eq!(record.agent_run_id, request.agent_run_id);
+        assert_eq!(record.first_sequence, Some(1));
+        assert_eq!(record.last_sequence, Some(7));
+        assert_eq!(record.final_checksum, manifest.final_checksum);
+        assert_eq!(record.integrity_status, "complete");
+        assert_eq!(record.created_at, manifest.created_at);
+        assert_eq!(record.closed_at, manifest.closed_at);
     }
 
     #[tokio::test]

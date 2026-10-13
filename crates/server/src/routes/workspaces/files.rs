@@ -481,109 +481,88 @@ async fn workspace_file_content_from_path(
     file_path: &Path,
     metadata: &std::fs::Metadata,
 ) -> Result<WorkspaceFileContent, ApiError> {
-    let mime_type = mime_type_for_path(display_path);
-    let raw_url = Some(workspace_file_raw_url(workspace_id, repo_id, display_path));
-    let name = file_name_from_display_path(display_path, repo_name);
-    let size_bytes = size_to_i64(metadata.len());
-
-    if mime_type
-        .as_deref()
-        .is_some_and(is_safe_inline_workspace_image_mime_type)
-    {
-        return Ok(WorkspaceFileContent {
-            workspace_id,
-            repo_id,
-            repo_name: repo_name.to_string(),
-            path: display_path.to_string(),
-            name,
-            kind: WorkspaceFileContentKind::Image,
-            mime_type,
-            language: None,
-            content: None,
-            raw_url,
-            size_bytes,
-            truncated: false,
-        });
-    }
-
-    if mime_type
-        .as_deref()
-        .is_some_and(is_always_unsupported_preview_mime_type)
-    {
-        return Ok(WorkspaceFileContent {
-            workspace_id,
-            repo_id,
-            repo_name: repo_name.to_string(),
-            path: display_path.to_string(),
-            name,
-            kind: WorkspaceFileContentKind::Unsupported,
-            mime_type,
-            language: None,
-            content: None,
-            raw_url,
-            size_bytes,
-            truncated: false,
-        });
-    }
-
-    let (bytes, truncated) = read_preview_bytes(file_path).await?;
-    if bytes.contains(&0) {
-        return Ok(WorkspaceFileContent {
-            workspace_id,
-            repo_id,
-            repo_name: repo_name.to_string(),
-            path: display_path.to_string(),
-            name,
-            kind: WorkspaceFileContentKind::Binary,
-            mime_type,
-            language: None,
-            content: None,
-            raw_url,
-            size_bytes,
-            truncated: false,
-        });
-    }
-
-    let content = match utf8_preview_string(&bytes) {
-        Some(content) => content,
-        None => {
-            return Ok(WorkspaceFileContent {
-                workspace_id,
-                repo_id,
-                repo_name: repo_name.to_string(),
-                path: display_path.to_string(),
-                name,
-                kind: WorkspaceFileContentKind::Binary,
-                mime_type,
-                language: None,
-                content: None,
-                raw_url,
-                size_bytes,
-                truncated: false,
-            });
-        }
-    };
-
+    let preview = file_content_preview(display_path, file_path, metadata).await?;
     Ok(WorkspaceFileContent {
         workspace_id,
         repo_id,
         repo_name: repo_name.to_string(),
         path: display_path.to_string(),
-        name,
-        kind: WorkspaceFileContentKind::Text,
-        mime_type,
-        language: language_from_path(display_path),
-        content: Some(content),
-        raw_url,
-        size_bytes,
-        truncated,
+        name: file_name_from_display_path(display_path, repo_name),
+        kind: preview.kind,
+        mime_type: preview.mime_type,
+        language: preview.language,
+        content: preview.content,
+        raw_url: Some(workspace_file_raw_url(workspace_id, repo_id, display_path)),
+        size_bytes: preview.size_bytes,
+        truncated: preview.truncated,
     })
 }
 
-async fn read_preview_bytes(path: &Path) -> Result<(Vec<u8>, bool), ApiError> {
-    let file = tokio::fs::File::open(path)
+/// Preview bytes have no repository identity; plain-folder workflow files use
+/// exactly the same caps and MIME policy as repository previews.
+pub(crate) struct FileContentPreview {
+    pub kind: WorkspaceFileContentKind,
+    pub mime_type: Option<String>,
+    pub language: Option<String>,
+    pub content: Option<String>,
+    pub size_bytes: i64,
+    pub truncated: bool,
+}
+
+pub(crate) async fn file_content_preview(
+    display_path: &str,
+    file_path: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<FileContentPreview, ApiError> {
+    let file = tokio::fs::File::open(file_path)
         .await
         .map_err(|_| ApiError::File(FileError::NotFound))?;
+    file_content_preview_from_file(display_path, file, metadata).await
+}
+
+pub(crate) async fn file_content_preview_from_file(
+    display_path: &str,
+    file: tokio::fs::File,
+    metadata: &std::fs::Metadata,
+) -> Result<FileContentPreview, ApiError> {
+    let mime_type = mime_type_for_path(display_path);
+    let mut preview = FileContentPreview {
+        kind: WorkspaceFileContentKind::Binary,
+        mime_type,
+        language: None,
+        content: None,
+        size_bytes: size_to_i64(metadata.len()),
+        truncated: false,
+    };
+    if preview
+        .mime_type
+        .as_deref()
+        .is_some_and(is_safe_inline_workspace_image_mime_type)
+    {
+        preview.kind = WorkspaceFileContentKind::Image;
+        return Ok(preview);
+    }
+    if preview
+        .mime_type
+        .as_deref()
+        .is_some_and(is_always_unsupported_preview_mime_type)
+    {
+        preview.kind = WorkspaceFileContentKind::Unsupported;
+        return Ok(preview);
+    }
+    let (bytes, truncated) = read_preview_file_bytes(file).await?;
+    if !bytes.contains(&0) {
+        if let Some(content) = utf8_preview_string(&bytes) {
+            preview.kind = WorkspaceFileContentKind::Text;
+            preview.language = language_from_path(display_path);
+            preview.content = Some(content);
+            preview.truncated = truncated;
+        }
+    }
+    Ok(preview)
+}
+
+async fn read_preview_file_bytes(file: tokio::fs::File) -> Result<(Vec<u8>, bool), ApiError> {
     let mut limited = file.take((TEXT_CONTENT_LIMIT_BYTES + 1) as u64);
     let mut bytes = Vec::new();
     limited.read_to_end(&mut bytes).await?;
@@ -643,7 +622,9 @@ fn workspace_file_raw_url(workspace_id: Uuid, repo_id: Uuid, path: &str) -> Stri
     format!("/api/workspaces/{workspace_id}/files/raw?{query}")
 }
 
-fn workspace_raw_content_type_and_disposition(mime_type: &str) -> (&str, Option<&'static str>) {
+pub(crate) fn workspace_raw_content_type_and_disposition(
+    mime_type: &str,
+) -> (&str, Option<&'static str>) {
     if is_safe_inline_workspace_image_mime_type(mime_type) {
         (mime_type, None)
     } else {

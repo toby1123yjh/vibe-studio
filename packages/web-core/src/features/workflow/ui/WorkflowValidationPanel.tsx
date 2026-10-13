@@ -6,11 +6,33 @@ import {
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BaseCodingAgent } from 'shared/types';
+import {
+  getWorkflowSplitScopes,
+  type WorkflowSplitScopeIssueCode,
+} from '../model/workflowSplitScope';
+
+const SPLIT_SCOPE_MESSAGES: Record<WorkflowSplitScopeIssueCode, string> = {
+  missingExecutors: 'Connect the splitter to at least one Agent executor.',
+  invalidExecutor:
+    'The splitter can only connect directly to distinct Agent executors.',
+  competingExecutorInputs:
+    'A split executor cannot have another incoming trigger.',
+  missingSummary:
+    'Each split executor needs one default connection to the summary exit.',
+  differentSummaries:
+    'All split executors must connect to the same summary exit.',
+  invalidSummary:
+    'The summary exit must be a separate Agent, Transform, or End node.',
+  competingSummaryInputs:
+    'The summary exit cannot have incoming triggers outside this split scope.',
+  overlappingScopes: 'Split scopes cannot share an executor or summary exit.',
+};
 
 export interface ValidationIssue {
   type: 'error' | 'warning';
   nodeId?: string;
   message: string;
+  splitScopeCode?: WorkflowSplitScopeIssueCode;
 }
 
 export interface WorkflowValidationPanelProps {
@@ -88,6 +110,14 @@ export function validateWorkflowGraph(
   }
 
   validateConditionStructure(graph, issues);
+  for (const issue of getWorkflowSplitScopes(graph).issues) {
+    issues.push({
+      type: 'error',
+      nodeId: issue.nodeId,
+      splitScopeCode: issue.code,
+      message: SPLIT_SCOPE_MESSAGES[issue.code],
+    });
+  }
 
   const adjacency = buildAdjacency(graph);
   const cycleNodeId = findCycleNode(adjacency);
@@ -331,7 +361,11 @@ export function WorkflowValidationPanel({
               }`}
             >
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{issue.message}</span>
+              <span>
+                {issue.splitScopeCode
+                  ? t(`workflow.split.scopeErrors.${issue.splitScopeCode}`)
+                  : issue.message}
+              </span>
             </li>
           ))}
         </ul>

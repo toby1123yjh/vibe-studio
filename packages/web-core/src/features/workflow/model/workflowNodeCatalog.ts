@@ -38,6 +38,16 @@ export const WORKFLOW_NODE_CATALOG: CatalogEntry[] = [
     },
   },
   {
+    type: 'task_splitter',
+    label: 'Task Splitter',
+    description: 'Create file-backed subtasks for the main Agent to dispatch',
+    defaultData: {
+      display_name: 'Task Splitter',
+      prompt_template:
+        'Break the incoming work into independent subtasks. Write tasks.json and one instruction file per task under the workflow control directory.',
+    },
+  },
+  {
     type: 'condition',
     label: 'Condition',
     description: 'Agentic routing across connected branches',
@@ -125,7 +135,7 @@ export function getWorkflowNodeCatalogSections(): WorkflowNodeCatalogSection[] {
       id: 'execution',
       label: 'Execution',
       labelKey: 'workflow.editor.sections.execution',
-      types: ['agent', 'arena'],
+      types: ['agent', 'task_splitter', 'arena'],
     },
     {
       id: 'control',

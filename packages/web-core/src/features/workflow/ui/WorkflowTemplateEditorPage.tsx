@@ -1200,12 +1200,19 @@ export function WorkflowTemplateEditorPage({
   });
   const authoringIssues = validateWorkflowAuthoringGraph(graph);
   const canvasValidationIssues = [
-    ...validationIssues,
-    ...authoringIssues.map((task) => ({
-      type: 'error' as const,
-      nodeId: task.nodeId,
-      message: getWorkflowAuthoringIssueMessage(task, t),
+    ...validationIssues.map((issue) => ({
+      ...issue,
+      message: issue.splitScopeCode
+        ? t(`workflow.split.scopeErrors.${issue.splitScopeCode}`)
+        : issue.message,
     })),
+    ...authoringIssues
+      .filter((task) => task.code !== 'splitter-scope')
+      .map((task) => ({
+        type: 'error' as const,
+        nodeId: task.nodeId,
+        message: getWorkflowAuthoringIssueMessage(task, t),
+      })),
   ];
   const isValid =
     draftValidationIssues.length === 0 &&

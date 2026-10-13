@@ -100,6 +100,10 @@ impl QueuedMessageService {
         self.queue.contains_key(&session_id)
     }
 
+    pub fn queued_session_ids(&self) -> Vec<Uuid> {
+        self.queue.iter().map(|item| *item.key()).collect()
+    }
+
     /// Get queue status for frontend display
     pub fn get_status(&self, session_id: Uuid) -> QueueStatus {
         match self.get_queued(session_id) {

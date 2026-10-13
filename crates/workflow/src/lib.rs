@@ -1,4 +1,6 @@
+pub mod dispatch;
 pub mod events;
+pub mod files;
 pub mod graph;
 pub mod handlers;
 pub mod planner;

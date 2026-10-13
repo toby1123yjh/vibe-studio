@@ -205,6 +205,8 @@ export function getWorkflowNodeIdentityClass(
   }
 
   switch (nodeKind) {
+    case 'task_splitter':
+      return 'node-identity-task-splitter';
     case 'arena':
       return 'node-identity-arena';
     case 'condition':

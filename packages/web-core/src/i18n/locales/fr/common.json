@@ -1358,6 +1358,10 @@
       "newStageDescription": "Group related Nodes in one stage."
     },
     "nodes": {
+      "taskSplitter": {
+        "label": "Division des tâches",
+        "summary": "Crée des sous-tâches dans des fichiers"
+      },
       "start": {
         "label": "Start",
         "summary": "Entry point"
@@ -1389,11 +1393,79 @@
         "attemptB": "Attempt B"
       }
     },
+    "split": {
+      "output": "Sortie",
+      "defaultPrompt": "Divisez le travail entrant en sous-tâches indépendantes. Écrivez tasks.json et un fichier de consignes par sous-tâche dans le répertoire de contrôle du workflow. Indiquez les dépendances et les fichiers sources concernés.",
+      "instructions": "Consignes de division",
+      "fixedScope": "Périmètre de répartition",
+      "scopeHint": "Connectez les agents exécutants candidats et reliez chacun à la même sortie de synthèse. L’agent principal répartit le travail dans ce périmètre.",
+      "executors": "Exécutants candidats",
+      "summaryExit": "Sortie de synthèse",
+      "scopeErrors": {
+        "missingExecutors": "Connectez le nœud de division à au moins un agent exécutant.",
+        "invalidExecutor": "Le nœud de division ne peut relier directement que des agents exécutants distincts.",
+        "competingExecutorInputs": "Un exécutant de sous-tâches ne peut pas recevoir un autre déclencheur.",
+        "missingSummary": "Chaque exécutant doit avoir une connexion par défaut vers la sortie de synthèse.",
+        "differentSummaries": "Tous les exécutants doivent rejoindre la même sortie de synthèse.",
+        "invalidSummary": "La sortie de synthèse doit être un nœud Agent, Transform ou End distinct.",
+        "competingSummaryInputs": "La sortie de synthèse ne peut pas recevoir de déclencheurs extérieurs au périmètre de division.",
+        "overlappingScopes": "Les périmètres de division ne peuvent partager ni exécutant ni sortie de synthèse."
+      },
+      "subtasks": "Sous-tâches internes",
+      "progress": "{{completed}} / {{total}} terminées",
+      "failedCount": "{{count}} en échec",
+      "controlFiles": "Liste des tâches et plan de répartition",
+      "waitingDispatch": "En attente de répartition par l’agent principal",
+      "mainHandover": "Tour de répartition de l’agent principal",
+      "openMainSession": "Ouvrir la session principale",
+      "openExecutionSession": "Ouvrir la session d’exécution",
+      "stagesHint": "Les étapes s’exécutent dans l’ordre. Les sous-tâches d’une même étape s’exécutent en parallèle dans des sessions distinctes.",
+      "stage": "Étape {{index}}",
+      "pendingAssignments": "En attente d’affectation",
+      "unassigned": "Aucun exécutant affecté",
+      "dependsOn": "Dépend de : {{titles}}",
+      "handoffFiles": "Fichiers de transmission et de livraison",
+      "requestFile": "Fichier des exigences",
+      "currentFileHint": "Aperçu et téléchargement du fichier actuel. Cette référence ne permet pas de restaurer un contenu modifié ou supprimé.",
+      "downloadFile": "Télécharger le fichier",
+      "loadingFile": "Chargement du fichier…",
+      "fileFailed": "Impossible de lire ce fichier du workflow.",
+      "fileTruncated": "Aperçu tronqué. Téléchargez le fichier pour lire son contenu complet.",
+      "downloadToView": "Téléchargez le fichier pour le consulter.",
+      "requestPartialSummary": "Synthétiser le travail terminé",
+      "partialSummaryHint": "Crée une synthèse partielle des résultats disponibles et indique les sous-tâches inachevées. Le travail en cours se termine d’abord, sans être arrêté.",
+      "partialSummaryRequest": "Créez une livraison partielle à partir du lot de division accepté dans {{path}}. Lisez les fichiers de transmission disponibles et indiquez chaque sous-tâche manquante et sa raison.",
+      "partialSummaryFailed": "Impossible de demander une synthèse partielle.",
+      "partialSummaryAccepted": "Synthèse partielle acceptée. Elle s’exécutera après la fin du travail actuel.",
+      "openPartialSummary": "Ouvrir la synthèse partielle",
+      "partialDelivery": "Livraison partielle",
+      "fullDelivery": "Livraison complète",
+      "partialDeliveryHint": "La synthèse ne couvre que le travail terminé. Les sous-tâches suivantes restent inachevées.",
+      "missingSubtasks": "Sous-tâches inachevées",
+      "deliveryFilesHint": "Les références de transmission peuvent inclure des documents existants. Les modifications de fichiers de l’agent sont affichées séparément ci-dessous.",
+      "openSourceRun": "Ouvrir l’exécution source",
+      "states": {
+        "pending": "En attente",
+        "accepted": "Accepté",
+        "dispatching": "Répartition en cours",
+        "running": "En cours",
+        "partial": "Partiellement terminé",
+        "succeeded": "Réussi",
+        "failed": "Échec",
+        "cancelled": "Arrêté",
+        "queued": "En file",
+        "blocked": "Dépendance non satisfaite",
+        "claimed": "Démarrage",
+        "completed": "Terminé",
+        "unknown": "État inconnu"
+      }
+    },
     "nodePicker": {
       "addNode": "Ajouter un nœud",
       "chooseNodeType": "Choisir le type de nœud",
       "descriptions": {
         "agent": "Agent IA qui exécute une tâche",
+        "task_splitter": "Crée des sous-tâches en fichiers à répartir par l’agent principal",
         "condition": "Achemine le travail entre les branches connectées",
         "human_gate": "Attend une approbation humaine",
         "transform": "Transforme les données entre les nœuds",

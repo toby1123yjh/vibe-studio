@@ -1,23 +1,18 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
-import { WorkspaceFileEmptyState } from '../WorkspaceFileEmptyState';
 
-interface ImageFileViewerProps {
+export interface ImageFileViewerProps {
   src: string | null | undefined;
   alt: string;
+  fallback: ReactNode;
 }
 
-export function ImageFileViewer({ src, alt }: ImageFileViewerProps) {
+export function ImageFileViewer({ src, alt, fallback }: ImageFileViewerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
 
   if (!src) {
-    return (
-      <WorkspaceFileEmptyState
-        title="Image unavailable"
-        description="The backend did not provide a raw image URL."
-      />
-    );
+    return <>{fallback}</>;
   }
 
   return (
@@ -36,10 +31,7 @@ export function ImageFileViewer({ src, alt }: ImageFileViewerProps) {
         </div>
       )}
       {hasError ? (
-        <WorkspaceFileEmptyState
-          title="Image failed to load"
-          description="Open the raw file if you need to inspect it directly."
-        />
+        fallback
       ) : (
         <img
           src={src}

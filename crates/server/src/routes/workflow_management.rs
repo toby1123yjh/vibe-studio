@@ -22,9 +22,10 @@ use crate::{
         arena::{DeploymentWorkflowArenaCreator, DeploymentWorkflowArenaWinnerApplier},
         management::{
             self, AcceptedWorkflowSubmission, PrepareWorkflowMainSessionRequest,
-            WorkflowContextView, WorkflowInstanceView, WorkflowMainSessionView,
-            WorkflowManagementCaller, WorkflowManagementInteractionRequest,
-            WorkflowNotificationPage, WorkflowStopView, WorkflowSubmission,
+            WorkflowContextView, WorkflowDispatchRequest, WorkflowInstanceView,
+            WorkflowMainSessionView, WorkflowManagementCaller,
+            WorkflowManagementInteractionRequest, WorkflowNotificationPage, WorkflowStopView,
+            WorkflowSubmission,
         },
         runner::{DeploymentWorkflowAgentExecutor, DeploymentWorkflowRunCanceller},
         workspace::DeploymentWorkflowWorkspaceResolver,
@@ -70,6 +71,10 @@ pub fn router() -> Router<DeploymentImpl> {
         .route(
             "/workflow-management/instances/{instance_id}/submit",
             post(submit),
+        )
+        .route(
+            "/workflow-management/instances/{instance_id}/dispatch",
+            post(dispatch),
         )
         .route(
             "/workflow-management/instances/{instance_id}/stop",
@@ -156,6 +161,16 @@ async fn submit(
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(view))))
+}
+async fn dispatch(
+    State(deployment): State<DeploymentImpl>,
+    Path(instance_id): Path<Uuid>,
+    Json(request): Json<WorkflowDispatchRequest>,
+) -> Result<Json<ApiResponse<management::AcceptedWorkflowDispatch>>, WorkflowManagementApiError> {
+    let view =
+        management::dispatch_workflow(&deployment.db().pool, &local_caller(instance_id), request)
+            .await?;
+    Ok(Json(ApiResponse::success(view)))
 }
 async fn stop(
     State(deployment): State<DeploymentImpl>,
@@ -357,6 +372,13 @@ async fn mcp(
                     .map_err(|error| parse(Value::String(error.to_string())))?;
                 encode(serde_json::to_value(
                     management::submit_workflow(pool, &caller, request, None, "main_agent").await?,
+                ))?
+            }
+            "workflow_dispatch" => {
+                let request: WorkflowDispatchRequest = serde_json::from_value(params)
+                    .map_err(|error| parse(Value::String(error.to_string())))?;
+                encode(serde_json::to_value(
+                    management::dispatch_workflow(pool, &caller, request).await?,
                 ))?
             }
             "workflow_stop" => {
