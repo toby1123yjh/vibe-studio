@@ -134,6 +134,8 @@ type WysiwygProps = {
   autoFocus?: boolean;
   /** Function to find a matching diff path for clickable inline code (only in read-only mode) */
   findMatchingDiffPath?: (text: string) => string | null;
+  /** Explicit diff scope for an embedded conversation. */
+  diffPaths?: Set<string>;
   /** Callback when clickable inline code is clicked (only in read-only mode) */
   onCodeClick?: (fullPath: string) => void;
   /** Hide the copy/edit/delete action buttons in read-only mode */
@@ -298,6 +300,7 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
       onDelete,
       autoFocus = false,
       findMatchingDiffPath,
+      diffPaths: scopedDiffPaths,
       onCodeClick,
       hideActions = false,
       showStaticToolbar = false,
@@ -330,7 +333,7 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
 
     // Copy button state
     const [copied, setCopied] = useState(false);
-    const diffPaths = useDiffPaths();
+    const diffPaths = useDiffPaths(scopedDiffPaths);
     const preferredRepoId = useUiPreferencesStore(
       (state) => state.fileSearchRepoId
     );

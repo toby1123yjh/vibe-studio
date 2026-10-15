@@ -21,5 +21,14 @@ export function useDiffSummary(workspaceId: string | null) {
     );
   }, [workspaceId, diffs]);
 
-  return { fileCount, added, deleted, error };
+  const paths = useMemo(() => {
+    const result = new Set<string>();
+    for (const diff of diffs) {
+      if (diff.oldPath) result.add(diff.oldPath);
+      if (diff.newPath) result.add(diff.newPath);
+    }
+    return result;
+  }, [diffs]);
+
+  return { fileCount, added, deleted, paths, error };
 }

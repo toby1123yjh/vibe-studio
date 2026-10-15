@@ -1337,6 +1337,30 @@
     "answeredCount_other": "{{count}}件の質問に回答済み"
   },
   "workflow": {
+    "conversation": {
+      "deliverables": "成果物 {{count}}",
+      "backToConversation": "戻る",
+      "backToWork": "作業一覧に戻る",
+      "backToCandidates": "候補に戻る",
+      "chooseWork": "作業を選択",
+      "sourceReadOnly": "参照元の実行 {{run}} · 読み取り専用",
+      "waitingSession": "この作業にはまだ会話がありません。上流の作業、割り当て、または実行開始を待っている可能性があります。",
+      "sourceFailed": "参照元の実行を読み込めませんでした。別の会話には切り替えていません。",
+      "contextFailed": "ファイル参照を読み込めませんでした。",
+      "noOutputs": "確認済みの成果ファイルはまだありません。",
+      "candidateFilesHint": "候補のファイルは専用のワークスペースにあります。会話内のファイルを開くか、会話全体で確認してください。",
+      "fileSource": "{{node}} · 実行 {{run}}",
+      "openSource": "参照元の会話を表示",
+      "loading": "会話を読み込み中…",
+      "unavailable": "会話を利用できません",
+      "missingBinding": "このワークスペースに紐づくセッションが見つかりません。",
+      "roles": {
+        "output": "成果",
+        "input": "入力",
+        "control": "作業指示",
+        "handoff": "引き継ぎ"
+      }
+    },
     "entry": {
       "title": "Workflow attempt",
       "subtitle": "Design the task attempt before running agents",

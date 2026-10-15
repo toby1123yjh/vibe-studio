@@ -23,7 +23,14 @@ use super::workspaces::files::{
     WorkspaceFileContentKind, file_content_preview_from_file,
     workspace_raw_content_type_and_disposition,
 };
-use crate::{DeploymentImpl, error::ApiError, workflow_runtime::runner};
+use crate::{
+    DeploymentImpl,
+    error::ApiError,
+    workflow_runtime::{
+        file_context::{WorkflowFileContextView, read_workflow_file_context},
+        runner,
+    },
+};
 
 #[derive(Debug, Serialize, TS)]
 pub struct WorkflowFileContent {
@@ -46,10 +53,26 @@ struct WorkflowFileQuery {
     path: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct WorkflowFileContextQuery {
+    node_execution_id: Option<Uuid>,
+}
+
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
+        .route("/workflow-runs/{run_id}/file-context", get(file_context))
         .route("/workflow-runs/{run_id}/files/content", get(content))
         .route("/workflow-runs/{run_id}/files/raw", get(raw))
+}
+
+async fn file_context(
+    State(deployment): State<DeploymentImpl>,
+    Path(run_id): Path<Uuid>,
+    Query(query): Query<WorkflowFileContextQuery>,
+) -> Result<Json<ApiResponse<WorkflowFileContextView>>, ApiError> {
+    Ok(Json(ApiResponse::success(
+        read_workflow_file_context(&deployment.db().pool, run_id, query.node_execution_id).await?,
+    )))
 }
 
 async fn open_file(

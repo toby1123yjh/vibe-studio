@@ -3,6 +3,7 @@ import { useJsonPatchWsStream } from '@/shared/hooks/useJsonPatchWsStream';
 import { useAppRuntime } from '@/shared/hooks/useAppRuntime';
 import { useLocalStorageScratch } from '@/shared/hooks/useLocalStorageScratch';
 import { scratchApi } from '@/shared/lib/api';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 import { ScratchType, type Scratch, type UpdateScratch } from 'shared/types';
 
 type ScratchState = {
@@ -37,11 +38,15 @@ export const useScratch = (
   options?: UseScratchOptions
 ): UseScratchResult => {
   const runtime = useAppRuntime();
+  const hostId = useHostId();
   const isRemote = runtime === 'remote';
 
   // --- localStorage path (remote-web) ---
   const localResult = useLocalStorageScratch(scratchType, id, {
     enabled: isRemote && (options?.enabled ?? true),
+    // Existing Session IDs belong to one Host. Workspace creation drafts keep
+    // their existing storage identity used by persistWorkspaceCreateDraft.
+    hostId: scratchType === ScratchType.DRAFT_FOLLOW_UP ? hostId : undefined,
   });
 
   // --- WebSocket/API path (local-web) ---
@@ -54,7 +59,9 @@ export const useScratch = (
   const initialData = useCallback((): ScratchState => ({ scratch: null }), []);
 
   const { data, isConnected, isInitialized, error } =
-    useJsonPatchWsStream<ScratchState>(endpoint, serverEnabled, initialData);
+    useJsonPatchWsStream<ScratchState>(endpoint, serverEnabled, initialData, {
+      transport: { hostScope: 'explicit', hostId },
+    });
 
   // Treat deleted scratches as null
   const rawScratch = data?.scratch as (Scratch & { deleted?: boolean }) | null;
@@ -62,14 +69,14 @@ export const useScratch = (
 
   const updateScratch = useCallback(
     async (update: UpdateScratch) => {
-      await scratchApi.update(scratchType, id, update);
+      await scratchApi.update(scratchType, id, update, hostId);
     },
-    [scratchType, id]
+    [scratchType, id, hostId]
   );
 
   const deleteScratch = useCallback(async () => {
-    await scratchApi.delete(scratchType, id);
-  }, [scratchType, id]);
+    await scratchApi.delete(scratchType, id, hostId);
+  }, [scratchType, id, hostId]);
 
   const isLoading = !isInitialized && !error;
 

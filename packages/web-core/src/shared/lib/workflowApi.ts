@@ -15,6 +15,7 @@ import type {
   WorkflowAttemptResponse,
   WorkflowRunResponse,
   WorkflowFileContent,
+  WorkflowFileContextView,
   WorkflowActionResponse,
   WorkflowRevisionConflict,
   WorkflowFileChangeSummary,
@@ -157,6 +158,22 @@ export function createWorkflowApi(hostId?: string | null) {
   const localFetch = (path: string, init?: RequestInit) =>
     localRequest(path, init, hostId);
   return {
+    async fileContext(
+      runId: string,
+      nodeExecutionId?: string | null,
+      signal?: AbortSignal
+    ): Promise<WorkflowFileContextView> {
+      const query = new URLSearchParams();
+      if (nodeExecutionId) query.set('node_execution_id', nodeExecutionId);
+      const suffix = query.size ? `?${query}` : '';
+      return handleApiResponse(
+        await makeLocalApiRequest(
+          `/api/workflow-runs/${encodeURIComponent(runId)}/file-context${suffix}`,
+          { signal, hostScope: 'explicit', hostId }
+        )
+      );
+    },
+
     async fileContent(
       runId: string,
       path: string,

@@ -1337,6 +1337,30 @@
     "answeredCount_other": "Répondu à {{count}} questions"
   },
   "workflow": {
+    "conversation": {
+      "deliverables": "Livrables {{count}}",
+      "backToConversation": "Retour",
+      "backToWork": "Retour aux travaux",
+      "backToCandidates": "Retour aux candidats",
+      "chooseWork": "Choisir un travail",
+      "sourceReadOnly": "Exécution source {{run}} · lecture seule",
+      "waitingSession": "Ce travail n’a pas encore de conversation liée. Il peut attendre un travail en amont, une affectation ou son démarrage.",
+      "sourceFailed": "Impossible de charger l’exécution source. Aucune autre conversation ne l’a remplacée.",
+      "contextFailed": "Impossible de charger les références de fichiers.",
+      "noOutputs": "Aucun fichier de résultat accepté pour le moment.",
+      "candidateFilesHint": "Les fichiers du candidat appartiennent à son espace de travail. Ouvrez-les depuis la conversation ou dans la conversation complète.",
+      "fileSource": "{{node}} · exécution {{run}}",
+      "openSource": "Voir la conversation source",
+      "loading": "Chargement de la conversation…",
+      "unavailable": "Conversation indisponible",
+      "missingBinding": "La session liée est introuvable dans cet espace de travail.",
+      "roles": {
+        "output": "Résultats",
+        "input": "Entrées",
+        "control": "Consignes",
+        "handoff": "Transmissions"
+      }
+    },
     "entry": {
       "title": "Workflow attempt",
       "subtitle": "Design the task attempt before running agents",

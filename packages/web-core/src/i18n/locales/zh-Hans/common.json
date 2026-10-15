@@ -478,6 +478,30 @@
     }
   },
   "workflow": {
+    "conversation": {
+      "deliverables": "交付物 {{count}}",
+      "backToConversation": "返回",
+      "backToWork": "返回工作清单",
+      "backToCandidates": "返回候选组",
+      "chooseWork": "选择工作",
+      "sourceReadOnly": "来源 Run {{run}} · 只读",
+      "waitingSession": "此工作尚未绑定会话，可能仍在等待上游、分配或启动执行。",
+      "sourceFailed": "无法加载来源运行，未使用其他会话代替。",
+      "contextFailed": "无法加载文件引用。",
+      "noOutputs": "尚无已确认的成果文件。",
+      "candidateFilesHint": "候选文件属于它自己的工作空间，可从会话打开文件，或在完整会话中查看该工作空间。",
+      "fileSource": "{{node}} · Run {{run}}",
+      "openSource": "查看来源会话",
+      "loading": "正在加载会话…",
+      "unavailable": "会话暂不可用",
+      "missingBinding": "此工作空间中未找到绑定的会话。",
+      "roles": {
+        "output": "本工作交付",
+        "input": "输入材料",
+        "control": "分工材料",
+        "handoff": "交接"
+      }
+    },
     "entry": {
       "title": "工作流执行",
       "subtitle": "先设计任务执行，再运行智能体",

@@ -1337,6 +1337,30 @@
     "answeredCount_other": "Respondió {{count}} preguntas"
   },
   "workflow": {
+    "conversation": {
+      "deliverables": "Entregables {{count}}",
+      "backToConversation": "Volver",
+      "backToWork": "Volver a los trabajos",
+      "backToCandidates": "Volver a los candidatos",
+      "chooseWork": "Elegir trabajo",
+      "sourceReadOnly": "Ejecución de origen {{run}} · solo lectura",
+      "waitingSession": "Este trabajo aún no tiene una conversación vinculada. Puede estar esperando trabajo previo, una asignación o su inicio.",
+      "sourceFailed": "No se pudo cargar la ejecución de origen. No se ha sustituido por otra conversación.",
+      "contextFailed": "No se pudieron cargar las referencias de archivos.",
+      "noOutputs": "Aún no hay archivos de resultado aceptados.",
+      "candidateFilesHint": "Los archivos del candidato pertenecen a su espacio de trabajo. Ábralos desde la conversación o desde la conversación completa.",
+      "fileSource": "{{node}} · ejecución {{run}}",
+      "openSource": "Ver conversación de origen",
+      "loading": "Cargando conversación…",
+      "unavailable": "Conversación no disponible",
+      "missingBinding": "No se encontró la sesión vinculada en este espacio de trabajo.",
+      "roles": {
+        "output": "Resultados",
+        "input": "Entradas",
+        "control": "Instrucciones",
+        "handoff": "Entregas"
+      }
+    },
     "entry": {
       "title": "Workflow attempt",
       "subtitle": "Design the task attempt before running agents",

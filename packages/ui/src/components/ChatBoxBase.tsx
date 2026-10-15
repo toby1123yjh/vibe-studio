@@ -50,6 +50,7 @@ interface ChatBoxBaseProps {
 
   // Dropzone props for drag-and-drop image uploads
   dropzone?: DropzoneProps;
+  compact?: boolean;
 }
 
 /**
@@ -68,6 +69,7 @@ export function ChatBoxBase({
   visualVariant,
   isRunning,
   dropzone,
+  compact = false,
 }: ChatBoxBaseProps) {
   const { t } = useTranslation(['common', 'tasks']);
 
@@ -77,7 +79,7 @@ export function ChatBoxBase({
     <div
       {...(dropzone?.getRootProps() ?? {})}
       className={cn(
-        'relative flex w-chat max-w-full flex-col rounded-sm border border-border bg-secondary',
+        'relative flex min-w-0 w-chat max-w-full flex-col rounded-sm border border-border bg-secondary',
         (visualVariant === VisualVariant.FEEDBACK ||
           visualVariant === VisualVariant.EDIT ||
           visualVariant === VisualVariant.PLAN) &&
@@ -114,7 +116,12 @@ export function ChatBoxBase({
 
       {/* Header - Stats and selector */}
       {visualVariant === VisualVariant.NORMAL && (
-        <div className="flex items-center gap-base border-b px-base py-base">
+        <div
+          className={cn(
+            'flex items-center gap-base border-b px-base py-base',
+            compact && 'flex-wrap gap-half py-half'
+          )}
+        >
           <div className="flex flex-1 items-center gap-base text-sm min-w-0 overflow-hidden">
             {headerLeft}
           </div>

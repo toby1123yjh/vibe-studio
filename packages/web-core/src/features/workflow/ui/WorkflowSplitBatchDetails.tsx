@@ -8,7 +8,6 @@ import type {
 } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
-import { buildWorkspaceSessionHref } from '@/shared/lib/routes/workspaceRoutes';
 import { workflowManagementApi } from '@/shared/lib/workflowManagementApi';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import type { WorkflowGraph } from '../model/workflowGraph';
@@ -19,28 +18,42 @@ import {
   getWorkflowSplitStages,
 } from '../model/workflowRuntimeView';
 import { workflowSplitStateKey } from './workflowI18n';
-import { WorkflowFileReferences } from './WorkflowFileReferences';
+import {
+  WorkflowFileReferences,
+  type WorkflowFilePreviewTarget,
+} from './WorkflowFileReferences';
+import { buildWorkflowConversationHref } from '../model/workflowConversationTarget';
+import type { WorkflowSplitSubtaskView } from 'shared/types';
 
 export function WorkflowSplitBatchDetails({
   batch,
   graph,
   projectId,
   run,
-  workspaceHref,
+  onOpenSubtask,
+  onOpenMainSession,
+  onOpenFile,
 }: {
   batch: WorkflowSplitBatchView;
   graph: WorkflowGraph;
   projectId: string;
   run: WorkflowRunResponse;
   workspaceHref: string | null;
+  onOpenSubtask?: (task: WorkflowSplitSubtaskView) => void;
+  onOpenMainSession?: () => void;
+  onOpenFile?: (target: WorkflowFilePreviewTarget) => void;
 }) {
   const { t } = useTranslation('common');
+  const hostId = useHostId();
   const progress = getWorkflowSplitProgress(batch.subtasks);
   const stages = getWorkflowSplitStages(batch);
-  const mainSessionHref = buildWorkspaceSessionHref(
-    workspaceHref,
-    batch.handover?.session_id
-  );
+  const mainSessionHref = buildWorkflowConversationHref({
+    hostId,
+    projectId,
+    taskId: run.task_id,
+    workspaceId: run.workspace_id,
+    sessionId: batch.handover?.session_id ?? null,
+  });
   const getNodeLabel = (id: string) =>
     graph.nodes.find((node) => node.id === id)?.data.display_name || id;
 
@@ -76,6 +89,7 @@ export function WorkflowSplitBatchDetails({
         </h4>
         <WorkflowFileReferences
           runId={run.id}
+          onOpenFile={onOpenFile}
           files={[
             { path: batch.manifest_path, sha256: batch.manifest_sha256 },
             ...(batch.dispatch_path ? [{ path: batch.dispatch_path }] : []),
@@ -108,7 +122,16 @@ export function WorkflowSplitBatchDetails({
               {batch.handover.error_text}
             </p>
           ) : null}
-          {mainSessionHref ? (
+          {onOpenMainSession ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={onOpenMainSession}
+            >
+              {t('workflow.split.openMainSession')}
+            </Button>
+          ) : mainSessionHref ? (
             <a
               href={mainSessionHref}
               className="inline-flex items-center gap-half rounded text-xs text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -138,10 +161,13 @@ export function WorkflowSplitBatchDetails({
             </h4>
             <ul className="divide-y divide-secondary rounded border border-secondary bg-primary">
               {stage.subtasks.map((task) => {
-                const sessionHref = buildWorkspaceSessionHref(
-                  workspaceHref,
-                  task.session_id
-                );
+                const sessionHref = buildWorkflowConversationHref({
+                  hostId,
+                  projectId,
+                  taskId: run.task_id,
+                  workspaceId: run.workspace_id,
+                  sessionId: task.session_id,
+                });
                 const handoff = run.handoffs.find(
                   (item) => item.node_execution_id === task.node_execution_id
                 );
@@ -194,6 +220,7 @@ export function WorkflowSplitBatchDetails({
                     ) : null}
                     <WorkflowFileReferences
                       runId={run.id}
+                      onOpenFile={onOpenFile}
                       files={[
                         { path: task.instruction_path },
                         ...(task.handoff_path
@@ -202,7 +229,17 @@ export function WorkflowSplitBatchDetails({
                         ...(handoff?.files ?? []),
                       ]}
                     />
-                    {sessionHref ? (
+                    {onOpenSubtask ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        data-testid={`workflow-open-subtask-${task.id}`}
+                        onClick={() => onOpenSubtask(task)}
+                      >
+                        {t('workflow.split.openExecutionSession')}
+                      </Button>
+                    ) : sessionHref ? (
                       <a
                         href={sessionHref}
                         className="inline-flex items-center gap-half rounded text-xs text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"

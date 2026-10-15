@@ -38,7 +38,7 @@ export function useWorkspaceRepo(
   const query = useQuery<RepoWithTargetBranch[]>({
     queryKey: workspaceRepoKeys.byWorkspace(workspaceId, hostId),
     queryFn: async () => {
-      const repos = await workspacesApi.getRepos(workspaceId!);
+      const repos = await workspacesApi.getRepos(workspaceId!, hostId);
       return repos;
     },
     enabled: enabled && !!workspaceId,

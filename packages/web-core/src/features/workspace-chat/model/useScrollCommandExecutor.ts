@@ -49,6 +49,8 @@ export interface ScrollCommandExecutorOptions {
   itemCount: number;
 
   dataVersion: number;
+  /** Returns true when an embedding surface restored its saved view. */
+  restoreInitialPosition?: () => boolean;
 
   /** Point-in-time DOM check for isAtBottom (avoids stale React state). */
   checkIsAtBottom: () => boolean;
@@ -97,6 +99,7 @@ export function useScrollCommandExecutor({
   virtualizer,
   itemCount,
   dataVersion,
+  restoreInitialPosition,
   checkIsAtBottom,
   scrollToBottom,
   scrollToAbsoluteIndex,
@@ -186,6 +189,16 @@ export function useScrollCommandExecutor({
       return;
     }
 
+    if (
+      intent.type === 'initial-bottom' &&
+      itemCount > 0 &&
+      restoreInitialPosition?.()
+    ) {
+      stateRef.current = markIntentApplied(stateRef.current);
+      prevDataVersionRef.current = dataVersion;
+      return;
+    }
+
     executeIntent(
       virtualizer,
       intent,
@@ -201,6 +214,7 @@ export function useScrollCommandExecutor({
     scrollToAbsoluteIndex,
     scrollToBottom,
     virtualizer,
+    restoreInitialPosition,
   ]);
 
   // -------------------------------------------------------------------------

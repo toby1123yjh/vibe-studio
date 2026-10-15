@@ -66,6 +66,14 @@ export type WorkflowDeliveryCompleteness = "full" | "partial";
 
 export type WorkflowDeliveryView = { completeness: WorkflowDeliveryCompleteness, source_run_id: string | null, source_batch_id: string | null, missing_subtasks: Array<WorkflowMissingSubtaskView>, };
 
+export type WorkflowContextFileRole = "output" | "input" | "control" | "handoff";
+
+export type WorkflowContextFileView = { role: WorkflowContextFileRole, path: string, sha256: string | null, source_run_id: string, source_node_execution_id: string | null, source_node_id: string | null, source_session_id: string | null, source_workspace_id: string, };
+
+export type WorkflowContextExecutionView = { node_execution_id: string, node_id: string, run_id: string, workspace_id: string, session_id: string | null, status: string, };
+
+export type WorkflowFileContextView = { run_id: string, workspace_id: string, node_execution_id: string | null, execution: WorkflowContextExecutionView | null, files: Array<WorkflowContextFileView>, missing_subtasks: Array<WorkflowMissingSubtaskView>, };
+
 export type WorkflowExternalAccessRequest = { enabled: boolean, };
 
 export type RespondWorkflowNodeRequest = { node_execution_id: string, message: string | null, };

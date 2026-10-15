@@ -64,26 +64,46 @@ export function useSessionQueueInteraction({
       message,
       executorConfig,
       selectedSkills,
+      sessionId: queuedSessionId,
+      hostId: queuedHostId,
     }: {
       message: string;
       executorConfig: ExecutorConfig;
       selectedSkills?: SelectedSkill[];
+      sessionId: string;
+      hostId: string | null;
     }) =>
-      queueApi.queue(sessionId!, {
-        message,
-        executor_config: executorConfig,
-        selected_skills: selectedSkills,
-      }),
-    onSuccess: (status) => {
-      queryClient.setQueryData([QUEUE_STATUS_KEY, hostId, sessionId], status);
+      queueApi.queue(
+        queuedSessionId,
+        {
+          message,
+          executor_config: executorConfig,
+          selected_skills: selectedSkills,
+        },
+        queuedHostId
+      ),
+    onSuccess: (status, variables) => {
+      queryClient.setQueryData(
+        [QUEUE_STATUS_KEY, variables.hostId, variables.sessionId],
+        status
+      );
     },
   });
 
   // Mutation for cancelling the queue
   const cancelMutation = useMutation({
-    mutationFn: () => queueApi.cancel(sessionId!),
-    onSuccess: (status) => {
-      queryClient.setQueryData([QUEUE_STATUS_KEY, hostId, sessionId], status);
+    mutationFn: ({
+      sessionId: queuedSessionId,
+      hostId: queuedHostId,
+    }: {
+      sessionId: string;
+      hostId: string | null;
+    }) => queueApi.cancel(queuedSessionId, queuedHostId),
+    onSuccess: (status, variables) => {
+      queryClient.setQueryData(
+        [QUEUE_STATUS_KEY, variables.hostId, variables.sessionId],
+        status
+      );
     },
   });
 
@@ -98,15 +118,17 @@ export function useSessionQueueInteraction({
         message,
         executorConfig,
         selectedSkills,
+        sessionId,
+        hostId,
       });
     },
-    [sessionId, queueMutation]
+    [sessionId, hostId, queueMutation]
   );
 
   const cancelQueue = useCallback(async () => {
     if (!sessionId) return;
-    await cancelMutation.mutateAsync();
-  }, [sessionId, cancelMutation]);
+    await cancelMutation.mutateAsync({ sessionId, hostId });
+  }, [sessionId, hostId, cancelMutation]);
 
   const refreshQueueStatus = useCallback(async () => {
     if (!sessionId) return;

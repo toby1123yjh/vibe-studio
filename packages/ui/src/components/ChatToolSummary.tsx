@@ -81,11 +81,20 @@ export const ChatToolSummary = forwardRef<
     <div
       className={cn(
         '-mx-half flex min-w-0 items-center gap-base rounded-sm px-half py-0.5 text-sm text-low transition-colors',
-        isClickable && 'cursor-pointer hover:bg-muted/30 hover:text-normal',
+        isClickable &&
+          'cursor-pointer hover:bg-muted/30 hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
         className
       )}
       onClick={isClickable ? handleClick : undefined}
       role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      aria-expanded={canExpand && !onViewContent ? expanded : undefined}
+      onKeyDown={(event) => {
+        if (!isClickable || (event.key !== 'Enter' && event.key !== ' '))
+          return;
+        event.preventDefault();
+        handleClick();
+      }}
     >
       <span className="relative shrink-0 pt-0.5">
         <Icon className="size-icon-base" />

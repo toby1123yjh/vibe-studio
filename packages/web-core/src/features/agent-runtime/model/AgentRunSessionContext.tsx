@@ -18,6 +18,7 @@ import type { CanonicalAgentTimeline } from './canonicalAgentTimeline';
 import { projectCanonicalAgentConversation } from './canonicalAgentConversation';
 import { useAgentRunCanonicalStream } from './useAgentRunCanonicalStream';
 import type { CanonicalConversationProjection } from '@/shared/hooks/useConversationHistory/types';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 
 const AGENT_RUN_DISCOVERY_INTERVAL_MS = 2_000;
 
@@ -70,13 +71,14 @@ function AgentRunStreamBridge({
   return null;
 }
 
-export function AgentRunSessionProvider({
+function ScopedAgentRunSessionProvider({
   sessionId,
   children,
 }: {
   sessionId?: string;
   children: ReactNode;
 }) {
+  const hostId = useHostId();
   const [timelines, setTimelines] = useState<
     ReadonlyMap<string, CanonicalAgentTimeline>
   >(new Map());
@@ -87,8 +89,8 @@ export function AgentRunSessionProvider({
     >
   >(new Map());
   const runsQuery = useQuery({
-    queryKey: ['agent-runs', 'session', sessionId],
-    queryFn: () => agentRunsApi.listForSession(sessionId!),
+    queryKey: ['agent-runs', 'session', sessionId, hostId],
+    queryFn: () => agentRunsApi.listForSession(sessionId!, hostId),
     enabled: Boolean(sessionId),
     refetchInterval: sessionId ? AGENT_RUN_DISCOVERY_INTERVAL_MS : false,
   });
@@ -195,6 +197,19 @@ export function AgentRunSessionProvider({
       ))}
       {children}
     </AgentRunSessionContext.Provider>
+  );
+}
+
+export function AgentRunSessionProvider(props: {
+  sessionId?: string;
+  children: ReactNode;
+}) {
+  const hostId = useHostId();
+  return (
+    <ScopedAgentRunSessionProvider
+      key={JSON.stringify([hostId, props.sessionId])}
+      {...props}
+    />
   );
 }
 

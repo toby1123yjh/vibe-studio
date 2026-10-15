@@ -73,9 +73,15 @@ async function postControl<TBody>(
 }
 
 export const agentRunsApi = {
-  async listForSession(sessionId: string): Promise<AgentRunSummary[]> {
+  async listForSession(
+    sessionId: string,
+    hostId?: string | null
+  ): Promise<AgentRunSummary[]> {
     return handleApiResponse<AgentRunSummary[]>(
-      await makeLocalApiRequest(`/api/agent-runs/session/${sessionId}`)
+      await makeLocalApiRequest(
+        `/api/agent-runs/session/${sessionId}`,
+        hostId === undefined ? undefined : { hostScope: 'explicit', hostId }
+      )
     );
   },
 

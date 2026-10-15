@@ -4,7 +4,14 @@ import type { UseScratchResult } from './useScratch';
 
 const STORAGE_PREFIX = 'vk-scratch';
 
-function buildStorageKey(scratchType: ScratchType, id: string): string {
+function buildStorageKey(
+  scratchType: ScratchType,
+  id: string,
+  hostId?: string | null
+): string {
+  if (hostId) {
+    return `${STORAGE_PREFIX}:host:${JSON.stringify([hostId, scratchType, id])}`;
+  }
   return `${STORAGE_PREFIX}:${scratchType}:${id}`;
 }
 
@@ -80,13 +87,16 @@ export function localStorageScratchUpdate(
         storageArea: localStorage,
       })
     );
-  } catch {}
+  } catch {
+    // Storage succeeded even if this browser cannot dispatch a StorageEvent.
+  }
 
   return true;
 }
 
 interface UseLocalStorageScratchOptions {
   enabled?: boolean;
+  hostId?: string | null;
 }
 
 /**
@@ -100,7 +110,7 @@ export const useLocalStorageScratch = (
   options?: UseLocalStorageScratchOptions
 ): UseScratchResult => {
   const enabled = (options?.enabled ?? true) && id.length > 0;
-  const storageKey = buildStorageKey(scratchType, id);
+  const storageKey = buildStorageKey(scratchType, id, options?.hostId);
 
   const [scratch, setScratch] = useState<Scratch | null>(() =>
     enabled ? readFromStorage(storageKey) : null
@@ -156,7 +166,7 @@ export const useLocalStorageScratch = (
   }, [storageKey]);
 
   return {
-    scratch,
+    scratch: loadedKey === storageKey ? scratch : null,
     isLoading: enabled && loadedKey !== storageKey,
     isConnected: true,
     error: null,

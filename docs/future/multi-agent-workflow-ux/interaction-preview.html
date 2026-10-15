@@ -1,0 +1,3151 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>Vibe Kanban · 多 Agent 协作交互稿</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: #f4f6f7;
+        --sidebar: #eceff1;
+        --surface: #fff;
+        --secondary: #f2f4f5;
+        --ink: #172027;
+        --normal: #34414b;
+        --muted: #606e78;
+        --border: #dde2e6;
+        --brand: #c65016;
+        --selection: rgb(216 95 30 / 9%);
+        --success: #237444;
+        --warning: #906000;
+        --danger: #b53737;
+        --info: #2f65bd;
+        --shadow: 0 12px 32px rgb(0 0 0 / 12%);
+        --dots: #d9dfe3;
+        font-family: "IBM Plex Sans", "Segoe UI", "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+      }
+      button,
+      select,
+      textarea {
+        font: inherit;
+      }
+      a {
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+        color: inherit;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      button,
+      a,
+      textarea {
+        outline-offset: 3px;
+      }
+      :focus-visible {
+        outline: 2px solid var(--brand);
+      }
+      button {
+        transition:
+          background 120ms,
+          border-color 120ms,
+          box-shadow 120ms;
+      }
+      button:hover:not(:disabled) {
+        background: var(--secondary);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      svg.icon {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .prototype-bar {
+        min-height: 68px;
+        padding: 12px 24px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .prototype-label {
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .prototype-label strong {
+        display: block;
+        font-size: 13px;
+      }
+      .prototype-label span,
+      .muted {
+        color: var(--muted);
+      }
+      .scenes {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+      }
+      .scene {
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 8px 12px;
+        background: transparent;
+        font-size: 13px;
+      }
+      .scene[aria-pressed="true"] {
+        background: var(--selection);
+        border-color: var(--brand);
+        color: var(--brand);
+      }
+      .preview-controls {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .btn {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 7px;
+        min-height: 36px;
+        padding: 7px 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        white-space: nowrap;
+      }
+      .btn.primary {
+        background: var(--brand);
+        border-color: var(--brand);
+        color: white;
+      }
+      .btn.primary:hover:not(:disabled) {
+        filter: brightness(1.08);
+        background: var(--brand);
+      }
+      .btn.danger {
+        color: var(--danger);
+      }
+      .btn.ghost {
+        border-color: transparent;
+        background: transparent;
+      }
+      .icon-button {
+        padding: 9px;
+        min-width: 36px;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: 224px minmax(0, 1fr);
+        height: calc(100dvh - 110px);
+        min-height: 610px;
+      }
+      .sidebar {
+        padding: 24px 14px 12px;
+        border-right: 1px solid var(--border);
+        background: var(--sidebar);
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+        overflow-y: auto;
+      }
+      .product {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 10px 4px;
+        font-weight: 600;
+      }
+      .product-mark {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        background: var(--ink);
+        color: var(--surface);
+        font-size: 13px;
+      }
+      .sidebar nav {
+        display: grid;
+        gap: 4px;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        text-align: left;
+        font-size: 13px;
+        color: var(--normal);
+      }
+      .nav-item.active {
+        background: var(--surface);
+        box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .section-label {
+        padding: 0 12px;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--muted);
+        margin: 0 0 8px;
+      }
+      .sidebar-row {
+        font-size: 13px;
+        line-height: 2.5;
+        padding: 0 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sidebar-bottom {
+        margin-top: auto;
+        padding: 8px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .main {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+      .page-header {
+        height: 82px;
+        flex-shrink: 0;
+        padding: 16px 28px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .eyebrow {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 7px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+      .heading-line {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 0;
+      }
+      h2 {
+        font-size: 15px;
+        margin: 0;
+      }
+      h3 {
+        font-size: 13px;
+        margin-bottom: 10px;
+      }
+      .header-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        line-height: 20px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .dot {
+        width: 6px;
+        height: 6px;
+        background: currentColor;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+      }
+      .success {
+        color: var(--success);
+      }
+      .running {
+        color: var(--info);
+      }
+      .waiting {
+        color: var(--warning);
+      }
+      .failed {
+        color: var(--danger);
+      }
+      .run-view {
+        flex: 1;
+        min-height: 0;
+        position: relative;
+        overflow: hidden;
+        background-image: radial-gradient(var(--dots) 0.8px, transparent 0.8px);
+        background-size: 24px 24px;
+      }
+      .canvas {
+        position: absolute;
+        inset: 0;
+        touch-action: none;
+        cursor: grab;
+        overflow: hidden;
+      }
+      .canvas.dragging {
+        cursor: grabbing;
+      }
+      .graph {
+        width: 850px;
+        height: 740px;
+        position: absolute;
+        left: 40px;
+        top: 12px;
+        transform-origin: 0 0;
+      }
+      .connections {
+        position: absolute;
+        inset: 0;
+        width: 850px;
+        height: 740px;
+        overflow: visible;
+      }
+      .edge-visible {
+        fill: none;
+        stroke: var(--border);
+        stroke-width: 2;
+      }
+      .edge-visible.passed {
+        stroke: var(--success);
+        opacity: 0.55;
+      }
+      .edge-visible.active {
+        stroke: var(--info);
+        stroke-dasharray: 5 7;
+        animation: travel 1.5s linear infinite;
+      }
+      .edge-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 18;
+        cursor: pointer;
+      }
+      .edge-hit:focus-visible {
+        outline: none;
+        stroke: var(--brand);
+        stroke-width: 4;
+      }
+      .node {
+        position: absolute;
+        width: 216px;
+        min-height: 108px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 14px;
+        background: var(--surface);
+        text-align: left;
+        box-shadow: 0 2px 5px rgb(0 0 0 / 3%);
+        cursor: pointer;
+      }
+      .node:hover {
+        border-color: var(--muted);
+        box-shadow: 0 4px 12px rgb(0 0 0 / 7%);
+      }
+      .node[aria-pressed="true"] {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 2px var(--selection);
+      }
+      .node-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 14px;
+        font-weight: 600;
+        min-height: 22px;
+      }
+      .type-icon {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        background: var(--secondary);
+        border-radius: 7px;
+        color: var(--normal);
+      }
+      .node-sub {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        margin-top: 12px;
+      }
+      .node-agent {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      .port {
+        width: 8px;
+        height: 8px;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        background: var(--surface);
+        position: absolute;
+        left: calc(50% - 4px);
+      }
+      .port.top {
+        top: -5px;
+      }
+      .port.bottom {
+        bottom: -5px;
+      }
+      .panel {
+        position: absolute;
+        right: 24px;
+        top: 24px;
+        bottom: 24px;
+        width: 440px;
+        max-width: calc(100% - 48px);
+        min-width: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+        z-index: 30;
+      }
+      .panel.entering {
+        animation: panel-in 180ms ease-out;
+      }
+      .panel-header {
+        padding: 16px 18px;
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        border-bottom: 1px solid var(--border);
+      }
+      .panel-header > div {
+        flex: 1;
+        min-width: 0;
+      }
+      .panel-header .badge {
+        margin-top: 7px;
+      }
+      .panel-body {
+        min-height: 0;
+        overflow-y: auto;
+        padding: 18px;
+        scrollbar-gutter: stable;
+      }
+      .panel-section + .panel-section {
+        border-top: 1px solid var(--border);
+        margin-top: 18px;
+        padding-top: 18px;
+      }
+      .panel-section p {
+        font-size: 13px;
+        line-height: 1.7;
+        margin-bottom: 12px;
+        color: var(--normal);
+      }
+      .section-title {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 500;
+        margin-bottom: 10px;
+      }
+      .meta {
+        font-size: 12px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+      .file {
+        display: flex;
+        width: 100%;
+        gap: 10px;
+        align-items: center;
+        text-align: left;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--surface);
+        padding: 10px 11px;
+        margin-top: 6px;
+      }
+      .file > span {
+        min-width: 0;
+        flex: 1;
+      }
+      .file strong {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        overflow-wrap: anywhere;
+      }
+      .file small {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+      }
+      .notice {
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.65;
+        background: var(--secondary);
+      }
+      .notice.warning {
+        border-left: 3px solid var(--warning);
+      }
+      .notice.error {
+        border-left: 3px solid var(--danger);
+      }
+      .task-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        width: 100%;
+        padding: 12px 0;
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        background: transparent;
+        text-align: left;
+      }
+      .task-row > span:nth-child(2) {
+        flex: 1;
+        min-width: 0;
+      }
+      .task-row strong {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .task-row small {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.6;
+        margin-top: 4px;
+      }
+      .task-row .badge {
+        margin-top: 1px;
+      }
+      .task-row svg {
+        width: 14px;
+        height: 14px;
+      }
+      .task-detail {
+        padding: 12px;
+        background: var(--secondary);
+        border-radius: 7px;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .task-detail .btn {
+        margin-top: 10px;
+      }
+      .stage-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--muted);
+        padding-top: 15px;
+      }
+      .candidate {
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 8px;
+      }
+      .candidate h3 {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .candidate p {
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .candidate .actions {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      details {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      details summary {
+        cursor: pointer;
+        padding: 8px 0;
+      }
+      details p {
+        padding-top: 8px;
+      }
+      .attention {
+        position: absolute;
+        right: 20px;
+        top: 20px;
+        width: 320px;
+        max-width: calc(100% - 40px);
+        padding: 16px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: var(--shadow);
+        z-index: 20;
+      }
+      .attention p {
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--normal);
+        margin: 8px 0;
+      }
+      .canvas-tools {
+        position: absolute;
+        bottom: 20px;
+        left: 24px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        z-index: 10;
+      }
+      .canvas-tools span {
+        font-size: 12px;
+        min-width: 40px;
+        text-align: center;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .canvas-caption {
+        position: absolute;
+        bottom: 29px;
+        right: 24px;
+        color: var(--muted);
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .prototype-footer {
+        min-height: 42px;
+        padding: 10px 24px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted);
+        background: var(--surface);
+        display: flex;
+        gap: 16px;
+        justify-content: space-between;
+      }
+      .compare-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+        max-width: 1000px;
+        margin: 24px auto;
+      }
+      .compare-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 24px;
+      }
+      .compare-card h2 {
+        font-size: 18px;
+        margin-bottom: 12px;
+      }
+      .compare-card p,
+      .compare-card li {
+        font-size: 14px;
+        line-height: 1.8;
+        color: var(--normal);
+      }
+      .compare-card .section-title {
+        margin-top: 24px;
+      }
+      .message {
+        max-width: 90%;
+        font-size: 14px;
+        line-height: 1.9;
+        margin-top: 24px;
+      }
+      .message.user {
+        margin-left: auto;
+        padding: 12px 18px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+      }
+      .message .author {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .composer {
+        margin-top: auto;
+        padding-top: 32px;
+      }
+      .composer-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+      .composer textarea {
+        width: 100%;
+        min-height: 72px;
+        resize: vertical;
+        background: transparent;
+        color: var(--ink);
+        border: 0;
+        line-height: 1.7;
+      }
+      .composer-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .conversation-panel {
+        overflow: hidden;
+      }
+      .conversation-header {
+        padding: 14px 14px 12px 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+      .conversation-heading {
+        flex: 1;
+        min-width: 0;
+      }
+      .conversation-heading h2 {
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .conversation-heading .meta {
+        overflow-wrap: anywhere;
+        margin: 5px 0 0;
+      }
+      .conversation-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .work-switcher {
+        padding: 7px 16px;
+        background: var(--secondary);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-shrink: 0;
+      }
+      .work-switcher label {
+        font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .work-switcher select {
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        min-width: 0;
+        max-width: 100%;
+        flex: 1;
+      }
+      .conversation-content {
+        flex: 1;
+        min-height: 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .conversation-messages {
+        flex: 1;
+        min-height: 80px;
+        overflow-y: auto;
+        padding: 0 16px 18px;
+        scrollbar-gutter: stable;
+      }
+      .conversation-messages > * {
+        overflow-wrap: anywhere;
+      }
+      .conversation-panel .message.user {
+        margin-left: auto;
+        margin-right: 0;
+        padding: 10px 12px;
+        background: var(--secondary);
+      }
+      .conversation-panel .message {
+        max-width: 100%;
+        font-size: 13px;
+        line-height: 1.8;
+        margin-top: 18px;
+      }
+      .conversation-panel .composer {
+        padding: 12px 14px 14px;
+        flex-shrink: 0;
+        margin: 0;
+      }
+      .conversation-panel .composer-box {
+        padding: 9px 11px;
+        border-radius: 9px;
+      }
+      .conversation-panel .composer textarea {
+        resize: none;
+        min-height: 52px;
+        font-size: 13px;
+        display: block;
+      }
+      .conversation-panel .composer-foot {
+        gap: 10px;
+        font-size: 11px;
+      }
+      .conversation-panel .composer-foot span {
+        min-width: 0;
+      }
+      .conversation-panel .composer-foot .btn {
+        min-height: 30px;
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+      .conversation-status {
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--muted);
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .conversation-status > span {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .conversation-status .btn {
+        padding: 3px 8px;
+        min-height: 28px;
+        font-size: 12px;
+        white-space: normal;
+      }
+      .session-link {
+        flex-shrink: 0;
+        font-size: 12px;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .session-link:hover {
+        color: var(--ink);
+        text-decoration: underline;
+      }
+      .tool-group {
+        margin-top: 22px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 4px 12px;
+        background: var(--secondary);
+      }
+      .delivery-section {
+        flex: 0 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+      }
+      .delivery-toggle {
+        flex-shrink: 0;
+        width: 100%;
+        min-height: 42px;
+        padding: 10px 16px;
+        border: 0;
+        background: transparent;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 13px;
+        text-align: left;
+      }
+      .delivery-toggle strong {
+        font-weight: 500;
+      }
+      .delivery-toggle small {
+        margin-left: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .delivery-toggle .icon {
+        width: 14px;
+        height: 14px;
+        transition: transform 160ms ease;
+      }
+      .delivery-toggle[aria-expanded="true"] .icon {
+        transform: rotate(180deg);
+      }
+      .delivery-content {
+        min-height: 0;
+        flex: 0 1 auto;
+        max-height: min(180px, 24dvh);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 0 16px 14px;
+        scrollbar-gutter: stable;
+      }
+      .delivery-content .panel-section + .panel-section {
+        margin-top: 14px;
+        padding-top: 14px;
+      }
+      .delivery-content .meta {
+        margin-bottom: 0;
+      }
+      .conversation-file-view {
+        flex: 1;
+        min-height: 0;
+        padding: 14px 16px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      .files-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      .file-preview pre {
+        font:
+          12px/1.8 Consolas,
+          monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        margin-top: 18px;
+      }
+      .file-preview h3 {
+        min-width: 0;
+        overflow-wrap: anywhere;
+        margin-bottom: 0;
+      }
+      .session-empty {
+        margin: 60px auto;
+        max-width: 430px;
+        padding: 24px;
+        text-align: center;
+        line-height: 1.8;
+      }
+      dialog.comparison {
+        width: min(1020px, calc(100vw - 32px));
+      }
+      .comparison .compare-grid {
+        margin: 0;
+        gap: 14px;
+      }
+      @media (max-width: 767px) {
+        .conversation-header {
+          padding: 10px 14px;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .conversation-messages {
+          padding-inline: 14px;
+        }
+        .work-switcher {
+          padding-inline: 14px;
+          flex-wrap: wrap;
+        }
+      }
+      dialog {
+        width: min(680px, calc(100vw - 32px));
+        max-height: calc(100dvh - 64px);
+        padding: 0;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+      }
+      dialog::backdrop {
+        background: rgb(17 19 21 / 45%);
+      }
+      .dialog-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+      }
+      .dialog-header > div {
+        flex: 1;
+        min-width: 0;
+      }
+      .dialog-body {
+        padding: 24px;
+        overflow-y: auto;
+        max-height: 65dvh;
+      }
+      .dialog-body p,
+      .dialog-body li {
+        line-height: 1.8;
+        font-size: 14px;
+      }
+      .dialog-body pre {
+        font:
+          12px/1.8 "IBM Plex Mono",
+          Consolas,
+          monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 16px 24px;
+        border-top: 1px solid var(--border);
+      }
+      .toast {
+        position: fixed;
+        bottom: 64px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: calc(100% - 32px);
+        padding: 12px 18px;
+        background: var(--ink);
+        color: var(--surface);
+        font-size: 13px;
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+        z-index: 70;
+      }
+      @keyframes panel-in {
+        from {
+          opacity: 0;
+          transform: translateX(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+      @keyframes travel {
+        to {
+          stroke-dashoffset: -24;
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --canvas: #15181b;
+          --sidebar: #1e2328;
+          --surface: #242a30;
+          --secondary: #1e2328;
+          --ink: #f0f2f4;
+          --normal: #dde2e6;
+          --muted: #b8c0c7;
+          --border: #46535d;
+          --brand: #f07c38;
+          --selection: rgb(240 124 56 / 13%);
+          --success: #70cd94;
+          --warning: #e7bd6d;
+          --danger: #f69b9b;
+          --info: #98beff;
+          --dots: #34414b;
+        }
+        .btn.primary {
+          color: #111315;
+        }
+      }
+      @media (max-width: 1050px) {
+        .sidebar {
+          padding-inline: 8px;
+        }
+        .shell {
+          grid-template-columns: 190px minmax(0, 1fr);
+        }
+        .page-header {
+          padding-inline: 18px;
+        }
+        .preview-controls {
+          margin-left: 0;
+        }
+      }
+      @media (max-width: 767px) {
+        .shell {
+          grid-template-columns: 56px minmax(0, 1fr);
+          height: calc(100dvh - 170px);
+        }
+        .sidebar {
+          padding: 18px 6px;
+        }
+        .product {
+          padding: 0 6px;
+        }
+        .product > span:last-child,
+        .sidebar .nav-text,
+        .sidebar-section,
+        .sidebar-bottom {
+          display: none;
+        }
+        .nav-item {
+          padding: 12px;
+        }
+        .page-header {
+          height: auto;
+          min-height: 92px;
+          align-items: flex-start;
+          flex-wrap: wrap;
+        }
+        .page-header > div:first-child {
+          min-width: 0;
+          flex: 1 1 100%;
+        }
+        .header-actions {
+          gap: 0;
+          margin-left: auto;
+        }
+        .header-actions .btn {
+          padding-inline: 8px;
+          font-size: 12px;
+        }
+        .heading-line {
+          gap: 6px;
+        }
+        h1 {
+          font-size: 15px;
+        }
+        .panel {
+          inset: 0;
+          width: 100%;
+          max-width: none;
+          border-radius: 0;
+        }
+        .canvas-caption {
+          display: none;
+        }
+        .prototype-bar {
+          padding: 10px 12px;
+          gap: 8px;
+        }
+        .prototype-label span {
+          display: none;
+        }
+        .scene {
+          padding: 7px 9px;
+        }
+        .prototype-footer {
+          display: block;
+          padding-inline: 12px;
+          line-height: 1.7;
+        }
+        .compare-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-height: 700px) {
+        .conversation-panel {
+          position: fixed;
+          top: 8px;
+          right: 12px;
+          bottom: 8px;
+          left: auto;
+          width: 440px;
+          max-width: calc(100vw - 24px);
+          border-radius: 12px;
+        }
+        .conversation-header {
+          padding: 8px 12px;
+        }
+        .conversation-status,
+        .work-switcher {
+          padding: 4px 12px;
+        }
+        .conversation-messages {
+          min-height: 0;
+        }
+        .delivery-toggle {
+          min-height: 34px;
+          padding: 6px 12px;
+        }
+        .delivery-content {
+          max-height: min(100px, 20dvh);
+        }
+        .conversation-panel .composer {
+          padding: 6px 10px 10px;
+        }
+        .conversation-panel .composer-box {
+          padding: 6px 8px;
+        }
+        .conversation-panel .composer textarea {
+          min-height: 38px;
+          height: 38px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+          scroll-behavior: auto !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="prototype-bar">
+      <div class="prototype-label">
+        <strong>协作体验 · 交互设计稿</strong
+        ><span>场景切换仅供评审，不属于产品导航</span>
+      </div>
+      <div class="scenes" role="group" aria-label="预览协作场景"></div>
+      <div class="preview-controls">
+        <button class="btn" data-action="failure">查看异常示例</button
+        ><button class="btn" data-action="reset">重置场景</button>
+      </div>
+    </div>
+    <div class="shell">
+      <aside class="sidebar" aria-label="产品导航示意">
+        <div class="product">
+          <span class="product-mark">VK</span><span>Vibe Kanban</span>
+        </div>
+        <nav aria-label="一级导航示意"></nav>
+        <section class="sidebar-section">
+          <h2 class="section-label">项目</h2>
+          <div class="sidebar-row">行业研究</div>
+          <div class="sidebar-row">产品迭代</div>
+          <div class="sidebar-row">内容策划</div>
+        </section>
+        <section class="sidebar-section">
+          <h2 class="section-label">会话</h2>
+          <div id="recent-sessions"></div>
+        </section>
+        <div class="sidebar-bottom">
+          <span data-icon="settings"></span><span>设置</span
+          ><span style="margin-left: auto">设计稿</span>
+        </div>
+      </aside>
+      <main class="main">
+        <header class="page-header" id="page-header"></header>
+        <section class="run-view" id="run-view" aria-label="工作流运行画布">
+          <div class="canvas" id="canvas">
+            <div class="graph" id="graph"></div>
+          </div>
+          <aside class="panel" id="panel" aria-label="所选对象详情" hidden>
+            <div class="panel-header" id="panel-header"></div>
+            <div class="panel-body" id="panel-body"></div>
+          </aside>
+          <aside class="attention" id="attention" hidden></aside>
+          <aside
+            class="panel conversation-panel"
+            id="conversation"
+            aria-label="原会话组件复用位置示意"
+            hidden
+          ></aside>
+          <div class="canvas-tools" aria-label="画布操作">
+            <button
+              class="btn ghost icon-button"
+              data-action="zoom-out"
+              aria-label="缩小"
+            >
+              −</button
+            ><span id="zoom-label">100%</span
+            ><button
+              class="btn ghost icon-button"
+              data-action="zoom-in"
+              aria-label="放大"
+            >
+              +</button
+            ><button class="btn ghost" data-action="recenter">回到全图</button>
+          </div>
+          <div class="canvas-caption">
+            拖动空白处平移 · 点击 Agent 看对话 · 连线看交接
+          </div>
+        </section>
+      </main>
+    </div>
+    <footer class="prototype-footer">
+      <span id="scene-caption"></span
+      ><span>全部为示例数据 · 不连接真实 Agent · 不读写项目文件</span>
+    </footer>
+    <dialog id="dialog" aria-labelledby="dialog-title">
+      <div class="dialog-header">
+        <div>
+          <h2 id="dialog-title"></h2>
+          <p class="meta" id="dialog-subtitle" style="margin: 8px 0 0"></p>
+        </div>
+        <button
+          class="btn ghost icon-button"
+          data-action="close-dialog"
+          aria-label="关闭弹框"
+        >
+          ×
+        </button>
+      </div>
+      <div class="dialog-body" id="dialog-body"></div>
+      <div class="dialog-actions" id="dialog-actions"></div>
+    </dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script>
+      const $ = (selector) => document.querySelector(selector);
+      const icons = {
+        grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+        search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
+        folder: '<path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/>',
+        flow: '<rect x="8" y="2" width="8" height="5" rx="1"/><path d="M12 7v5M5 16v-4h14v4"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/>',
+        agent:
+          '<rect x="4" y="6" width="16" height="14" rx="4"/><path d="M12 2v4M8 12h.01M16 12h.01M8 16h8"/>',
+        file: '<path d="M14 2H5v20h14V7zM14 2v5h5M8 12h8M8 16h6"/>',
+        check: '<path d="m5 12 4 4L19 6"/>',
+        arrow: '<path d="M5 12h14m-5-5 5 5-5 5"/>',
+        back: '<path d="M19 12H5m5-5-5 5 5 5"/>',
+        settings:
+          '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
+        gate: '<path d="M12 2 2 12l10 10 10-10zM8 12l3 3 5-6"/>',
+        chevron: '<path d="m6 9 6 6 6-6"/>',
+      };
+      const icon = (name) =>
+        `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.agent}</svg>`;
+      const escapeHtml = (value) =>
+        String(value).replace(
+          /[&<>"']/g,
+          (char) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[char],
+        );
+      const labels = {
+        succeeded: "已完成",
+        running: "运行中",
+        pending: "未开始",
+        waiting: "等待确认",
+        failed: "交接失败",
+        rejected: "已拒绝",
+        stopping: "正在停止",
+        reused: "复用成果",
+      };
+      const tone = (status) =>
+        ({
+          succeeded: "success",
+          reused: "success",
+          running: "running",
+          waiting: "waiting",
+          failed: "failed",
+          rejected: "waiting",
+          stopping: "waiting",
+        })[status] || "";
+      const badge = (status, label = labels[status]) =>
+        `<span class="badge ${tone(status)}"><i class="dot"></i>${escapeHtml(label)}</span>`;
+      const scenes = {
+        relay: {
+          name: "串行接力",
+          title: "行业研究报告",
+          subtitle: "成果从一个 Agent 交给下一个 Agent",
+          focus: "write",
+          caption: "试试：点击连线查看交接，再打开「撰写报告」查看输入与会话。",
+          nodes: [
+            {
+              id: "request",
+              title: "梳理需求",
+              agent: "Gemini",
+              status: "succeeded",
+              x: 260,
+              y: 24,
+            },
+            {
+              id: "research",
+              title: "资料研究",
+              agent: "Codex",
+              status: "succeeded",
+              x: 260,
+              y: 190,
+            },
+            {
+              id: "write",
+              title: "撰写报告",
+              agent: "Claude Code",
+              status: "running",
+              x: 260,
+              y: 356,
+            },
+            {
+              id: "review",
+              title: "审核报告",
+              agent: "Gemini",
+              status: "pending",
+              x: 260,
+              y: 522,
+            },
+          ],
+          edges: [
+            ["request", "research"],
+            ["research", "write"],
+            ["write", "review"],
+          ],
+        },
+        parallel: {
+          name: "并行分工",
+          title: "行业研究报告",
+          subtitle: "3 项内部子任务 · 分给 2 个固定执行 Node",
+          focus: "research",
+          caption:
+            "点击「资料研究」打开右侧会话浮框；展开「交付物」看文件，画布保持可操作。",
+          nodes: [
+            {
+              id: "split",
+              title: "拆分研究任务",
+              agent: "Gemini",
+              type: "任务拆分",
+              status: "succeeded",
+              x: 260,
+              y: 32,
+            },
+            {
+              id: "research",
+              title: "资料研究",
+              agent: "Codex",
+              status: "running",
+              count: "1 / 2",
+              x: 80,
+              y: 244,
+            },
+            {
+              id: "cases",
+              title: "案例分析",
+              agent: "Claude Code",
+              status: "succeeded",
+              count: "1 / 1",
+              x: 440,
+              y: 244,
+            },
+            {
+              id: "summary",
+              title: "汇总报告",
+              agent: "Claude Code",
+              status: "pending",
+              x: 260,
+              y: 470,
+            },
+          ],
+          edges: [
+            ["split", "research"],
+            ["split", "cases"],
+            ["research", "summary"],
+            ["cases", "summary"],
+          ],
+        },
+        arena: {
+          name: "方案择优",
+          title: "修复方案评估",
+          subtitle: "Git 工作区 · 2 个候选方案",
+          focus: "arena",
+          caption:
+            "试试：打开完整对比并选择方案，观察「已选择 → 应用中 → 等待下游执行」的区别。",
+          nodes: [
+            {
+              id: "request",
+              title: "梳理修复要求",
+              agent: "Gemini",
+              status: "succeeded",
+              x: 260,
+              y: 32,
+            },
+            {
+              id: "arena",
+              title: "修复方案择优",
+              type: "Arena",
+              agent: "2 个候选已完成",
+              status: "waiting",
+              x: 260,
+              y: 244,
+            },
+            {
+              id: "verify",
+              title: "验证所选方案",
+              agent: "Codex",
+              status: "pending",
+              x: 260,
+              y: 470,
+            },
+          ],
+          edges: [
+            ["request", "arena"],
+            ["arena", "verify"],
+          ],
+        },
+        review: {
+          name: "执行与审核",
+          title: "研究报告审核",
+          subtitle: "Agent 独立检查之后，等待你的明确决定",
+          focus: "gate",
+          caption:
+            "试试：先查看报告与审核意见，再批准或拒绝；人工确认与 Agent 权限请求是不同操作。",
+          nodes: [
+            {
+              id: "write",
+              title: "撰写报告",
+              agent: "Claude Code",
+              status: "succeeded",
+              x: 260,
+              y: 24,
+            },
+            {
+              id: "audit",
+              title: "独立审核",
+              agent: "Codex",
+              status: "succeeded",
+              x: 260,
+              y: 190,
+            },
+            {
+              id: "gate",
+              title: "人工确认",
+              type: "Human Gate",
+              agent: "需要你处理",
+              status: "waiting",
+              x: 260,
+              y: 356,
+            },
+            {
+              id: "delivery",
+              title: "交付成果",
+              type: "End",
+              agent: "最终成果",
+              status: "pending",
+              x: 260,
+              y: 522,
+            },
+          ],
+          edges: [
+            ["write", "audit"],
+            ["audit", "gate"],
+            ["gate", "delivery"],
+          ],
+        },
+        manager: {
+          name: "主 Agent 管理",
+          title: "行业研究报告",
+          subtitle: "保留已完成成果，处理失败的工作",
+          focus: "research",
+          caption:
+            "试试：打开原主会话浮框；讨论异常不会自动重新执行或改变流程图。",
+          nodes: [
+            {
+              id: "split",
+              title: "拆分研究任务",
+              type: "任务拆分",
+              agent: "Gemini",
+              status: "succeeded",
+              x: 260,
+              y: 32,
+            },
+            {
+              id: "research",
+              title: "资料研究",
+              agent: "Codex",
+              status: "failed",
+              count: "1 / 2",
+              x: 80,
+              y: 244,
+            },
+            {
+              id: "cases",
+              title: "案例分析",
+              agent: "Claude Code",
+              status: "succeeded",
+              count: "1 / 1",
+              x: 440,
+              y: 244,
+            },
+            {
+              id: "summary",
+              title: "汇总报告",
+              agent: "Claude Code",
+              status: "pending",
+              x: 260,
+              y: 470,
+            },
+          ],
+          edges: [
+            ["split", "research"],
+            ["split", "cases"],
+            ["research", "summary"],
+            ["cases", "summary"],
+          ],
+        },
+      };
+      const tasks = [
+        {
+          id: "market",
+          title: "市场概况",
+          node: "research",
+          state: "succeeded",
+          file: "市场概况.md",
+          instruction: "梳理市场规模与主要参与者，标明材料出处。",
+        },
+        {
+          id: "persona",
+          title: "用户画像",
+          node: "research",
+          state: "running",
+          file: "用户画像.md",
+          instruction: "识别主要用户群体和需求，区分已验证事实与推测。",
+        },
+        {
+          id: "case-study",
+          title: "案例对照",
+          node: "cases",
+          state: "succeeded",
+          file: "案例对照.md",
+          instruction: "比较三个代表性案例，给出可查证的资料入口。",
+        },
+      ];
+      const candidates = [
+        {
+          id: "a",
+          name: "方案 A",
+          agent: "Codex",
+          summary: "保持现有模块边界，在取消流程中补齐停止确认。",
+          strengths: ["修改范围集中，便于核对", "增加停止确认的回归用例"],
+          caution: "需要确认进程失联时是否正确保留占用。",
+          file: "方案A说明.md",
+        },
+        {
+          id: "b",
+          name: "方案 B",
+          agent: "Claude Code",
+          summary: "集中处理停止请求，统一失败和恢复状态的展示。",
+          strengths: ["停止状态的责任更集中", "覆盖多个入口的状态一致性"],
+          caution: "涉及范围较多，需要核对原有恢复路径。",
+          file: "方案B说明.md",
+        },
+      ];
+      const state = {
+        scene: "parallel",
+        selected: "research",
+        panel: false,
+        failed: false,
+        pan: { x: 0, y: 0 },
+        zoom: 1,
+        winner: null,
+        applying: false,
+        gateDecision: null,
+        gatePending: false,
+        stopping: false,
+        queued: false,
+        revision: 0,
+        conversationKey: null,
+        conversationReturn: null,
+        canvasReturnSelection: null,
+        canvasReturnPanel: false,
+        surface: "canvas",
+      };
+      const scrollPositions = new Map();
+      const conversationStates = new Map();
+      const lastTaskByNode = new Map();
+      let fileInDialog = null;
+      let dialogAction = null;
+      let toastTimer;
+      let panGesture = null;
+      let focusBeforeDialog = null;
+      let sessionFocus = null;
+      const currentScene = () => scenes[state.scene];
+      const currentNodes = () =>
+        currentScene().nodes.map((node) => {
+          let result = { ...node };
+          if (
+            state.failed &&
+            node.id ===
+              (state.scene === "review"
+                ? "audit"
+                : state.scene === "arena"
+                  ? "arena"
+                  : "research")
+          )
+            result.status = "failed";
+          if (
+            state.failed &&
+            state.scene === "relay" &&
+            ["write", "review"].includes(node.id)
+          )
+            result.status = "pending";
+          if (
+            state.failed &&
+            state.scene === "review" &&
+            ["gate", "delivery"].includes(node.id)
+          )
+            result.status = "pending";
+          if (state.applying && node.id === "arena") result.status = "running";
+          if (
+            state.winner &&
+            !state.applying &&
+            !state.failed &&
+            node.id === "arena"
+          )
+            result.status = "succeeded";
+          if (
+            state.winner &&
+            !state.applying &&
+            !state.failed &&
+            node.id === "verify"
+          )
+            result.status = "running";
+          if (state.gateDecision && node.id === "gate")
+            result.status =
+              state.gateDecision === "approve" ? "succeeded" : "rejected";
+          if (state.gatePending && node.id === "gate")
+            result.status = "running";
+          if (state.gateDecision === "approve" && node.id === "delivery")
+            result.status = "running";
+          if (state.queued)
+            result.status = (state.scene === "review"
+              ? ["write"]
+              : ["cases", "split", "request"]
+            ).includes(node.id)
+              ? "reused"
+              : "pending";
+          if (state.stopping && result.status === "running")
+            result.status = "stopping";
+          return result;
+        });
+      const taskState = (task) =>
+        state.queued
+          ? task.id === "persona"
+            ? "pending"
+            : "reused"
+          : task.id === "persona" && (state.failed || state.scene === "manager")
+            ? "failed"
+            : state.stopping && task.state === "running"
+              ? "stopping"
+              : task.state;
+      const button = (action, label, primary = false, key = "") =>
+        `<button class="btn${primary ? " primary" : ""}" data-action="${action}"${key ? ` data-key="${key}"` : ""}>${label}</button>`;
+      function fileRow(name, subtitle = "项目文件 · 查看当前内容") {
+        const displayName =
+          { "tasks.json": "任务清单", "dispatch.json": "已受理分工" }[name] ||
+          name;
+        return `<button class="file" data-action="file" data-key="${escapeHtml(name)}">${icon("file")}<span><strong>${escapeHtml(displayName)}</strong><small>${escapeHtml(displayName === name ? subtitle : name + " · " + subtitle)}</small></span>${icon("arrow")}</button>`;
+      }
+      function section(title, body) {
+        return `<section class="panel-section"><h3 class="section-title">${title}</h3>${body}</section>`;
+      }
+      function notify(message) {
+        clearTimeout(toastTimer);
+        $("#toast").textContent = message;
+        $("#toast").hidden = false;
+        toastTimer = setTimeout(() => {
+          $("#toast").hidden = true;
+        }, 4200);
+      }
+      function saveScroll() {
+        if (state.selected) {
+          scrollPositions.set(
+            `${state.scene}:${state.selected}`,
+            $("#panel-body").scrollTop,
+          );
+        }
+      }
+      function objectSelector(id) {
+        if (!id) return null;
+        return id.startsWith("edge:")
+          ? `[data-action="edge"][data-key="${id.split(":")[1]}"]`
+          : `[data-action="node"][data-key="${id}"]`;
+      }
+      function focusObject() {
+        const selector = objectSelector(state.selected);
+        if (selector)
+          document.querySelector(selector)?.focus({ preventScroll: true });
+      }
+      function closePanel() {
+        if (state.surface === "conversation") {
+          returnToWorkflow();
+          return;
+        }
+        saveScroll();
+        state.panel = false;
+        $("#panel").classList.remove("entering");
+        renderPanel();
+        focusObject();
+      }
+      function selectObject(id) {
+        if (
+          id.startsWith("edge:")
+            ? !currentScene().edges[Number(id.split(":")[1])]
+            : !currentNodes().some((node) => node.id === id)
+        )
+          return;
+        saveScroll();
+        saveConversation();
+        const wasOpen = state.panel || state.surface === "conversation";
+        state.selected = id;
+        const node = currentNodes().find((item) => item.id === id);
+        if (node && !["arena", "gate", "delivery"].includes(node.id)) {
+          if (state.surface === "conversation") {
+            state.canvasReturnSelection = id;
+            state.canvasReturnPanel = false;
+            sessionFocus = "#graph " + objectSelector(id);
+          }
+          state.panel = false;
+          renderGraph();
+          renderPanel();
+          openSession("node:" + node.id, undefined, null, !wasOpen);
+          return;
+        }
+        state.surface = "canvas";
+        state.canvasReturnSelection = null;
+        state.canvasReturnPanel = false;
+        $("#conversation").hidden = true;
+        state.panel = true;
+        renderGraph();
+        renderPanel();
+        if (!wasOpen) $("#panel").classList.add("entering");
+        focusObject();
+      }
+      function reset(scene = state.scene) {
+        saveConversation();
+        saveScroll();
+        const revision = state.revision + 1;
+        Object.assign(state, {
+          scene,
+          selected: scenes[scene].focus,
+          panel: false,
+          failed: false,
+          pan: { x: 0, y: 0 },
+          zoom: 1,
+          winner: null,
+          applying: false,
+          gateDecision: null,
+          gatePending: false,
+          stopping: false,
+          queued: false,
+          conversationKey: null,
+          conversationReturn: null,
+          canvasReturnSelection: null,
+          canvasReturnPanel: false,
+          surface: "canvas",
+          revision,
+        });
+        scrollPositions.clear();
+        if ($("#dialog").open) $("#dialog").close();
+        state.panel = ["arena", "gate", "delivery"].includes(state.selected);
+        render();
+      }
+      function renderHeader() {
+        const failed = currentNodes().some((node) => node.status === "failed");
+        const status = state.queued
+          ? "排队中 · 新 Run 示例"
+          : state.stopping
+            ? "正在停止"
+            : failed
+              ? "执行失败"
+              : state.applying
+                ? "正在应用方案"
+                : state.gateDecision === "reject"
+                  ? "已拒绝"
+                  : state.scene === "arena" && !state.winner
+                    ? "等待选择"
+                    : state.scene === "review" && !state.gateDecision
+                      ? "等待你确认"
+                      : "运行中";
+        const statusType =
+          state.stopping || /等待|排队/.test(status)
+            ? "waiting"
+            : failed
+              ? "failed"
+              : "running";
+        const progress = currentNodes().filter(
+          (node) => node.status === "succeeded" || node.status === "reused",
+        ).length;
+        $("#page-header").innerHTML =
+          `<div><div class="eyebrow">${state.scene === "arena" ? "产品迭代" : "行业研究"} / 工作流</div><div class="heading-line"><h1>${currentScene().title}</h1>${badge(statusType, status)}<span class="meta">Node ${progress}/${currentNodes().length}</span></div></div><div class="header-actions">${button("results", "结果")}${button("main-session", "主 Agent")}${button("stop", "停止")}</div>`;
+        if (
+          state.stopping ||
+          failed ||
+          state.queued ||
+          state.gateDecision === "reject"
+        )
+          $('#page-header [data-action="stop"]').disabled = true;
+      }
+      function renderGraph() {
+        const nodes = currentNodes();
+        const edges = currentScene()
+          .edges.map(([from, to], index) => {
+            const a = nodes.find((node) => node.id === from);
+            const b = nodes.find((node) => node.id === to);
+            const x1 = a.x + 108,
+              y1 = a.y + 114,
+              x2 = b.x + 108,
+              y2 = b.y;
+            const path = `M${x1} ${y1} C${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}`;
+            const edgeClass =
+              b.status === "running" && a.status === "succeeded"
+                ? "active"
+                : a.status === "succeeded"
+                  ? "passed"
+                  : "";
+            return `<path class="edge-visible ${edgeClass}" d="${path}"/><path class="edge-hit" d="${path}" role="button" tabindex="0" data-action="edge" data-key="${index}" aria-label="查看交接：${a.title}到${b.title}"/>`;
+          })
+          .join("");
+        $("#graph").innerHTML =
+          `<svg class="connections" viewBox="0 0 850 740" aria-label="节点之间的连线">${edges}</svg>${nodes.map((node) => `<button class="node" data-action="node" data-key="${node.id}" aria-pressed="${state.selected === node.id}" style="left:${node.x}px;top:${node.y}px"><i class="port top"></i><span class="node-title"><span class="type-icon">${icon(node.id === "split" ? "flow" : node.id === "gate" ? "gate" : node.id === "arena" ? "grid" : "agent")}</span>${node.title}</span><div class="node-sub"><span class="meta">${node.type || "Agent"}</span>${badge(node.status, node.id === "arena" && node.status === "waiting" ? "等待选择" : node.id === "gate" && state.gateDecision === "reject" ? "已拒绝" : labels[node.status])}</div><div class="node-agent">${node.agent}${node.count ? `<span style="float:right">${node.count} 项</span>` : ""}</div><i class="port bottom"></i></button>`).join("")}`;
+        applyViewport();
+      }
+      function applyViewport() {
+        $("#graph").style.transform =
+          `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+        $("#zoom-label").textContent = Math.round(state.zoom * 100) + "%";
+      }
+      function taskList(filterNode) {
+        return tasks
+          .filter((task) => !filterNode || task.node === filterNode)
+          .map(
+            (task) =>
+              `<button class="task-row" data-action="task" data-key="${task.id}" aria-label="打开${task.title}的准确会话"><span class="badge ${tone(taskState(task))}">${taskState(task) === "succeeded" ? icon("check") : '<i class="dot"></i>'}</span><span><strong>${task.title}</strong><small>${task.node === "cases" ? "案例分析 · Claude Code" : "资料研究 · Codex"}</small></span>${badge(taskState(task))}</button>`,
+          )
+          .join("");
+      }
+      function splitBody(filterNode) {
+        const visibleTasks = tasks.filter(
+          (task) => !filterNode || task.node === filterNode,
+        );
+        const completed = visibleTasks.filter(
+          (task) => taskState(task) === "succeeded",
+        ).length;
+        return (
+          section(
+            filterNode ? "分给此 Node 的工作" : "阶段一 · 并行分工",
+            `<p>完成 ${completed}/${visibleTasks.length} 项。当前阶段结束后，进入「汇总报告」。</p>${taskList(filterNode)}`,
+          ) +
+          section(
+            "下一步",
+            '<div class="notice">汇总报告还在等「用户画像」。<br>已完成的案例分析会保留。</div>',
+          ) +
+          (!filterNode
+            ? section(
+                "分工依据",
+                fileRow("tasks.json", "3 项内部子任务") +
+                  fileRow("dispatch.json", "主 Agent 提交并已受理") +
+                  `<div class="actions">${button("main-session", "打开主会话")}</div>`,
+              )
+            : "")
+        );
+      }
+      function candidateList() {
+        return candidates
+          .map(
+            (candidate) =>
+              `<div class="candidate"><h3>${candidate.name} · ${candidate.agent}${badge("succeeded")}</h3><p>${candidate.summary}</p><div class="actions">${button("candidate-session", "打开候选对话", true, candidate.id)}${button("file", "查看交付", false, candidate.file)}</div></div>`,
+          )
+          .join("");
+      }
+      function nodeBody(node) {
+        if (state.queued)
+          return (
+            section(
+              "新 Run · 已受理示例",
+              '<div class="notice">已提交准确的重试来源，正在等待 Runtime 调度。本原型不会启动真实 Agent。</div>',
+            ) +
+            section(
+              "保留成果",
+              `<p>${["parallel", "manager"].includes(state.scene) ? "案例分析" : "范围外的已完成上游"}沿用来源运行的成果；当前没有新的会话。</p>${node.status === "reused" ? button("source-session", "查看来源 Run 1 的原会话", false, "source:" + (assignedTasks(node.id).length ? "task:" + assignedTasks(node.id)[0].id : "node:" + node.id)) : ""}${assignedTasks(node.id).length ? taskList(node.id) : ""}`,
+            )
+          );
+        if (
+          node.status === "pending" &&
+          !["gate", "delivery", "arena"].includes(node.id)
+        )
+          return section(
+            "等待执行",
+            `<div class="notice">${node.id === "verify" ? "等待采用方案并成功应用成果，尚未绑定候选输入。" : "等待前置工作完成有效交接。"}</div><p class="meta" style="margin-top:12px">尚无执行会话，先在此处查看真实等待状态。</p>`,
+          );
+        if (node.id === "split") return splitBody();
+        if (
+          (state.scene === "parallel" || state.scene === "manager") &&
+          ["research", "cases"].includes(node.id)
+        )
+          return (
+            (node.status === "failed"
+              ? section(
+                  "处理这次失败",
+                  `<div class="notice error">缺少「用户画像.md」，汇总尚未开始。<br>已完成的市场概况和案例分析保留。</div><div class="actions">${button("retry", "重试此次执行", true)}${button("main-session", "与主 Agent 讨论")}</div>`,
+                )
+              : "") + splitBody(node.id)
+          );
+        if (node.id === "arena")
+          return (
+            section(
+              "同一道题的两个完整方案",
+              "<p>分别查看候选成果，选择后再按真实状态进入应用与下游执行。</p>" +
+                candidateList(),
+            ) +
+            section(
+              "当前采用状态",
+              state.stopping
+                ? `<div class="notice">停止请求已发出，${state.applying ? "等待成果应用操作确认停止。下游尚未开始。" : "等待运行中的执行确认停止。"}</div>`
+                : state.applying
+                  ? '<div class="notice">已选择方案，正在应用。下游验证尚未开始。</div>'
+                  : state.failed
+                    ? `<div class="notice error">成果应用失败，候选结果仍保留。下游尚未开始。</div><div class="actions">${button("retry", "重试此次执行", true)}${button("main-session", "与主 Agent 讨论")}</div>`
+                    : state.winner
+                      ? `<div class="notice">已采用方案 ${state.winner.toUpperCase()}，等待下游验证结果。</div>`
+                      : `<div class="actions">${button("compare", "打开完整对比", true)}</div>`,
+            ) +
+            section(
+              "适用范围",
+              '<p class="meta">此例使用 Git/worktree 的现有 Arena。普通报告文件择优仍是后续待补能力。</p>',
+            )
+          );
+        if (node.id === "gate" && node.status === "pending")
+          return section(
+            "尚不能确认",
+            '<div class="notice">等待独立审核完成有效交接，当前没有可批准的待办。</div>',
+          );
+        if (node.id === "gate")
+          return (
+            section(
+              "请确认是否采用这份报告",
+              "<p>独立审核已完成。查看报告和意见后，决定是否继续交付。</p>" +
+                fileRow("研究报告.md", "待确认成果") +
+                fileRow("审核意见.md", "独立审核 · 2 条建议"),
+            ) +
+            section(
+              "你的决定",
+              state.stopping
+                ? '<div class="notice">正在停止，等待运行状态确认。此时不能再提交决策。</div>'
+                : state.gateDecision
+                  ? `<div class="notice">${state.gateDecision === "approve" ? "已批准，等待最终交付。" : "已拒绝，本例结束，不会自动退回重做。"}</div>`
+                  : `<div class="actions"><button class="btn" data-action="reject" ${state.gatePending ? "disabled" : ""}>拒绝</button><button class="btn primary" data-action="approve" ${state.gatePending ? "disabled" : ""}>${state.gatePending ? "正在提交…" : "批准继续"}</button></div><p class="meta" style="margin-top:12px">这是工作流确认，不是智能体工具权限审批。</p>`,
+            )
+          );
+        if (node.id === "delivery")
+          return section(
+            "最终交付",
+            `<div class="notice">${state.stopping ? "等待停止确认，不能视为已经交付。" : node.status === "running" ? "批准已受理，Runtime 正在整理最终交付。当前尚无最终完成记录。" : "等待人工确认和上游有效交接。"}</div><p class="meta" style="margin-top:12px">这是工作流结束节点，没有独立的 Agent 会话。</p><div class="actions">${button("results", "查看已有成果")}</div>`,
+          );
+        if (node.id === "summary")
+          return (
+            section(
+              "等待哪项工作",
+              '<div class="notice">等待「用户画像」的有效交付。<br>市场概况、案例对照已完成。</div>',
+            ) +
+            section(
+              "可以先查看",
+              fileRow("市场概况.md") + fileRow("案例对照.md"),
+            ) +
+            section(
+              "需要调整交付？",
+              `<p>进入主会话明确要求，或在 Runtime 允许时显式提交部分汇总；不会自动忽略缺失项。</p>${button("main-session", "打开主会话")}`,
+            )
+          );
+        if (node.status === "failed")
+          return (
+            section(
+              "交接未通过",
+              '<div class="notice error">必需交付文件缺失，下游尚未开始。</div>',
+            ) +
+            section(
+              "你可以",
+              `<div class="actions">${button("retry", "重试此次执行", true)}${button("session", "查看完整会话", false, node.id)}${button("main-session", "与主 Agent 讨论")}</div>`,
+            )
+          );
+        const input =
+          node.id === "verify"
+            ? [
+                state.winner === "b" ? "方案B说明.md" : "方案A说明.md",
+                "修复要求.md",
+              ]
+            : node.id === "write"
+              ? ["研究结论.md", "材料索引.md"]
+              : ["audit", "review", "delivery"].includes(node.id)
+                ? ["研究报告.md"]
+                : [state.scene === "arena" ? "原始问题.md" : "需求说明.md"];
+        const output = outputFiles(node);
+        return (
+          section(
+            "这一步做什么",
+            `<p>${node.id === "write" ? "依据上游研究结论完成报告，清楚区分事实、分析和建议。" : node.id === "audit" || node.id === "review" ? "独立检查报告中的依据与结论，将问题写入审核意见文件。" : node.id === "verify" ? "读取已采用方案的成果，核对是否达到原定要求。" : "根据本次需求和材料完成分配的工作，并形成可交接的成果。"}</p>`,
+          ) +
+          section(
+            "输入",
+            input.map((file) => fileRow(file, "已绑定的文件引用")).join(""),
+          ) +
+          section(
+            "交付",
+            node.status === "succeeded"
+              ? output
+                  .map((file) => fileRow(file, "Runtime 已校验交接"))
+                  .join("")
+              : `<p class="meta">${node.status === "pending" ? "此步尚未开始，完成后显示实际交付。" : "正在执行，完成并校验后显示实际交付。"}</p>`,
+          ) +
+          section(
+            "实际执行",
+            `<p>${node.agent} · ${node.status === "pending" ? "尚无执行会话" : "当前执行的固定会话"}</p>${node.status === "pending" ? "" : button("session", "打开完整会话", false, node.id)}`,
+          ) +
+          '<section class="panel-section"><details><summary>执行配置与技术详情</summary><p>此处按真实执行展示完整模型、运行身份和原生错误。本原型不编造模型配置或工具调用证据。</p></details></section>'
+        );
+      }
+      function outputFiles(node) {
+        if (node.id === "request")
+          return [state.scene === "arena" ? "修复要求.md" : "需求说明.md"];
+        if (node.id === "research") return ["研究结论.md", "材料索引.md"];
+        if (["audit", "review"].includes(node.id)) return ["审核意见.md"];
+        if (node.id === "verify") return ["验证结果.md"];
+        return ["研究报告.md"];
+      }
+      function edgeBody(index) {
+        const [from, to] = currentScene().edges[index];
+        const nodes = currentNodes();
+        const a = nodes.find((node) => node.id === from);
+        const b = nodes.find((node) => node.id === to);
+        return (
+          section(
+            "来源与目标",
+            `<p>${a.title} → ${b.title}</p><span class="meta">当前 Run · 固定连线</span>`,
+          ) +
+          section(
+            "交接情况",
+            a.status === "rejected"
+              ? '<div class="notice">人工决定为拒绝，本条通往交付的路径未执行；不会自动退回重做。</div>'
+              : a.status === "succeeded"
+                ? '<div class="notice">交接已校验。文件引用用于下游输入；这不等于 Agent 已实际阅读文件。</div>'
+                : '<div class="notice warning">来源尚未完成有效交接，下游不会仅凭文件出现就启动。</div>',
+          ) +
+          section(
+            "交接文件",
+            a.status === "succeeded"
+              ? (from === "gate"
+                  ? ["研究报告.md", "审核意见.md"]
+                  : from === "arena"
+                    ? [state.winner === "b" ? "方案B说明.md" : "方案A说明.md"]
+                    : from === "split"
+                      ? ["tasks.json", "dispatch.json"]
+                      : ["parallel", "manager"].includes(state.scene) &&
+                          from === "cases"
+                        ? ["案例对照.md"]
+                        : outputFiles(a)
+                )
+                  .map((file) => fileRow(file))
+                  .join("")
+              : '<p class="meta">有效交接后显示。</p>',
+          ) +
+          section(
+            "查看工作",
+            `<div class="actions">${button("node", "查看来源 Node", false, from)}${button("node", "查看目标 Node", false, to)}</div>`,
+          )
+        );
+      }
+      function renderPanel() {
+        const panel = $("#panel");
+        panel.hidden = !state.panel;
+        const attentionNode =
+          currentNodes().find((node) => node.status === "failed") ||
+          currentNodes().find((node) => node.status === "waiting");
+        $("#attention").hidden =
+          state.panel ||
+          state.surface === "conversation" ||
+          state.stopping ||
+          !attentionNode;
+        if (!$("#attention").hidden)
+          $("#attention").innerHTML =
+            `<h2>需要处理</h2><p>${attentionNode.title}：${attentionNode.status === "failed" ? "交接未通过，下游尚未开始。" : "等待你的明确决定。"}</p>${button("node", "查看对应执行", false, attentionNode.id)}`;
+        if (!state.panel) return;
+        const edge = state.selected?.startsWith("edge:");
+        const node = currentNodes().find((item) => item.id === state.selected);
+        if (
+          (!edge && !node) ||
+          (edge && !currentScene().edges[Number(state.selected.split(":")[1])])
+        ) {
+          state.panel = false;
+          panel.hidden = true;
+          return;
+        }
+        $("#panel-header").innerHTML =
+          `<div><div class="eyebrow">${edge ? "文件交接" : node.type || "Agent"}</div><h2>${edge ? "上游如何交给下游" : node.title}</h2>${edge ? "" : badge(node.status)}</div><button class="btn ghost icon-button" data-action="close-panel" aria-label="关闭详情">×</button>`;
+        $("#panel-body").innerHTML = edge
+          ? edgeBody(Number(state.selected.split(":")[1]))
+          : nodeBody(node);
+        $("#panel-body").scrollTop =
+          scrollPositions.get(`${state.scene}:${state.selected}`) || 0;
+      }
+      function render() {
+        $(".scenes").innerHTML = Object.entries(scenes)
+          .map(
+            ([key, scene]) =>
+              `<button class="scene" aria-pressed="${key === state.scene}" data-action="scene" data-key="${key}">${scene.name}</button>`,
+          )
+          .join("");
+        $("#scene-caption").textContent = currentScene().caption;
+        renderHeader();
+        renderGraph();
+        renderPanel();
+        $("#conversation").hidden = state.surface !== "conversation";
+        if (state.surface === "conversation") renderConversation();
+        renderRecentSessions();
+      }
+      function renderComparison() {
+        showDialog(
+          "比较完整方案",
+          "候选结果与已存在证据 · 无自动评分或推荐",
+          `<div class="compare-grid">${candidates.map((candidate) => `<article class="compare-card"><div class="eyebrow">${candidate.agent} · 独立候选会话</div><h2>${candidate.name}</h2>${badge("succeeded")}<h3 class="section-title">做法</h3><p>${candidate.summary}</p><h3 class="section-title">可核对内容</h3><ul>${candidate.strengths.map((item) => `<li>${item}</li>`).join("")}</ul><h3 class="section-title">仍需关注</h3><p>${candidate.caution}</p>${fileRow(candidate.file, "说明与成果入口")}<div class="actions">${button("candidate-session", "查看此候选对话", false, candidate.id)}${button("choose", state.winner === candidate.id ? "已选择此方案" : "选择此方案", true, candidate.id)}</div></article>`).join("")}</div>`,
+          button("close-dialog", "返回"),
+        );
+        $("#dialog").classList.add("comparison");
+        if (state.applying || state.winner || state.stopping || state.failed)
+          document
+            .querySelectorAll('[data-action="choose"]')
+            .forEach((element) => {
+              element.disabled = true;
+            });
+      }
+      function focusSelectorFor(element) {
+        if (!element?.dataset?.action) return null;
+        const prefix = element.closest("#panel")
+          ? "#panel "
+          : element.closest("#graph")
+            ? "#graph "
+            : element.closest("#conversation")
+              ? "#conversation "
+              : element.closest(".sidebar")
+                ? ".sidebar "
+                : "#page-header ";
+        return `${prefix}[data-action="${element.dataset.action}"]${element.dataset.key ? `[data-key="${element.dataset.key}"]` : ""}`;
+      }
+      function mainSessionSummary() {
+        if (state.stopping)
+          return "停止请求已发出，仍在等待相关执行确认停止。现在不能把运行显示成已停止，也不能启动冲突的运行。";
+        if (state.queued)
+          return "重试请求已受理，新的 Run 正在排队。来源运行和可复用的成果都保留；已受理还不表示 Agent 已经开始执行。";
+        if (state.failed || state.scene === "manager") {
+          if (state.scene === "arena")
+            return "候选成果已保留，但应用操作失败，下游验证尚未开始。可以查看对应执行，再明确提交重试请求。";
+          if (state.scene === "review")
+            return "独立审核没有形成有效交接，人工确认和最终交付均未开始。应先查看审核执行记录，再决定是否重试。";
+          return `${state.scene === "relay" ? "资料研究没有形成有效交接，撰写和审核尚未开始。" : "资料研究的交接缺少用户画像文件，汇总尚未开始。案例分析已经完成，可以保留。"}<br><br>可以重试准确的失败执行，或明确修改交付要求后提交重做。在正式受理前，这段讨论不会改变运行。`;
+        }
+        if (state.scene === "arena")
+          return state.winner
+            ? "已选择候选方案，采用与下游验证分别展示状态。验证结果尚未返回，不能把选胜当作整个工作流完成。"
+            : "两个修复候选已完成，等待你比较成果并选择。当前尚未采用任何方案，下游验证没有开始。";
+        if (state.scene === "review")
+          return state.gateDecision === "reject"
+            ? "你已经拒绝当前成果，拒绝记录保留。本例不自动返工，也不会继续交付。"
+            : state.gateDecision === "approve"
+              ? "当前成果已获批准，正在交付，最终交付结果仍以运行记录为准。"
+              : "报告与独立审核意见已准备好，正在等待你的明确决定。与我讨论不等于已经批准。";
+        if (state.scene === "parallel")
+          return "市场概况和案例对照已完成，用户画像还在执行。汇总等待全部必需交付，不能仅因目录里出现文件就开始。";
+        return "资料研究已完成交接，撰写报告正在执行；独立审核尚未开始。你可以打开研究文件，或进入撰写报告的准确会话查看过程。";
+      }
+      let renderedConversationScope = null;
+      function assignedTasks(nodeId) {
+        return ["parallel", "manager"].includes(state.scene)
+          ? tasks.filter((task) => task.node === nodeId)
+          : [];
+      }
+      function conversationData() {
+        const key = state.conversationKey;
+        if (!key) return null;
+        const source = key.startsWith("source:");
+        const [kind, id] = (source ? key.slice(7) : key).split(":");
+        let node, task, candidate;
+        if (kind === "task") {
+          task = tasks.find((item) => item.id === id);
+          if (!task) return null;
+          node = currentNodes().find((item) => item.id === task.node);
+          if (!node) return null;
+        } else if (kind === "node") {
+          node = currentNodes().find((item) => item.id === id);
+          if (!node) return null;
+        } else if (kind === "candidate") {
+          candidate = candidates.find((item) => item.id === id);
+          node = currentNodes().find((item) => item.id === "arena");
+          if (!candidate || !node) return null;
+        } else if (kind !== "main") return null;
+        const main = kind === "main";
+        const status = source
+          ? task
+            ? task.id === "persona" &&
+              (state.failed || state.scene === "manager")
+              ? "failed"
+              : task.state
+            : scenes[state.scene].nodes.find((item) => item.id === node.id)
+                ?.status || "succeeded"
+          : main
+            ? state.stopping
+              ? "stopping"
+              : "running"
+            : candidate
+              ? "succeeded"
+              : task
+                ? taskState(task)
+                : node.status;
+        const hasSession =
+          source ||
+          main ||
+          (!state.queued && !["pending", "reused"].includes(status));
+        let outputs = [];
+        if (main) {
+          outputs = ["parallel", "manager"].includes(state.scene)
+            ? tasks
+                .filter((item) =>
+                  ["succeeded", "reused"].includes(taskState(item)),
+                )
+                .map((item) => item.file)
+            : state.scene === "arena"
+              ? candidates.map((item) => item.file)
+              : [
+                  ...new Set(
+                    currentNodes()
+                      .filter(
+                        (item) =>
+                          ["succeeded", "reused"].includes(item.status) &&
+                          !["gate", "delivery"].includes(item.id),
+                      )
+                      .flatMap(outputFiles),
+                  ),
+                ];
+        } else if (candidate) outputs = [candidate.file];
+        else if (task && ["succeeded", "reused"].includes(status))
+          outputs = [task.file];
+        else if (node.id === "split") outputs = [];
+        else if (!task && ["succeeded", "reused"].includes(status))
+          outputs = outputFiles(node);
+        const inputs = main
+          ? [state.scene === "arena" ? "修复要求.md" : "需求说明.md"]
+          : candidate
+            ? ["修复要求.md"]
+            : task
+              ? [task.title + "任务说明.md", "需求说明.md"]
+              : node.id === "write" && state.scene === "relay"
+                ? ["研究结论.md", "材料索引.md"]
+                : ["audit", "review"].includes(node.id)
+                  ? ["研究报告.md"]
+                  : node.id === "verify"
+                    ? state.winner && !state.applying && !state.failed
+                      ? [state.winner === "b" ? "方案B说明.md" : "方案A说明.md"]
+                      : []
+                    : ["需求说明.md"];
+        // These demo identifiers represent the existing Workspace/Session binding.
+        // A source Run changes viewing context, never the Session identity.
+        const hostId = null;
+        const workspaceId = `demo-${state.scene}-${candidate ? "candidate-" + candidate.id : node?.id || "main"}`;
+        const sessionId = `demo-${state.scene}-${kind}-${id || "main"}`;
+        const href = hasSession
+          ? `${hostId ? "/hosts/" + encodeURIComponent(hostId) : ""}/workspaces/${encodeURIComponent(workspaceId)}?session_id=${encodeURIComponent(sessionId)}`
+          : null;
+        return {
+          key,
+          kind,
+          node,
+          task,
+          candidate,
+          main,
+          source,
+          status,
+          hasSession,
+          outputs,
+          inputs,
+          hostId,
+          workspaceId,
+          sessionId: hasSession ? sessionId : null,
+          href,
+          title: main
+            ? "主 Agent"
+            : task?.title || candidate?.name || node.title,
+          agent: main ? "Claude Code" : candidate?.agent || node.agent,
+          scope: hasSession
+            ? `${hostId || "local"}:${workspaceId}:${sessionId}`
+            : null,
+        };
+      }
+      function conversationState(scope) {
+        if (!conversationStates.has(scope))
+          conversationStates.set(scope, {
+            draft: "",
+            scroll: 0,
+            filesOpen: false,
+            fileScroll: 0,
+            previewFile: null,
+            previewScroll: 0,
+            previewReturn: null,
+          });
+        return conversationStates.get(scope);
+      }
+      function saveConversation() {
+        if (!renderedConversationScope || state.surface !== "conversation")
+          return;
+        const saved = conversationState(renderedConversationScope);
+        saved.draft = $("#demo-message")?.value || "";
+        if (saved.previewFile) {
+          saved.previewScroll = $("#conversation-file-view")?.scrollTop || 0;
+        } else {
+          saved.scroll = $("#conversation-messages")?.scrollTop || 0;
+          if (saved.filesOpen)
+            saved.fileScroll = $("#delivery-content")?.scrollTop || 0;
+        }
+      }
+      function openSession(key, filesOpen, returnTo = null, animate = true) {
+        saveScroll();
+        saveConversation();
+        if (key.startsWith("node:")) {
+          const work = assignedTasks(key.split(":")[1]);
+          if (work.length) {
+            const remembered = lastTaskByNode.get(
+              `${state.scene}:${state.queued ? "new-run" : "run-1"}:${key.split(":")[1]}`,
+            );
+            const active =
+              work.find((task) => task.id === remembered) ||
+              work.find((task) =>
+                ["failed", "running"].includes(taskState(task)),
+              ) ||
+              work[0];
+            key = "task:" + active.id;
+          }
+        }
+        state.conversationKey = key;
+        state.conversationReturn = returnTo;
+        const data = conversationData();
+        if (!data) return;
+        if (!data.hasSession) {
+          state.surface = "canvas";
+          state.canvasReturnSelection = null;
+          state.canvasReturnPanel = false;
+          if (data.node) state.selected = data.node.id;
+          state.panel = true;
+          render();
+          return;
+        }
+        if (state.surface !== "conversation") {
+          sessionFocus = focusSelectorFor(document.activeElement);
+          state.canvasReturnSelection = state.selected;
+          state.canvasReturnPanel = state.panel;
+        }
+        if (data.task && !data.source)
+          lastTaskByNode.set(
+            `${state.scene}:${state.queued ? "new-run" : "run-1"}:${data.node.id}`,
+            data.task.id,
+          );
+        if (filesOpen !== undefined)
+          conversationState(data.scope).filesOpen = filesOpen;
+        if (data.node) state.selected = data.node.id;
+        state.panel = false;
+        const wasOpen = state.surface === "conversation";
+        state.surface = "conversation";
+        $("#conversation").hidden = false;
+        renderGraph();
+        renderPanel();
+        renderConversation(false);
+        renderRecentSessions();
+        if (!wasOpen && animate) {
+          $("#conversation").classList.add("entering");
+        } else $("#conversation").classList.remove("entering");
+        const heading = $("#conversation-title");
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+      function returnToWorkflow({ details = false, selection } = {}) {
+        saveConversation();
+        state.selected =
+          selection || state.canvasReturnSelection || state.selected;
+        state.panel = details || state.canvasReturnPanel;
+        state.canvasReturnSelection = null;
+        state.canvasReturnPanel = false;
+        state.surface = "canvas";
+        $("#conversation").classList.remove("entering");
+        render();
+        const source = sessionFocus && document.querySelector(sessionFocus);
+        if (
+          source &&
+          !source.closest("#conversation") &&
+          source.getClientRects().length
+        )
+          source.focus({ preventScroll: true });
+        else focusObject();
+      }
+      function renderRecentSessions() {
+        const rows = [
+          { key: "main", title: currentScene().title + " · 主 Agent" },
+        ];
+        if (["parallel", "manager"].includes(state.scene))
+          rows.push(
+            ...tasks
+              .filter((task) => !state.queued || taskState(task) === "reused")
+              .map((task) => ({
+                key: (state.queued ? "source:" : "") + "task:" + task.id,
+                title: task.title,
+              })),
+          );
+        else if (state.scene === "arena")
+          rows.push(
+            ...candidates.map((candidate) => ({
+              key: "candidate:" + candidate.id,
+              title: candidate.name + " · " + candidate.agent,
+            })),
+          );
+        else
+          rows.push(
+            ...currentNodes()
+              .filter(
+                (node) =>
+                  !node.type && !["pending", "reused"].includes(node.status),
+              )
+              .map((node) => ({ key: "node:" + node.id, title: node.title })),
+          );
+        $("#recent-sessions").innerHTML = rows
+          .map(
+            (row) =>
+              `<button class="nav-item" data-action="existing-session" data-key="${row.key}" title="同一 Session 的浮框示意">${escapeHtml(row.title)}</button>`,
+          )
+          .join("");
+        for (const item of document.querySelectorAll(
+          ".sidebar nav .nav-item",
+        )) {
+          item.classList.remove("active");
+          item.removeAttribute("aria-current");
+        }
+        const workflowNav = document.querySelectorAll(
+          ".sidebar nav .nav-item",
+        )[3];
+        workflowNav?.classList.add("active");
+        workflowNav?.setAttribute("aria-current", "page");
+      }
+      function conversationMessages(data) {
+        if (!data.hasSession) {
+          return `<div class="session-empty"><span class="type-icon">${icon("agent")}</span><h3>${data.status === "reused" ? "沿用来源成果" : "会话尚未开始"}</h3><p class="meta">${state.queued ? "新的 Run 已受理，等待 Runtime 调度。当前没有新的 Agent 会话或对话记录。" : "等待前置工作完成有效交接，Runtime 启动执行后会在这里显示准确的会话。"}</p>${data.status === "reused" ? button("source-session", "查看来源 Run 1 的原会话", false, "source:" + data.key) : ""}<p class="meta">打开这个窗口不会创建或启动 Agent。</p></div>`;
+        }
+        let instruction, response;
+        if (data.main) {
+          instruction = "看看工作流现在进行到哪里，接下来需要我处理什么？";
+          response = mainSessionSummary();
+        } else if (data.candidate) {
+          instruction =
+            "根据修复要求，给出完整候选实现，完成验证并写明仍需关注的边界。";
+          response = `${data.candidate.summary}<br><br>${data.candidate.strengths.join("；")}。${data.candidate.caution}<br><br>方案说明已经写入「${data.candidate.file}」。候选完成后仍需明确采用，尚未进入下游验证。`;
+        } else if (data.task) {
+          instruction =
+            data.task.instruction + "请将结果写入「" + data.task.file + "」。";
+          response =
+            data.status === "failed"
+              ? "已处理本项资料，但没有形成完整的用户画像交付。运行记录指出缺少「用户画像.md」，交接校验未通过；汇总尚未开始。"
+              : data.task.id === "market"
+                ? "市场概况已经整理完成，包含市场规模、主要参与者和材料出处。事实与推测分别标明，成果已写入「市场概况.md」，交接校验通过。"
+                : data.task.id === "case-study"
+                  ? "三个案例已按背景、做法和结果完成对照，引用的资料入口保留在「案例对照.md」。该项交接已通过，仍需等待其他必需研究工作。"
+                  : "已整理现有材料中两类主要用户的目标和使用场景，正在核对需求依据。资料不足的判断会明确标注为推测。完成后将写入「用户画像.md」，目前还没有有效交付。";
+        } else {
+          instruction =
+            data.node.id === "split"
+              ? "根据需求拆分研究工作，写入任务清单。子任务仅用于当前工作流，不创建新的项目任务。"
+              : data.node.id === "write"
+                ? "读取上游研究材料，完成报告，将事实、分析与建议分开，并写入「研究报告.md」。"
+                : ["audit", "review"].includes(data.node.id)
+                  ? "独立检查研究报告中的结论和依据，将审核意见写入文件。"
+                  : "根据本次需求和约定输入完成这一步工作，将成果写入约定文件。";
+          response =
+            data.status === "failed"
+              ? "本次执行没有形成有效交接，必需文件缺失。下游保持等待，可以查看记录后明确提交重试。"
+              : data.node.id === "split"
+                ? "任务清单已写入 tasks.json：市场概况、用户画像、案例对照。主 Agent 提交的 dispatch.json 已受理，三项工作按固定的两个执行 Node 分工。展开交付物中的「拆分后的工作」，可打开各自的会话。"
+                : ["audit", "review"].includes(data.node.id)
+                  ? "独立审核已完成，发现两点需要明确：市场规模结论的来源和用户画像中的推测标注。意见已写入「审核意见.md」，由人工确认节点决定是否继续交付。"
+                  : data.status === "succeeded"
+                    ? "这一项已按要求完成，约定成果已经形成并通过交接校验。展开上方的交付物，可查看相关文件。"
+                    : "正在根据输入材料整理结论与证据，尚未完成最终交付。当前对话保持原执行身份，完成后的文件会出现在交付物区域。";
+        }
+        return `<div class="message user"><div class="author">任务输入 · 对话示例</div>${escapeHtml(instruction)}</div><div class="message"><div class="author">${escapeHtml(data.agent)} · 原执行会话示意</div>${response}</div><details class="tool-group"><summary>相关文件操作 · 示例记录</summary><p class="meta">正式页面复用已有会话里的真实工具记录；此稿不执行工具，也不据此推断实际文件已被读取。</p>${data.inputs.map((file) => fileRow(file, "打开示例输入内容")).join("")}</details>${data.status === "failed" && !data.source ? `<div class="notice error" style="margin-top:18px">交接失败：必需交付缺失。<div class="actions">${button("retry", "重试此项执行", true)}${button("main-session", "与主 Agent 讨论")}</div></div>` : ""}`;
+      }
+      function conversationFiles(data) {
+        const work = data.node?.id === "split" ? tasks : [];
+        function provenance(file) {
+          if (data.main) {
+            const task =
+              ["parallel", "manager"].includes(state.scene) &&
+              tasks.find((item) => item.file === file);
+            const candidate =
+              state.scene === "arena" &&
+              candidates.find((item) => item.file === file);
+            const node = task
+              ? currentNodes().find((item) => item.id === task.node)
+              : currentNodes().find(
+                  (item) =>
+                    !["split", "gate", "delivery"].includes(item.id) &&
+                    outputFiles(item).includes(file),
+                );
+            return `${task?.title || candidate?.name || node?.title || "工作流成果"} · ${candidate?.agent || node?.agent || "来源执行"} · ${state.queued ? "来源 Run 1" : "Run 1"}${candidate ? " · 候选成果" : ""}`;
+          }
+          return data.source || state.queued
+            ? "来源 Run 1 的保留成果"
+            : data.candidate
+              ? "候选成果 · 采用状态单独确认"
+              : "当前会话的有效交付";
+        }
+        const outputs = data.outputs.length
+          ? data.outputs.map((file) => fileRow(file, provenance(file))).join("")
+          : `<p class="meta">${data.node?.id === "split" ? "本步形成分工材料，不计入最终交付物。" : data.status === "failed" ? "交接未通过，暂无有效交付。" : "完成并通过交接校验后显示。"}</p>`;
+        const inputFiles = data.inputs.length
+          ? data.inputs
+              .map((file) => fileRow(file, "绑定给这项工作的文件引用"))
+              .join("")
+          : '<p class="meta">尚未绑定：等待采用方案并成功应用成果。</p>';
+        return `${section("输出文件", outputs)}${section("输入材料", inputFiles)}${work.length ? section("分工材料", fileRow("tasks.json", "内部任务清单 · 不计交付物") + fileRow("dispatch.json", "已受理分工 · 不计交付物")) + section("拆分后的工作", taskList()) : ""}${section("相关交接", `<p class="meta">${data.main ? "这里汇集可访问的局部成果，工作流完成与否仍以 Runtime 为准。" : data.source ? "展示来源 Run 1 已完成的交接，不代表新 Run 再执行了一次。" : data.status === "succeeded" ? "本项交接已校验。文件引用不代表下游 Agent 已经阅读。" : data.status === "failed" ? "必需交付缺失，下游尚未开始。" : "等待当前执行完成有效交接。"}</p>${data.task ? fileRow("dispatch.json", "已受理的内部任务分工") : ""}`)}`;
+      }
+      function filePreviewContent(saved) {
+        return saved.previewFile
+          ? `<div class="file-preview">${button("files-back", "← 返回会话")}<div class="files-header" style="margin-top:18px"><h3 id="conversation-file-title" tabindex="-1">${escapeHtml(saved.previewFile)}</h3>${button("download", "下载示例")}</div><p class="meta">复用现有文件预览位置 · 当前示例内容</p><pre>${escapeHtml(sampleFile(saved.previewFile))}</pre></div>`
+          : "";
+      }
+      function renderConversation(save = true) {
+        if (save) saveConversation();
+        const data = conversationData();
+        if (!data) return;
+        renderedConversationScope = data.scope;
+        const saved = conversationState(data.scope);
+        const work = data.task ? assignedTasks(data.node.id) : [];
+        const context = `${data.source ? "来源 Run 1 · 只读" : state.queued ? "Run 2" : "Run 1"} · ${data.main ? "原主会话" : data.node.title}`;
+        const subtitle = `${data.agent} · ${state.scene === "arena" ? "/projects/product-repair · worktree" : "/projects/industry-research"}`;
+        const statusText = data.source
+          ? "只读查看来源 Run 1 的原会话；本次 Run 2 复用其成果。"
+          : state.stopping
+            ? "正在停止，等待确认，项目仍保持占用。"
+            : data.main
+              ? "主 Agent · 讨论不会自动提交工作流操作。"
+              : context;
+        $("#conversation").innerHTML =
+          `<header class="conversation-header"><div class="conversation-heading"><div class="heading-line"><h2 id="conversation-title">${escapeHtml(data.title)}</h2>${badge(data.status)}</div><p class="meta">${escapeHtml(subtitle)}</p></div><div class="conversation-actions"><button class="btn ghost icon-button" data-action="close-conversation" aria-label="关闭会话浮框">×</button></div></header><div class="conversation-status">${state.conversationReturn ? button("conversation-back", state.conversationReturn.label) : ""}<span>${escapeHtml(statusText)}</span><a class="session-link" data-full-session href="${escapeHtml(data.href)}" target="_blank" rel="noopener" title="打开对应 Workspace / Session 的示例路由">完整会话 ↗</a>${data.candidate ? button("compare", "方案对比") : ""}</div>${work.length ? `<div class="work-switcher"><label for="work-session">${escapeHtml(data.node.title)}</label><select id="work-session" aria-label="切换此 Node 的准确工作会话">${work.map((task) => `<option value="${task.id}" ${data.task.id === task.id ? "selected" : ""}>${escapeHtml(task.title)} · ${labels[data.source ? task.state : taskState(task)]}</option>`).join("")}</select></div>` : ""}<div class="conversation-content" id="conversation-content" ${saved.previewFile ? "hidden" : ""}><section class="delivery-section" aria-label="会话关联文件"><button class="delivery-toggle" data-action="toggle-deliverables" aria-expanded="${saved.filesOpen}" aria-controls="delivery-content"><span><strong>交付物 ${data.outputs.length}</strong><small>输入与交接</small></span>${icon("chevron")}</button><div class="delivery-content" id="delivery-content" ${saved.filesOpen ? "" : "hidden"}>${conversationFiles(data)}</div></section><div class="conversation-messages" id="conversation-messages">${conversationMessages(data)}</div><div class="composer"><div class="composer-box"><label class="meta" for="demo-message">${escapeHtml(data.agent)} · 原输入框复用位置</label><textarea id="demo-message" aria-label="静态原型草稿，不发送消息" placeholder="演示草稿，不会发送…" ${data.source ? "disabled" : ""}></textarea><div class="composer-foot"><span>静态示意 · 沿用已有会话组件</span><button class="btn primary" disabled title="演示不发送消息">发送（演示）</button></div></div></div></div><section class="conversation-file-view" id="conversation-file-view" aria-label="会话关联文件预览" ${saved.previewFile ? "" : "hidden"}>${filePreviewContent(saved)}</section>`;
+        $("#conversation").dataset.sessionHref = data.href;
+        $("#conversation").dataset.workspaceId = data.workspaceId;
+        $("#conversation").dataset.sessionId = data.sessionId;
+        $("#conversation").dataset.hostId = data.hostId || "local";
+        if (data.source) {
+          $("#conversation .composer label").textContent = "来源会话 · 只读";
+          $("#demo-message").disabled = true;
+          $("#demo-message").placeholder =
+            "查看来源记录，不在历史执行中发送消息";
+        }
+        $("#demo-message").value = saved.draft;
+        if (saved.previewFile) {
+          $("#conversation-file-view").scrollTop = saved.previewScroll;
+        } else {
+          $("#conversation-messages").scrollTop = saved.scroll;
+          $("#delivery-content").scrollTop = saved.fileScroll;
+        }
+      }
+      function toggleDeliverables() {
+        const data = conversationData();
+        if (!data?.hasSession || state.surface !== "conversation") return;
+        const saved = conversationState(data.scope);
+        if (saved.filesOpen)
+          saved.fileScroll = $("#delivery-content").scrollTop;
+        saved.filesOpen = !saved.filesOpen;
+        $("#delivery-content").hidden = !saved.filesOpen;
+        $('#conversation [data-action="toggle-deliverables"]').setAttribute(
+          "aria-expanded",
+          String(saved.filesOpen),
+        );
+        if (saved.filesOpen)
+          $("#delivery-content").scrollTop = saved.fileScroll;
+      }
+      function returnFromFile() {
+        const data = conversationData();
+        if (!data?.hasSession || state.surface !== "conversation") return;
+        const saved = conversationState(data.scope);
+        saved.previewFile = null;
+        renderConversation(false);
+        const source =
+          saved.previewReturn && document.querySelector(saved.previewReturn);
+        if (source?.getClientRects().length)
+          source.focus({ preventScroll: true });
+        else
+          $('#conversation [data-action="toggle-deliverables"]').focus({
+            preventScroll: true,
+          });
+      }
+      function showDialog(title, subtitle, body, actions, action) {
+        if (!$("#dialog").open) focusBeforeDialog = document.activeElement;
+        dialogAction = action;
+        $("#dialog").classList.remove("comparison");
+        $("#dialog-title").textContent = title;
+        $("#dialog-subtitle").textContent = subtitle;
+        $("#dialog-body").innerHTML = body;
+        $("#dialog-actions").innerHTML = actions;
+        if (!$("#dialog").open) $("#dialog").showModal();
+        $("#dialog-title").tabIndex = -1;
+        $("#dialog-title").focus();
+      }
+      function sampleFile(name) {
+        if (name.endsWith(".json"))
+          return JSON.stringify(
+            {
+              note: "交互稿中的文件示例，正式格式以运行时协议为准",
+              title: name,
+              items: tasks.map((task) => task.title),
+            },
+            null,
+            2,
+          );
+        if (name === "审核意见.md")
+          return "# 审核意见\n\n检查对象：研究报告.md\n\n1. 市场规模结论有来源，可保留。\n2. 用户画像中的推测需要标注，建议在交付说明中明确。\n\n建议：由用户确认当前成果是否满足用途。";
+        return `# ${name.replace(/\.md$/, "")}\n\n这是用于评审界面层级的示例文件内容。\n\n## 本步结论\n\n按照需求完成当前工作，说明结论依据、尚未确认的部分和后续建议。\n\n## 交接说明\n\n下游收到准确文件引用后实际读取；文件存在不等于执行成功。`;
+      }
+      document.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-action]");
+        if (!target || target.disabled) return;
+        const action = target.dataset.action,
+          key = target.dataset.key;
+        if (action === "scene") {
+          reset(key);
+          return;
+        }
+        if (action === "reset") {
+          reset();
+          return;
+        }
+        if (action === "node") {
+          selectObject(key);
+          return;
+        }
+        if (action === "edge") {
+          selectObject("edge:" + key);
+          return;
+        }
+        if (action === "close-panel") {
+          closePanel();
+          return;
+        }
+        if (action === "task") {
+          const from =
+            state.surface === "conversation" ? conversationData() : null;
+          const returnTo =
+            from?.node?.id === "split"
+              ? {
+                  key: state.conversationKey,
+                  label: "返回分工清单",
+                  parent: state.conversationReturn,
+                }
+              : state.conversationReturn;
+          openSession(
+            (from?.source ? "source:" : "") + "task:" + key,
+            undefined,
+            returnTo,
+          );
+          return;
+        }
+        if (action === "conversation-back") {
+          const previous = state.conversationReturn;
+          if (previous?.key)
+            openSession(previous.key, undefined, previous.parent || null);
+          else if (previous)
+            returnToWorkflow({ details: true, selection: previous.selection });
+          return;
+        }
+        if (action === "source-session") {
+          openSession(key, undefined, {
+            key:
+              state.surface === "conversation" ? state.conversationKey : null,
+            selection: state.selected,
+            label: "返回本次工作",
+            parent: state.conversationReturn,
+          });
+          return;
+        }
+        if (action === "main-session") {
+          openSession("main");
+          return;
+        }
+        if (action === "existing-session") {
+          openSession(key);
+          return;
+        }
+        if (action === "session") {
+          openSession("node:" + key);
+          return;
+        }
+        if (action === "task-session") {
+          openSession("task:" + key);
+          return;
+        }
+        if (action === "candidate-session") {
+          if ($("#dialog").open) {
+            focusBeforeDialog = null;
+            $("#dialog").close();
+          }
+          openSession("candidate:" + key);
+          return;
+        }
+        if (action === "compare") {
+          saveScroll();
+          renderComparison();
+          return;
+        }
+        if (action === "close-conversation") {
+          returnToWorkflow();
+          return;
+        }
+        if (action === "files-back") {
+          returnFromFile();
+          return;
+        }
+        if (action === "toggle-deliverables") {
+          toggleDeliverables();
+          return;
+        }
+        if (action === "failure") {
+          reset();
+          state.failed = true;
+          state.selected =
+            state.scene === "review"
+              ? "audit"
+              : state.scene === "arena"
+                ? "arena"
+                : "research";
+          render();
+          selectObject(state.selected);
+          return;
+        }
+        if (action === "zoom-in" || action === "zoom-out") {
+          state.zoom = Math.min(
+            1.4,
+            Math.max(0.5, state.zoom + (action === "zoom-in" ? 0.1 : -0.1)),
+          );
+          applyViewport();
+          return;
+        }
+        if (action === "recenter") {
+          state.pan = { x: 0, y: 0 };
+          state.zoom = Math.min(
+            1,
+            ($("#canvas").clientHeight - 35) / 660,
+            ($("#canvas").clientWidth - 50) / 720,
+          );
+          applyViewport();
+          return;
+        }
+        if (action === "close-dialog") {
+          $("#dialog").close();
+          return;
+        }
+        if (action === "file") {
+          fileInDialog = key;
+          if (state.surface === "conversation") {
+            saveConversation();
+            const data = conversationData(),
+              saved = conversationState(data.scope);
+            const fileScope = target.closest("#delivery-content")
+              ? "#delivery-content "
+              : "#conversation-messages ";
+            saved.previewReturn = `${fileScope}[data-action="file"][data-key="${CSS.escape(key)}"]`;
+            saved.previewFile = key;
+            saved.previewScroll = 0;
+            if ($("#dialog").open) {
+              focusBeforeDialog = null;
+              $("#dialog").close();
+            }
+            renderConversation(false);
+            $("#conversation-file-title")?.focus({ preventScroll: true });
+            return;
+          }
+          showDialog(
+            key,
+            "当前文件内容 · 此处仅为示例，不代表历史快照",
+            `<pre>${escapeHtml(sampleFile(key))}</pre>`,
+            button("close-dialog", "关闭") +
+              button("download", "下载示例文件", true),
+          );
+          return;
+        }
+        if (action === "download") {
+          const name =
+            state.surface === "conversation"
+              ? conversationState(conversationData().scope).previewFile ||
+                fileInDialog
+              : fileInDialog;
+          if (!name) return;
+          const url = URL.createObjectURL(
+            new Blob([sampleFile(name)], {
+              type: "text/plain;charset=utf-8",
+            }),
+          );
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = name;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          return;
+        }
+        if (action === "choose") {
+          if (state.stopping || state.failed || state.winner) return;
+          showDialog(
+            "采用方案 " + key.toUpperCase() + "？",
+            "选择、应用成果和下游执行分开呈现",
+            '<p>采用选定候选的成果，其他候选结果继续保留。应用成功后，Runtime 再按流程推进下游。</p><div class="notice">这是演示操作，不会应用真实代码。</div>',
+            button("close-dialog", "取消") +
+              button("confirm", "演示采用", true),
+            () => {
+              state.winner = key;
+              state.applying = true;
+              state.selected = "arena";
+              render();
+              const revision = state.revision;
+              setTimeout(() => {
+                if (state.revision !== revision || state.stopping) return;
+                state.applying = false;
+                render();
+                notify("演示：成果已应用，下游验证开始；工作流尚未全部完成。");
+              }, 1400);
+            },
+          );
+          return;
+        }
+        if (action === "approve" || action === "reject") {
+          if (
+            state.stopping ||
+            state.gatePending ||
+            state.gateDecision ||
+            !currentNodes().some(
+              (node) => node.id === "gate" && node.status === "waiting",
+            )
+          )
+            return;
+          state.gatePending = true;
+          render();
+          const revision = state.revision;
+          setTimeout(() => {
+            if (state.revision !== revision || state.stopping) return;
+            state.gatePending = false;
+            state.gateDecision = action === "approve" ? "approve" : "reject";
+            render();
+            notify(
+              action === "approve"
+                ? "演示：已批准，进入交付环节。"
+                : "演示：已拒绝，保留审核记录，不自动返工。",
+            );
+          }, 800);
+          return;
+        }
+        if (action === "stop") {
+          showDialog(
+            "停止本次运行？",
+            "保留已经完成的成果与执行记录",
+            "<p>向仍在执行的 Agent 发出停止请求。所有相关执行确认停止前，项目仍保持占用。</p>",
+            button("close-dialog", "继续运行") +
+              button("confirm", "演示停止请求", true),
+            () => {
+              state.stopping = true;
+              render();
+              notify("演示：停止请求已发出，尚未确认全部停止。");
+            },
+          );
+          return;
+        }
+        if (action === "retry") {
+          if (state.stopping || state.queued) return;
+          const conversation =
+            state.surface === "conversation" ? conversationData() : null;
+          const isSplit = ["parallel", "manager"].includes(state.scene);
+          const retryTitle =
+            conversation && !conversation.main
+              ? conversation.title
+              : isSplit
+                ? "用户画像"
+                : currentNodes().find((node) => node.id === state.selected)
+                    ?.title || "失败执行";
+          showDialog(
+            "重试此次执行",
+            "产生新 Run，来源运行与失败记录继续保留",
+            `<p><strong>重试范围</strong><br>${retryTitle}的准确失败执行及受影响下游。</p><p><strong>复用成果</strong><br>${isSplit ? "保留已完成的案例分析。" : "保留范围外已完成的上游成果。"}执行来源由原记录绑定，不按标题猜测。</p><div class="notice">本原型只演示受理后的界面，不启动真实 Agent。</div>`,
+            button("close-dialog", "取消") +
+              button("confirm", "演示受理", true),
+            () => {
+              state.queued = true;
+              state.panel = true;
+              returnToWorkflow({ details: true });
+            },
+          );
+          return;
+        }
+        if (action === "confirm") {
+          const callback = dialogAction;
+          $("#dialog").close();
+          if (callback) callback();
+          return;
+        }
+        if (action === "results") {
+          openSession("main", true);
+          return;
+        }
+        if (action === "nav-demo")
+          notify("此稿只演示工作流协作；其他导航沿用现有产品。");
+      });
+      $("#dialog").addEventListener("close", () => {
+        if (
+          focusBeforeDialog?.isConnected &&
+          focusBeforeDialog.getClientRects().length
+        )
+          focusBeforeDialog.focus({ preventScroll: true });
+      });
+      document.addEventListener("change", (event) => {
+        if (event.target.id === "work-session") {
+          const from = conversationData();
+          openSession(
+            (from?.source ? "source:" : "") + "task:" + event.target.value,
+            undefined,
+            state.conversationReturn,
+          );
+          $("#work-session")?.focus({ preventScroll: true });
+        }
+      });
+      document.addEventListener("input", (event) => {
+        if (event.target.id === "demo-message" && renderedConversationScope)
+          conversationState(renderedConversationScope).draft =
+            event.target.value;
+      });
+      $("#canvas").addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest("button, .edge-hit"))
+          return;
+        panGesture = {
+          x: event.clientX,
+          y: event.clientY,
+          originX: state.pan.x,
+          originY: state.pan.y,
+          moved: false,
+          id: event.pointerId,
+        };
+        $("#canvas").setPointerCapture(event.pointerId);
+      });
+      $("#canvas").addEventListener("pointermove", (event) => {
+        if (!panGesture) return;
+        const dx = event.clientX - panGesture.x,
+          dy = event.clientY - panGesture.y;
+        if (Math.hypot(dx, dy) > 5) panGesture.moved = true;
+        if (panGesture.moved) {
+          state.pan = {
+            x: panGesture.originX + dx,
+            y: panGesture.originY + dy,
+          };
+          $("#canvas").classList.add("dragging");
+          applyViewport();
+        }
+      });
+      function endPan(event) {
+        if (!panGesture) return;
+        if ($("#canvas").hasPointerCapture(event.pointerId))
+          $("#canvas").releasePointerCapture(event.pointerId);
+        panGesture = null;
+        $("#canvas").classList.remove("dragging");
+      }
+      $("#canvas").addEventListener("pointerup", (event) => endPan(event));
+      $("#canvas").addEventListener("pointercancel", endPan);
+      document.addEventListener("keydown", (event) => {
+        if (
+          event.target.matches(".edge-hit") &&
+          ["Enter", " "].includes(event.key)
+        ) {
+          event.preventDefault();
+          selectObject("edge:" + event.target.dataset.key);
+        }
+        if (
+          event.key === "Escape" &&
+          !event.defaultPrevented &&
+          !event.isComposing &&
+          !$("#dialog").open &&
+          (state.surface === "conversation" || state.panel)
+        ) {
+          if (state.surface === "conversation") {
+            const saved = conversationState(conversationData().scope);
+            if (saved.previewFile) {
+              event.preventDefault();
+              returnFromFile();
+              return;
+            }
+          }
+          event.preventDefault();
+          closePanel();
+        }
+      });
+      document.querySelectorAll("[data-icon]").forEach((element) => {
+        element.innerHTML = icon(element.dataset.icon);
+      });
+      $(".sidebar nav").innerHTML = [
+        ["grid", "Dashboard"],
+        ["search", "搜索"],
+        ["folder", "项目"],
+        ["flow", "工作流"],
+        ["agent", "智能体"],
+      ]
+        .map(
+          ([name, label]) =>
+            `<button class="nav-item${label === "工作流" ? " active" : ""}" data-action="nav-demo"${label === "工作流" ? ' aria-current="page"' : ""}>${icon(name)}<span class="nav-text">${label}</span></button>`,
+        )
+        .join("");
+      render();
+    </script>
+  </body>
+</html>

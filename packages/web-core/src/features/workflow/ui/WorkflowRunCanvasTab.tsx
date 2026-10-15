@@ -36,6 +36,9 @@ import type {
   WorkflowNodeExecutionResponse,
   WorkflowNodeWorkStatus,
   WorkflowNodeWorkView,
+  WorkflowMainSessionView,
+  WorkflowReuseView,
+  WorkflowSplitSubtaskView,
   WorkflowRunResponse,
 } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
@@ -50,9 +53,9 @@ import {
 } from '@vibe/ui/components/FloatingPanel';
 import { AgentIcon } from '@/shared/components/AgentIcon';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 import { useWorkflowRunMutations } from '@/shared/hooks/useWorkflowRun';
 import { useWorkflowTemplate } from '@/shared/hooks/useWorkflowTemplates';
-import { buildWorkspaceSessionHref } from '@/shared/lib/routes/workspaceRoutes';
 import { cn } from '@/shared/lib/utils';
 import {
   getConditionRouterHumanPrompt,
@@ -108,10 +111,33 @@ import { workflowNodeStatusKey } from './workflowI18n';
 import { getWorkflowNodeIcon } from './workflowNodeIcons';
 import { WorkflowSplitBatchDetails } from './WorkflowSplitBatchDetails';
 import { WorkflowFileReferences } from './WorkflowFileReferences';
+import { WorkflowArenaWinnerPanel } from './WorkflowArenaWinnerPanel';
+import {
+  WorkflowConversationPanel,
+  type WorkflowConversationSavedView,
+} from './WorkflowConversationPanel';
+import {
+  buildWorkflowConversationHref,
+  getWorkflowNodeConversations,
+  selectWorkflowConversation,
+  workflowCandidateConversation,
+  workflowSourceConversation,
+  workflowSubtaskConversation,
+  type WorkflowConversationTarget,
+} from '../model/workflowConversationTarget';
+import type { ArenaComparisonCandidate } from '../../arena/model/arenaComparisonView';
 
 export interface WorkflowRunCanvasTabProps {
   projectId: string;
   run: WorkflowRunResponse;
+  mainSessionRequest?: WorkflowMainSessionView | null;
+  mainSessionTrigger?: HTMLElement | null;
+}
+
+interface ConversationLocation {
+  target: WorkflowConversationTarget;
+  returnNodeId: string | null;
+  returnConversation?: ConversationLocation;
 }
 
 interface RunNodeData extends WorkflowNodeData {
@@ -368,6 +394,8 @@ function buildConditionBranchOptions(
 export function WorkflowRunCanvasTab({
   projectId,
   run,
+  mainSessionRequest,
+  mainSessionTrigger,
 }: WorkflowRunCanvasTabProps) {
   const { effectiveTheme } = useTheme();
   const reducedMotion = useReducedMotion();
@@ -389,6 +417,17 @@ export function WorkflowRunCanvasTab({
   const consumedQueuedFocusForRunRef = useRef<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detailsNodeId, setDetailsNodeId] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<ConversationLocation | null>(
+    null
+  );
+  const workSelections = useRef(new Map<string, string>());
+  const savedConversationViews = useRef(
+    new Map<string, WorkflowConversationSavedView>()
+  );
+  const returnFocusTarget = useRef<HTMLElement | null>(null);
+  const consumedMainSessionRequest = useRef<WorkflowMainSessionView | null>(
+    null
+  );
   const [gateSubmission, setGateSubmission] = useState<GateSubmission | null>(
     null
   );
@@ -408,19 +447,159 @@ export function WorkflowRunCanvasTab({
     [runtimeView]
   );
 
-  const openNodeDetails = useCallback((nodeId: string) => {
-    setActionError(null);
-    setSelectedNodeId(nodeId);
-    setDetailsNodeId(nodeId);
+  const rememberTrigger = useCallback((trigger?: HTMLElement | null) => {
+    if (trigger) returnFocusTarget.current = trigger;
   }, []);
+  const closeOverlay = useCallback(() => {
+    setDetailsNodeId(null);
+    setConversation(null);
+    setActionError(null);
+    const trigger = returnFocusTarget.current;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }, []);
+  const openConversation = useCallback(
+    (
+      target: WorkflowConversationTarget,
+      returnNodeId: string | null = null,
+      returnConversation?: ConversationLocation
+    ) => {
+      setDetailsNodeId(null);
+      setActionError(null);
+      if (
+        target.nodeId &&
+        (target.kind === 'node' || target.kind === 'subtask')
+      ) {
+        workSelections.current.set(target.nodeId, target.key);
+      }
+      setConversation({ target, returnNodeId, returnConversation });
+    },
+    []
+  );
+  const openNodeDetails = useCallback(
+    (nodeId: string, trigger?: HTMLElement | null, forceDetails = false) => {
+      rememberTrigger(trigger);
+      setActionError(null);
+      setSelectedNodeId(nodeId);
+      const node = graph?.nodes.find((item) => item.id === nodeId);
+      const work = getWorkflowNodeWork(runtimeView, nodeId);
+      if (
+        !forceDetails &&
+        node &&
+        (node.type === 'agent' || node.type === 'task_splitter') &&
+        work?.status !== 'reused' &&
+        work?.status !== 'skipped'
+      ) {
+        const targets = getWorkflowNodeConversations(
+          run,
+          runtimeView,
+          nodeId,
+          node.data.display_name || getWorkflowNodeKindLabel(node.type, t)
+        );
+        const target = selectWorkflowConversation(
+          targets,
+          workSelections.current.get(nodeId)
+        );
+        if (target) {
+          openConversation(target);
+          return;
+        }
+      }
+      setConversation(null);
+      setDetailsNodeId(nodeId);
+    },
+    [graph, openConversation, rememberTrigger, run, runtimeView, t]
+  );
 
   useEffect(() => {
+    if (
+      !mainSessionRequest ||
+      consumedMainSessionRequest.current === mainSessionRequest
+    )
+      return;
+    consumedMainSessionRequest.current = mainSessionRequest;
+    const session = mainSessionRequest.session;
+    rememberTrigger(
+      mainSessionTrigger ??
+        (document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null)
+    );
+    openConversation({
+      key: `main:${session.id}`,
+      kind: 'main',
+      runId: run.id,
+      nodeId: null,
+      nodeExecutionId: null,
+      workspaceId: session.workspace_id,
+      sessionId: session.id,
+      title: t('workflow.management.mainAgent'),
+      status: run.status,
+      readOnly: false,
+    });
+    // A refresh must not reopen the panel or move the selected work.
+  }, [
+    mainSessionRequest,
+    mainSessionTrigger,
+    openConversation,
+    rememberTrigger,
+    run.id,
+    run.status,
+    t,
+  ]);
+
+  const conversationChoices = useMemo(() => {
+    if (!conversation || !graph) return [];
+    const { target } = conversation;
+    if ((target.kind !== 'node' && target.kind !== 'subtask') || !target.nodeId)
+      return [];
+    const node = graph.nodes.find((item) => item.id === target.nodeId);
+    return node
+      ? getWorkflowNodeConversations(
+          run,
+          runtimeView,
+          node.id,
+          node.data.display_name || getWorkflowNodeKindLabel(node.type, t)
+        )
+      : [];
+  }, [conversation, graph, run, runtimeView, t]);
+  const conversationTarget = conversation
+    ? conversation.target.kind === 'node' ||
+      conversation.target.kind === 'subtask'
+      ? (conversationChoices.find(
+          (item) => item.key === conversation.target.key
+        ) ?? { ...conversation.target, sessionId: null, nodeExecutionId: null })
+      : conversation.target.kind === 'main'
+        ? { ...conversation.target, status: run.status }
+        : conversation.target
+    : null;
+  const openSubtask = (
+    batchId: string,
+    task: WorkflowSplitSubtaskView,
+    returnNodeId: string
+  ) => {
+    const target = workflowSubtaskConversation(run, batchId, task);
+    if (conversation?.target.key === target.key) return;
+    if (task.node_id) setSelectedNodeId(task.node_id);
+    openConversation(target, returnNodeId, conversation ?? undefined);
+  };
+  const openSource = (source: WorkflowConversationTarget) => {
+    if (
+      conversation?.target.kind === 'source' &&
+      conversation.target.runId === source.runId &&
+      conversation.target.key === source.key
+    )
+      return;
+    openConversation(source, detailsNodeId, conversation ?? undefined);
+  };
+
+  useEffect(() => {
+    if (!graph) return;
     if (consumedQueuedFocusForRunRef.current === run.id) return;
     consumedQueuedFocusForRunRef.current = run.id;
 
     const queuedFocus = consumeWorkflowRunNodeFocus(run.id);
     if (queuedFocus) openNodeDetails(queuedFocus.nodeId);
-  }, [openNodeDetails, run.id]);
+  }, [graph, openNodeDetails, run.id]);
 
   useEffect(() => {
     if (!graph) return;
@@ -647,7 +826,8 @@ export function WorkflowRunCanvasTab({
     );
   }
 
-  const attentionItem = detailsNodeId ? null : (attentionItems[0] ?? null);
+  const attentionItem =
+    detailsNodeId || conversationTarget ? null : (attentionItems[0] ?? null);
 
   return (
     <div className="workflow-canvas-shell workflow-canvas-surface relative h-full min-h-[360px] w-full overflow-hidden bg-[var(--workflow-canvas-bg)]">
@@ -656,12 +836,24 @@ export function WorkflowRunCanvasTab({
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={workflowCanvasEdgeTypes}
-        onNodeClick={(_, node) => openNodeDetails(node.id)}
-        onNodeDoubleClick={(_, node) => openNodeDetails(node.id)}
+        onNodeClick={(event, node) =>
+          openNodeDetails(
+            node.id,
+            (event.target as HTMLElement).closest<HTMLElement>(
+              '.react-flow__node'
+            )
+          )
+        }
+        onNodeDoubleClick={(event, node) =>
+          openNodeDetails(
+            node.id,
+            (event.target as HTMLElement).closest<HTMLElement>(
+              '.react-flow__node'
+            )
+          )
+        }
         onPaneClick={() => {
           setSelectedNodeId(null);
-          setDetailsNodeId(null);
-          setActionError(null);
         }}
         defaultEdgeOptions={WORKFLOW_CANVAS_DEFAULT_EDGE_OPTIONS}
         nodesDraggable={false}
@@ -691,7 +883,9 @@ export function WorkflowRunCanvasTab({
           item={attentionItem}
           itemCount={attentionItems.length}
           graph={graph}
-          onOpenNode={() => openNodeDetails(attentionItem.nodeId)}
+          onOpenNode={(trigger) =>
+            openNodeDetails(attentionItem.nodeId, trigger)
+          }
         />
       ) : null}
 
@@ -707,10 +901,7 @@ export function WorkflowRunCanvasTab({
         navigation={navigation}
         node={detailsGraphNode}
         onApprove={() => void handleHumanGateDecision('approve')}
-        onClose={() => {
-          setDetailsNodeId(null);
-          setActionError(null);
-        }}
+        onClose={closeOverlay}
         onReject={() => void handleHumanGateDecision('reject')}
         onSelectConditionBranch={(targetNodeIds) =>
           void handleSelectConditionBranch(targetNodeIds)
@@ -719,7 +910,123 @@ export function WorkflowRunCanvasTab({
         run={run}
         execution={detailsExecution}
         work={detailsWork}
+        onOpenSubtask={(batchId, task) =>
+          detailsNodeId && openSubtask(batchId, task, detailsNodeId)
+        }
+        onOpenSource={(source) =>
+          openSource(
+            workflowSourceConversation(
+              source,
+              detailsGraphNode?.data.display_name || source.node_id
+            )
+          )
+        }
+        onOpenCandidate={(candidate) => {
+          if (!detailsExecution || !detailsNodeId) return;
+          openConversation(
+            workflowCandidateConversation({
+              run,
+              execution: detailsExecution,
+              candidateId: candidate.candidateId,
+              workspaceId: candidate.workspaceId,
+              sessionId: candidate.sessionId,
+              title: candidate.label,
+              status: candidate.agentRunStatus ?? 'pending',
+            }),
+            detailsNodeId
+          );
+        }}
       />
+      {conversationTarget ? (
+        <WorkflowConversationPanel
+          target={conversationTarget}
+          choices={conversationChoices}
+          projectId={projectId}
+          taskId={run.task_id}
+          agentLabel={
+            conversationTarget.kind === 'node' ||
+            conversationTarget.kind === 'subtask'
+              ? (() => {
+                  const node = graph.nodes.find(
+                    (item) => item.id === conversationTarget.nodeId
+                  );
+                  return node
+                    ? getWorkflowAgentDisplay(node.data).agentLabel
+                    : undefined;
+                })()
+              : undefined
+          }
+          onClose={closeOverlay}
+          onChoose={(target) =>
+            openConversation(
+              target,
+              conversation?.returnNodeId ?? null,
+              conversation?.returnConversation
+            )
+          }
+          onOpenSource={openSource}
+          onReturn={
+            conversation?.returnConversation
+              ? () => setConversation(conversation.returnConversation!)
+              : conversation?.returnNodeId
+                ? () =>
+                    openNodeDetails(conversation.returnNodeId!, undefined, true)
+                : undefined
+          }
+          returnLabel={t(
+            conversationTarget.kind === 'candidate'
+              ? 'workflow.conversation.backToCandidates'
+              : 'workflow.conversation.backToWork'
+          )}
+          savedViews={savedConversationViews}
+          workList={
+            (conversationTarget.kind === 'node' ||
+              conversationTarget.kind === 'subtask') &&
+            conversationTarget.runId === run.id &&
+            conversationTarget.nodeId
+              ? (openFile) =>
+                  getWorkflowSplitBatchesForNode(
+                    run,
+                    conversationTarget.nodeId!
+                  ).map((batch) => (
+                    <WorkflowSplitBatchDetails
+                      key={batch.id}
+                      batch={batch}
+                      graph={graph}
+                      projectId={projectId}
+                      run={run}
+                      workspaceHref={buildRunWorkspaceHref(projectId, run)}
+                      onOpenFile={openFile}
+                      onOpenSubtask={(task) =>
+                        openSubtask(batch.id, task, batch.splitter_node_id)
+                      }
+                      onOpenMainSession={
+                        batch.handover && run.workspace_id
+                          ? () =>
+                              openConversation(
+                                {
+                                  key: `main:${batch.handover!.session_id}`,
+                                  kind: 'main',
+                                  runId: run.id,
+                                  nodeId: null,
+                                  nodeExecutionId: null,
+                                  workspaceId: run.workspace_id,
+                                  sessionId: batch.handover!.session_id,
+                                  title: t('workflow.management.mainAgent'),
+                                  status: run.status,
+                                  readOnly: false,
+                                },
+                                batch.splitter_node_id,
+                                conversation ?? undefined
+                              )
+                          : undefined
+                      }
+                    />
+                  ))
+              : undefined
+          }
+        />
+      ) : null}
     </div>
   );
 }
@@ -733,7 +1040,7 @@ function WorkflowRunAttentionCard({
   item: WorkflowRuntimeAttentionItem;
   itemCount: number;
   graph: WorkflowGraph;
-  onOpenNode: () => void;
+  onOpenNode: (trigger: HTMLElement) => void;
 }) {
   const { t } = useTranslation('common');
   const node = graph.nodes.find((candidate) => candidate.id === item.nodeId);
@@ -779,7 +1086,7 @@ function WorkflowRunAttentionCard({
             type="button"
             size="xs"
             className="mt-base"
-            onClick={onOpenNode}
+            onClick={(event) => onOpenNode(event.currentTarget)}
           >
             {t('workflow.runCanvas.openNode')}
           </Button>
@@ -806,6 +1113,9 @@ interface WorkflowRunNodeDetailsDialogProps {
   run: WorkflowRunResponse;
   execution: WorkflowNodeExecutionResponse | null;
   work: WorkflowNodeWorkView | null;
+  onOpenSubtask: (batchId: string, task: WorkflowSplitSubtaskView) => void;
+  onOpenSource: (source: WorkflowReuseView) => void;
+  onOpenCandidate: (candidate: ArenaComparisonCandidate) => void;
 }
 
 function WorkflowRunNodeDetailsDialog({
@@ -825,8 +1135,12 @@ function WorkflowRunNodeDetailsDialog({
   run,
   execution,
   work,
+  onOpenSubtask,
+  onOpenSource,
+  onOpenCandidate,
 }: WorkflowRunNodeDetailsDialogProps) {
   const { t } = useTranslation('common');
+  const hostId = useHostId();
   if (!node) return null;
 
   const actionGate = getWorkflowNodeActionGate(work);
@@ -834,7 +1148,13 @@ function WorkflowRunNodeDetailsDialog({
   const workspaceHref = buildRunWorkspaceHref(projectId, run);
   const sessionHref =
     taskTarget?.kind === 'agent-session'
-      ? buildWorkspaceSessionHref(workspaceHref, taskTarget.sessionId)
+      ? buildWorkflowConversationHref({
+          hostId,
+          projectId,
+          taskId: run.task_id,
+          workspaceId: run.workspace_id,
+          sessionId: taskTarget.sessionId,
+        })
       : null;
   const statusLabel = work
     ? t(`workflow.nodeStatus.${workflowNodeStatusKey(work.status)}`)
@@ -865,9 +1185,9 @@ function WorkflowRunNodeDetailsDialog({
       }}
       portal={false}
       autoFocus={false}
-      restoreFocus
+      restoreFocus={false}
       closeLabel={t('workflow.runCanvas.closeNodeDetails')}
-      className="absolute bottom-6 right-6 top-6 w-[min(440px,calc(100vw-3rem))] max-md:inset-0 max-md:w-full max-md:max-w-none max-md:rounded-none"
+      className="absolute bottom-6 right-6 top-6 [--vk-floating-panel-width:440px] !max-w-[calc(100%_-_3rem)] max-md:inset-0 max-md:[--vk-floating-panel-width:100%] max-md:!max-w-none max-md:rounded-none"
       contentClassName="flex min-h-0 flex-col overflow-hidden"
       data-testid="workflow-run-node-details"
     >
@@ -900,6 +1220,7 @@ function WorkflowRunNodeDetailsDialog({
             projectId={projectId}
             run={run}
             workspaceHref={workspaceHref}
+            onOpenSubtask={(task) => onOpenSubtask(batch.id, task)}
           />
         ))}
 
@@ -927,6 +1248,19 @@ function WorkflowRunNodeDetailsDialog({
               {waitingPrompt}
             </p>
           </section>
+        ) : null}
+
+        {node.type === 'arena' && execution && taskTarget?.kind === 'arena' ? (
+          <WorkflowArenaWinnerPanel
+            arenaGroupId={taskTarget.arenaGroupId}
+            taskId={run.task_id}
+            nodeId={node.id}
+            nodeExecutionId={execution.id}
+            projectId={projectId}
+            runId={run.id}
+            onOpenCandidate={onOpenCandidate}
+            allowWinnerSelection={actionGate.canSelectArenaWinner}
+          />
         ) : null}
 
         {error ? (
@@ -993,6 +1327,14 @@ function WorkflowRunNodeDetailsDialog({
                       </MetadataRow>
                     </div>
                   </details>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => onOpenSource(result)}
+                  >
+                    {t('workflow.conversation.openSource')}
+                  </Button>
                 </article>
               ))}
             </div>

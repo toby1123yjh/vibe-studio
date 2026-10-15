@@ -48,12 +48,17 @@ import { ScriptFixerDialog } from '@/shared/dialogs/scripts/ScriptFixerDialog';
 import { useWorkflowNotifications } from '@/shared/hooks/useWorkflowManagement';
 import { workflowNotificationEntries } from '@/features/workflow/model/workflowNotifications';
 import { Button } from '@vibe/ui/components/Button';
+import type { WorkspaceConversationViewState } from '../model/conversationViewState';
 
 interface ConversationListProps {
   attempt: WorkspaceWithSession;
   repos?: RepoWithTargetBranch[];
   onAtBottomChange?: (atBottom: boolean) => void;
   sessionScopeId?: string;
+  initialViewState?: WorkspaceConversationViewState;
+  onViewStateChange?: (state: WorkspaceConversationViewState) => void;
+  showScriptSetup?: boolean;
+  readOnly?: boolean;
 }
 
 export interface ConversationListHandle {
@@ -72,7 +77,8 @@ function renderRowContent(
   entry: DisplayEntry,
   attempt: WorkspaceWithSession,
   resetAction: UseResetProcessResult,
-  repos: RepoWithTargetBranch[]
+  repos: RepoWithTargetBranch[],
+  readOnly: boolean
 ): React.ReactNode {
   if (isAggregatedGroup(entry)) {
     return (
@@ -87,6 +93,7 @@ function renderRowContent(
         workspaceWithSession={attempt}
         resetAction={resetAction}
         repos={repos}
+        readOnly={readOnly}
       />
     );
   }
@@ -104,6 +111,7 @@ function renderRowContent(
         workspaceWithSession={attempt}
         resetAction={resetAction}
         repos={repos}
+        readOnly={readOnly}
       />
     );
   }
@@ -121,6 +129,7 @@ function renderRowContent(
         workspaceWithSession={attempt}
         resetAction={resetAction}
         repos={repos}
+        readOnly={readOnly}
       />
     );
   }
@@ -138,6 +147,7 @@ function renderRowContent(
         workspaceWithSession={attempt}
         resetAction={resetAction}
         repos={repos}
+        readOnly={readOnly}
       />
     );
   }
@@ -163,6 +173,7 @@ function renderRowContent(
         workspaceWithSession={attempt}
         resetAction={resetAction}
         repos={repos}
+        readOnly={readOnly}
       />
     );
   }
@@ -174,10 +185,23 @@ export const ConversationList = forwardRef<
   ConversationListHandle,
   ConversationListProps
 >(function ConversationList(
-  { attempt, repos: reposProp = [], onAtBottomChange, sessionScopeId },
+  {
+    attempt,
+    repos: reposProp = [],
+    onAtBottomChange,
+    sessionScopeId,
+    initialViewState,
+    onViewStateChange,
+    showScriptSetup = true,
+    readOnly = false,
+  },
   ref
 ) {
   const { t } = useTranslation('common');
+  const savedViewRef = useRef(initialViewState);
+  const reportViewRef = useRef(onViewStateChange);
+  reportViewRef.current = onViewStateChange;
+  const viewRestoredRef = useRef(!initialViewState);
   const { context: workflowContext, notifications: workflowNotifications } =
     useWorkflowNotifications(attempt.session?.id);
   const workflowSystemEntries = useMemo(
@@ -274,7 +298,7 @@ export const ConversationList = forwardRef<
   // Handlers to open script fixer dialog for setup/cleanup scripts
   const handleConfigureSetup = useCallback(() => {
     const currentRepos = reposRef.current;
-    if (currentRepos.length === 0) return;
+    if (readOnly || currentRepos.length === 0) return;
 
     ScriptFixerDialog.show({
       scriptType: 'setup',
@@ -282,11 +306,11 @@ export const ConversationList = forwardRef<
       workspaceId: attempt.id,
       sessionId: attempt.session?.id,
     });
-  }, [attempt.id, attempt.session?.id]);
+  }, [attempt.id, attempt.session?.id, readOnly]);
 
   const handleConfigureCleanup = useCallback(() => {
     const currentRepos = reposRef.current;
-    if (currentRepos.length === 0) return;
+    if (readOnly || currentRepos.length === 0) return;
 
     ScriptFixerDialog.show({
       scriptType: 'cleanup',
@@ -294,10 +318,10 @@ export const ConversationList = forwardRef<
       workspaceId: attempt.id,
       sessionId: attempt.session?.id,
     });
-  }, [attempt.id, attempt.session?.id]);
+  }, [attempt.id, attempt.session?.id, readOnly]);
 
   // Determine if configure buttons should be shown
-  const canConfigure = repos.length > 0;
+  const canConfigure = !readOnly && repos.length > 0;
 
   useEffect(() => {
     if (rafIdRef.current !== null) {
@@ -629,6 +653,22 @@ export const ConversationList = forwardRef<
     [conversationVirtualizer]
   );
 
+  const restoreInitialPosition = useCallback(() => {
+    const saved = savedViewRef.current;
+    const element = tanstackScrollRef.current;
+    if (!saved || !element) return false;
+    if (!viewRestoredRef.current) {
+      if (saved.atBottom) {
+        conversationVirtualizer.scrollToBottom('auto');
+      } else {
+        conversationVirtualizer.releaseBottomLock();
+        element.scrollTop = saved.scrollTop;
+      }
+      viewRestoredRef.current = true;
+    }
+    return true;
+  }, [conversationVirtualizer]);
+
   const scrollExecutor = useScrollCommandExecutor({
     virtualizer: conversationVirtualizer.virtualizer,
     itemCount: conversationRows.length,
@@ -636,6 +676,7 @@ export const ConversationList = forwardRef<
     checkIsAtBottom: conversationVirtualizer.checkIsAtBottom,
     scrollToBottom: scrollToBottomAndClearSpacer,
     scrollToAbsoluteIndex,
+    restoreInitialPosition,
   });
   scrollOnEntriesChangedRef.current = scrollExecutor.onEntriesChanged;
 
@@ -644,8 +685,9 @@ export const ConversationList = forwardRef<
 
   // Show placeholders only if script not configured AND not already run AND first turn
   const showSetupPlaceholder =
-    !hasSetupScript && !hasSetupScriptRun && hasEntries;
+    showScriptSetup && !hasSetupScript && !hasSetupScriptRun && hasEntries;
   const showCleanupPlaceholder =
+    showScriptSetup &&
     !hasCleanupScript &&
     !hasCleanupScriptRun &&
     !hasRunningProcess &&
@@ -831,6 +873,27 @@ export const ConversationList = forwardRef<
 
   const { virtualItems, totalSize, measureElement } = conversationVirtualizer;
 
+  const canReportViewRef = useRef(false);
+  canReportViewRef.current =
+    !loading && !isLoadingHistory && viewRestoredRef.current;
+  useEffect(() => {
+    const element = tanstackScrollRef.current;
+    if (!element) return;
+    const report = () => {
+      if (!canReportViewRef.current) return;
+      reportViewRef.current?.({
+        scrollTop: element.scrollTop,
+        atBottom:
+          element.scrollHeight - element.clientHeight - element.scrollTop < 48,
+      });
+    };
+    element.addEventListener('scroll', report, { passive: true });
+    return () => {
+      report();
+      element.removeEventListener('scroll', report);
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
       clearPendingInteractionAnchor();
@@ -949,7 +1012,13 @@ export const ConversationList = forwardRef<
                       transform: `translateY(${virtualItem.start}px)`,
                     }}
                   >
-                    {renderRowContent(row.entry, attempt, resetAction, repos)}
+                    {renderRowContent(
+                      row.entry,
+                      attempt,
+                      resetAction,
+                      repos,
+                      readOnly
+                    )}
                   </div>
                 );
               })}
@@ -964,7 +1033,13 @@ export const ConversationList = forwardRef<
                 data-row-index={rowIndex}
                 data-semantic-key={row.semanticKey}
               >
-                {renderRowContent(row.entry, attempt, resetAction, repos)}
+                {renderRowContent(
+                  row.entry,
+                  attempt,
+                  resetAction,
+                  repos,
+                  readOnly
+                )}
               </div>
             );
           })}

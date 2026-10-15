@@ -5,6 +5,7 @@ export default defineConfig({
   testMatch: [
     "workflow-runtime-model.spec.ts",
     "workflow-file-driven-model.spec.ts",
+    "workflow-conversation-model.spec.ts",
   ],
   outputDir: `${process.cwd()}/test-results/workflow-runtime-model`,
   workers: 1,

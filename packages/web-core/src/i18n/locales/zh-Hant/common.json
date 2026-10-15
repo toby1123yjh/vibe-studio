@@ -467,6 +467,30 @@
     }
   },
   "workflow": {
+    "conversation": {
+      "deliverables": "交付物 {{count}}",
+      "backToConversation": "返回",
+      "backToWork": "返回工作清單",
+      "backToCandidates": "返回候選組",
+      "chooseWork": "選擇工作",
+      "sourceReadOnly": "來源 Run {{run}} · 唯讀",
+      "waitingSession": "此工作尚未綁定會話，可能仍在等待上游、分配或啟動執行。",
+      "sourceFailed": "無法載入來源執行，未使用其他會話代替。",
+      "contextFailed": "無法載入檔案引用。",
+      "noOutputs": "尚無已確認的成果檔案。",
+      "candidateFilesHint": "候選檔案屬於它自己的工作空間，可從會話開啟檔案，或在完整會話中查看該工作空間。",
+      "fileSource": "{{node}} · Run {{run}}",
+      "openSource": "查看來源會話",
+      "loading": "正在載入會話…",
+      "unavailable": "會話暫不可用",
+      "missingBinding": "此工作空間中找不到綁定的會話。",
+      "roles": {
+        "output": "本工作交付",
+        "input": "輸入材料",
+        "control": "分工材料",
+        "handoff": "交接"
+      }
+    },
     "entry": {
       "title": "工作流執行",
       "subtitle": "先設計任務執行，再執行智能體",

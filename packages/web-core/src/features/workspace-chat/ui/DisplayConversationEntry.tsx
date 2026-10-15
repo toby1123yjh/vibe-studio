@@ -84,6 +84,7 @@ type Props = {
   canonicalActive?: boolean;
   workspaceWithSession: WorkspaceWithSession;
   resetAction: UseResetProcessResult;
+  readOnly?: boolean;
   repos: RepoWithTargetBranch[];
   entry: NormalizedEntry | null;
   aggregatedGroup: AggregatedPatchGroup | null;
@@ -367,6 +368,7 @@ function renderToolUseEntry(
         workspaceId={workspaceWithSession?.id}
         sessionId={sessionId}
         repos={repos}
+        readOnly={props.readOnly ?? false}
       />
     );
   }
@@ -507,6 +509,7 @@ function DisplayConversationEntry(props: Props) {
           executionProcessId={executionProcessId}
           executorCanFork={executorCanFork}
           resetAction={resetAction}
+          readOnly={props.readOnly ?? false}
         />
       );
 
@@ -904,6 +907,7 @@ function UserMessageEntry({
   executionProcessId,
   executorCanFork,
   resetAction,
+  readOnly,
 }: {
   content: string;
   expansionKey: string;
@@ -912,6 +916,7 @@ function UserMessageEntry({
   executionProcessId: string | undefined;
   executorCanFork: boolean;
   resetAction: UseResetProcessResult;
+  readOnly: boolean;
 }) {
   const [expanded, toggle] = usePersistedExpanded(`user:${expansionKey}`, true);
   const { startEdit, isEntryGreyed, isInEditMode } = useMessageEditContext();
@@ -920,20 +925,20 @@ function UserMessageEntry({
   const isGreyed = isEntryGreyed(expansionKey);
 
   const handleEdit = () => {
-    if (executionProcessId) {
+    if (!readOnly && executionProcessId) {
       startEdit(expansionKey, executionProcessId, content);
     }
   };
 
   const handleReset = () => {
-    if (executionProcessId) {
+    if (!readOnly && executionProcessId) {
       resetProcess(executionProcessId);
     }
   };
 
   // Only show actions when we have a process ID and not already in edit mode
   const canShowActions =
-    !!executionProcessId && !isInEditMode && !isResetPending;
+    !readOnly && !!executionProcessId && !isInEditMode && !isResetPending;
   // Edit/retry/reset is not supported when the executor doesn't have the fork capability
   const canEdit = canShowActions && executorCanFork;
   // Only show reset if we have a process ID, not in edit mode, and not pending
@@ -1266,6 +1271,7 @@ function ScriptEntryWithFix({
   workspaceId,
   sessionId,
   repos,
+  readOnly,
 }: {
   title: string;
   command?: string;
@@ -1276,6 +1282,7 @@ function ScriptEntryWithFix({
   workspaceId: string | undefined;
   sessionId: string | undefined;
   repos: RepoWithTargetBranch[];
+  readOnly: boolean;
 }) {
   const { viewProcessInPanel } = useLogsPanelActions();
 
@@ -1284,7 +1291,7 @@ function ScriptEntryWithFix({
 
   const handleFix = useCallback(() => {
     const currentRepos = reposRef.current;
-    if (!workspaceId || currentRepos.length === 0) return;
+    if (readOnly || !workspaceId || currentRepos.length === 0) return;
 
     // Determine script type based on title
     const scriptType: ScriptType =
@@ -1303,10 +1310,10 @@ function ScriptEntryWithFix({
       sessionId,
       initialRepoId: currentRepos.length === 1 ? currentRepos[0].id : undefined,
     });
-  }, [title, workspaceId, sessionId]);
+  }, [readOnly, title, workspaceId, sessionId]);
 
   // Only show fix button if we have the necessary context
-  const canFix = workspaceId && repos.length > 0;
+  const canFix = !readOnly && workspaceId && repos.length > 0;
 
   return (
     <ChatScriptEntry

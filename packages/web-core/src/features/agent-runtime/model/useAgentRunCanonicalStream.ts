@@ -5,6 +5,7 @@ import type {
   RunState,
 } from 'shared/types';
 import { openLocalApiWebSocket } from '@/shared/lib/localApiTransport';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 import {
   emptyCanonicalAgentTimeline,
   isCanonicalAgentRunTerminal,
@@ -39,6 +40,7 @@ export function useAgentRunCanonicalStream(
   agentRunId: string | undefined,
   enabled = true
 ): UseAgentRunCanonicalStreamResult {
+  const hostId = useHostId();
   const [timeline, setTimeline] = useState<CanonicalAgentTimeline | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -139,7 +141,10 @@ export function useAgentRunCanonicalStream(
       }`;
 
       try {
-        const socket = await openLocalApiWebSocket(endpoint);
+        const socket = await openLocalApiWebSocket(endpoint, {
+          hostScope: 'explicit',
+          hostId,
+        });
         if (cancelled) {
           socket.close();
           return;
@@ -223,7 +228,7 @@ export function useAgentRunCanonicalStream(
         retryTimerRef.current = null;
       }
     };
-  }, [agentRunId, enabled]);
+  }, [agentRunId, enabled, hostId]);
 
   return { timeline, isConnected, isInitialized, error };
 }

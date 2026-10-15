@@ -384,9 +384,13 @@ export const sessionsApi = {
     return handleApiResponse<ExecutorConfig | null>(response);
   },
 
-  getByWorkspace: async (workspaceId: string): Promise<Session[]> => {
-    const response = await makeRequest(
-      `/api/sessions?workspace_id=${workspaceId}`
+  getByWorkspace: async (
+    workspaceId: string,
+    hostId?: string | null
+  ): Promise<Session[]> => {
+    const response = await makeHostAwareRequest(
+      `/api/sessions?workspace_id=${workspaceId}`,
+      hostId
     );
     return handleApiResponse<Session[]>(response);
   },
@@ -534,8 +538,14 @@ export const workspacesApi = {
     return handleApiResponse<Workspace[]>(response);
   },
 
-  get: async (workspaceId: string): Promise<Workspace> => {
-    const response = await makeRequest(`/api/workspaces/${workspaceId}`);
+  get: async (
+    workspaceId: string,
+    hostId?: string | null
+  ): Promise<Workspace> => {
+    const response = await makeHostAwareRequest(
+      `/api/workspaces/${workspaceId}`,
+      hostId
+    );
     return handleApiResponse<Workspace>(response);
   },
 
@@ -643,15 +653,25 @@ export const workspacesApi = {
     return handleApiResponse<{ workspace_path: string }>(response);
   },
 
-  getBranchStatus: async (workspaceId: string): Promise<RepoBranchStatus[]> => {
-    const response = await makeRequest(
-      `/api/workspaces/${workspaceId}/git/status`
+  getBranchStatus: async (
+    workspaceId: string,
+    hostId?: string | null
+  ): Promise<RepoBranchStatus[]> => {
+    const response = await makeHostAwareRequest(
+      `/api/workspaces/${workspaceId}/git/status`,
+      hostId
     );
     return handleApiResponse<RepoBranchStatus[]>(response);
   },
 
-  getRepos: async (workspaceId: string): Promise<RepoWithTargetBranch[]> => {
-    const response = await makeRequest(`/api/workspaces/${workspaceId}/repos`);
+  getRepos: async (
+    workspaceId: string,
+    hostId?: string | null
+  ): Promise<RepoWithTargetBranch[]> => {
+    const response = await makeHostAwareRequest(
+      `/api/workspaces/${workspaceId}/repos`,
+      hostId
+    );
     return handleApiResponse<RepoWithTargetBranch[]>(response);
   },
 
@@ -1752,22 +1772,34 @@ export const queueApi = {
    */
   queue: async (
     sessionId: string,
-    data: DraftFollowUpData
+    data: DraftFollowUpData,
+    hostId?: string | null
   ): Promise<QueueStatus> => {
-    const response = await makeRequest(`/api/sessions/${sessionId}/queue`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    const response = await makeHostAwareRequest(
+      `/api/sessions/${sessionId}/queue`,
+      hostId,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
     return handleApiResponse<QueueStatus>(response);
   },
 
   /**
    * Cancel a queued follow-up message
    */
-  cancel: async (sessionId: string): Promise<QueueStatus> => {
-    const response = await makeRequest(`/api/sessions/${sessionId}/queue`, {
-      method: 'DELETE',
-    });
+  cancel: async (
+    sessionId: string,
+    hostId?: string | null
+  ): Promise<QueueStatus> => {
+    const response = await makeHostAwareRequest(
+      `/api/sessions/${sessionId}/queue`,
+      hostId,
+      {
+        method: 'DELETE',
+      }
+    );
     return handleApiResponse<QueueStatus>(response);
   },
 

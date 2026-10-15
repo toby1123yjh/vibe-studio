@@ -493,6 +493,30 @@
     }
   },
   "workflow": {
+    "conversation": {
+      "deliverables": "Deliverables {{count}}",
+      "backToConversation": "Back",
+      "backToWork": "Back to work list",
+      "backToCandidates": "Back to candidates",
+      "chooseWork": "Choose work",
+      "sourceReadOnly": "Source run {{run}} · read only",
+      "waitingSession": "This work has no bound conversation yet. It may be waiting for upstream work, assignment, or execution.",
+      "sourceFailed": "Could not load the source run. The source conversation has not been substituted.",
+      "contextFailed": "Could not load file references.",
+      "noOutputs": "No accepted output files yet.",
+      "candidateFilesHint": "Candidate files belong to its own workspace. Open files from the conversation, or use the full conversation to inspect that workspace.",
+      "fileSource": "{{node}} · run {{run}}",
+      "openSource": "View source conversation",
+      "loading": "Loading conversation…",
+      "unavailable": "Conversation is unavailable",
+      "missingBinding": "The bound session was not found in this workspace.",
+      "roles": {
+        "output": "Outputs",
+        "input": "Inputs",
+        "control": "Work instructions",
+        "handoff": "Handoffs"
+      }
+    },
     "entry": {
       "title": "Workflow attempt",
       "subtitle": "Design the task attempt before running agents",

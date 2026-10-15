@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
 import { useDropzone } from 'react-dropzone';
@@ -10,13 +18,14 @@ import {
   type ExecutorConfig,
   type SelectedSkill,
   type ResumableAgentSession,
+  type Workspace,
 } from 'shared/types';
 import { AgentIcon } from '@/shared/components/AgentIcon';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { workspaceSessionKeys } from '@/shared/hooks/workspaceSessionKeys';
 import { useWorkspaceExecution } from '@/shared/hooks/useWorkspaceExecution';
 import { useWorkspaceRepo } from '@/shared/hooks/useWorkspaceRepo';
-import { useWorkspace } from '@/shared/hooks/useWorkspace';
+import { useWorkspaceRecord } from '@/shared/hooks/useWorkspaceRecord';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
 import { useApprovalFeedbackOptional } from '../model/contexts/ApprovalFeedbackContext';
@@ -27,7 +36,7 @@ import {
   useTokenUsage,
 } from '../model/contexts/EntriesContext';
 import { useReviewOptional } from '@/shared/hooks/useReview';
-import { useActions } from '@/shared/hooks/useActions';
+import { ActionsContext } from '@/shared/hooks/useActions';
 import { useTodos } from '../model/hooks/useTodos';
 import { useSessionExecutorConfig } from '../model/hooks/useSessionExecutorConfig';
 import { useSessionMessageEditor } from '../model/hooks/useSessionMessageEditor';
@@ -37,7 +46,6 @@ import { useSessionAttachments } from '../model/hooks/useSessionAttachments';
 import { useMessageEditRetry } from '../model/hooks/useMessageEditRetry';
 import { useAgentProviderPolicy } from '@/shared/hooks/useAgentProviderPolicy';
 import { useBranchStatus } from '@/shared/hooks/useBranchStatus';
-import { useWorkspaceBranch } from '../model/hooks/useWorkspaceBranch';
 import { useApprovalMutation } from '../model/hooks/useApprovalMutation';
 import { useWorkspacePendingApproval } from '../model/hooks/useWorkspacePendingApproval';
 import { useIsMobile } from '@/shared/hooks/useIsMobile';
@@ -62,15 +70,7 @@ import {
 } from '@/shared/stores/useUiPreferencesStore';
 import { useInspectModeStore } from '../model/store/useInspectModeStore';
 import { Actions } from '@/shared/actions';
-import {
-  isSpecialIcon,
-  getActionTooltip,
-  isActionEnabled,
-  isActionVisible,
-  type ActionDefinition,
-} from '@/shared/types/actions';
 import { useSettingsNavigation } from '@/shared/hooks/useSettingsNavigation';
-import { useActionVisibilityContext } from '@/shared/hooks/useActionVisibilityContext';
 import { PrCommentsDialog } from '@/shared/dialogs/tasks/PrCommentsDialog';
 import type { NormalizedComment } from '@vibe/ui/components/pr-comment-node';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
@@ -87,6 +87,8 @@ import {
   isSessionDraftSubmissionCurrent,
   snapshotSessionDraft,
 } from '@/features/agent-workbench/model/sessionDraft';
+
+const EMPTY_DIFF_PATHS = new Set<string>();
 
 /** Compute execution status from boolean flags */
 function computeExecutionStatus(params: {
@@ -133,6 +135,9 @@ interface SharedProps {
   showOpenWorkspaceButton: boolean;
   /** Default executor config supplied by an embedding workflow/node context. */
   preferredExecutorConfig?: ExecutorConfig | null;
+  presentation?: 'full-page' | 'embedded';
+  workspace?: Workspace | null;
+  diffPaths?: Set<string>;
 }
 
 /** Props for existing session mode */
@@ -182,6 +187,9 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     disableViewCode = false,
     showOpenWorkspaceButton,
     preferredExecutorConfig,
+    presentation = 'full-page',
+    workspace: explicitWorkspace,
+    diffPaths,
   } = props;
 
   // Extract mode-specific values
@@ -250,8 +258,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   );
   const appNavigation = useAppNavigation();
 
-  const { executeAction } = useActions();
-  const actionCtx = useActionVisibilityContext();
+  const actionsContext = useContext(ActionsContext);
   const { rightMainPanelMode, setRightMainPanelMode } =
     useWorkspacePanelState(workspaceId);
 
@@ -340,7 +347,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
 
   // Get repos for file search
   const { repos } = useWorkspaceRepo(workspaceId);
-  const workspaceQuery = useWorkspace(workspaceId);
+  const workspaceQuery = useWorkspaceRecord(workspaceId);
+  const workspace = explicitWorkspace ?? workspaceQuery.data;
   const repoIds = repos.map((r) => r.id);
   const resumeScopePath = useMemo(
     () =>
@@ -415,7 +423,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   }, [branchStatus]);
 
   // Get workspace branch for conflict resolution dialog
-  const { branch: attemptBranch } = useWorkspaceBranch(workspaceId);
+  const attemptBranch = workspace?.branch ?? null;
 
   // Find the first repo with conflicts (for the resolve dialog)
   const repoWithConflicts = useMemo(
@@ -457,6 +465,17 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   // Ref to access current message value for attachment handler
   const localMessageRef = useRef(localMessage);
   const draftScope = JSON.stringify([hostId, scratchId]);
+  const draftOwnerRef = useRef({ scope: draftScope, active: true });
+  if (draftOwnerRef.current.scope !== draftScope) {
+    draftOwnerRef.current = { scope: draftScope, active: true };
+  }
+  useLayoutEffect(() => {
+    const owner = draftOwnerRef.current;
+    owner.active = true;
+    return () => {
+      owner.active = false;
+    };
+  }, [draftScope]);
   const draftIdentityRef = useRef({
     sessionId: draftScope,
     revision: 0,
@@ -490,7 +509,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   );
 
   useEffect(() => {
-    if (pendingComponentMarkdown) {
+    if (presentation === 'full-page' && pendingComponentMarkdown) {
       handleInsertMarkdown(pendingComponentMarkdown);
       clearPendingComponentMarkdown();
     }
@@ -498,6 +517,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     pendingComponentMarkdown,
     handleInsertMarkdown,
     clearPendingComponentMarkdown,
+    presentation,
   ]);
 
   const { uploadFiles, localAttachments, clearUploadedAttachments } =
@@ -614,6 +634,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
 
   const handleSend = useCallback(async () => {
     if (!executorConfig) return;
+    const owner = draftOwnerRef.current;
     const submittedMessage = localMessage;
     const submission = snapshotSessionDraft({
       sessionId: draftScope,
@@ -631,8 +652,10 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       resumeScopePath: resumeScopePath,
     });
     if (success) {
+      if (!owner.active || draftOwnerRef.current !== owner) return;
       // Refresh the canonical snapshot before deleting the submitted draft.
       if (sessionId) await refetchConfig();
+      if (!owner.active || draftOwnerRef.current !== owner) return;
       if (draftIdentityRef.current.sessionId !== submission.sessionId) return;
       cancelDebouncedSave();
       const currentMessage = localMessageRef.current;
@@ -713,6 +736,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   const handleQueueMessage = useCallback(async () => {
     // Allow queueing if there's a message OR review comments, and we have a config
     if ((!localMessage.trim() && !reviewMarkdown) || !executorConfig) return;
+    const owner = draftOwnerRef.current;
 
     const submittedMessage = localMessage;
     const submission = snapshotSessionDraft({
@@ -726,6 +750,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     await saveToScratch(submittedMessage, executorConfig);
     await queueMessage(prompt, executorConfig, selectedSkills);
 
+    if (!owner.active || draftOwnerRef.current !== owner) return;
     if (draftIdentityRef.current.sessionId !== submission.sessionId) return;
     const currentMessage = localMessageRef.current;
     if (
@@ -935,48 +960,30 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     }
   }, [workspaceId, repos, handleInsertMarkdown]);
 
-  // Toolbar actions handler
-  const handleToolbarAction = useCallback(
-    (action: ActionDefinition) => {
-      if (action.requiresTarget && workspaceId) {
-        executeAction(action, workspaceId);
-      } else {
-        executeAction(action);
-      }
-    },
-    [executeAction, workspaceId]
-  );
-
-  // Define which actions appear in the toolbar
-  const toolbarActionsList = useMemo(
-    () =>
-      [Actions.StartReview].filter((action) =>
-        isActionVisible(action, actionCtx)
-      ),
-    [actionCtx]
-  );
-
+  // The composer has one page-only action. Its explicit target is the same
+  // workspace as the session, independent of the page's selected workspace.
   const toolbarActionItems = useMemo(
     () =>
-      toolbarActionsList.flatMap((action) => {
-        if (isSpecialIcon(action.icon)) {
-          return [];
-        }
-
-        const label = action.label;
-
-        return [
-          {
-            id: action.id,
-            icon: action.icon,
-            label,
-            tooltip: getActionTooltip(action, actionCtx),
-            disabled: !isActionEnabled(action, actionCtx),
-            onClick: () => handleToolbarAction(action),
-          },
-        ];
-      }),
-    [toolbarActionsList, actionCtx, handleToolbarAction]
+      presentation !== 'embedded' && workspaceId && workspace && actionsContext
+        ? [
+            {
+              id: Actions.StartReview.id,
+              icon: Actions.StartReview.icon,
+              label: t('common:actions.startReview', {
+                defaultValue: 'Start review',
+              }),
+              tooltip: t('common:actions.startReviewDescription', {
+                defaultValue: 'Review changes with agent',
+              }),
+              onClick: () =>
+                void actionsContext.executeAction(
+                  Actions.StartReview,
+                  workspaceId
+                ),
+            },
+          ]
+        : [],
+    [presentation, workspaceId, workspace, actionsContext, t]
   );
 
   // Handle approve action
@@ -1214,20 +1221,32 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         onChange={onChange}
         onCmdEnter={onCmdEnter}
         disabled={disabled}
-        className="min-h-double max-h-[50vh] overflow-y-auto"
+        className={
+          presentation === 'embedded'
+            ? 'min-h-8 max-h-[min(160px,25vh)] overflow-y-auto'
+            : 'min-h-double max-h-[50vh] overflow-y-auto'
+        }
         repoIds={repoIds}
         executor={executor}
         selectedSkills={selectedSkills}
         onSelectedSkillsChange={setSelectedSkills}
         workspaceId={workspaceId}
         sessionId={sessionId}
+        diffPaths={diffPaths ?? EMPTY_DIFF_PATHS}
         autoFocus
         onPasteFiles={onPasteFiles}
         localAttachments={localAttachments}
         sendShortcut={config?.send_message_shortcut}
       />
     ),
-    [config?.send_message_shortcut, selectedSkills, sessionId, workspaceId]
+    [
+      config?.send_message_shortcut,
+      selectedSkills,
+      sessionId,
+      workspaceId,
+      presentation,
+      diffPaths,
+    ]
   );
 
   const resumePickerNode =
@@ -1332,6 +1351,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   return (
     <SessionChatBox<BaseCodingAgent>
       status={status}
+      compact={presentation === 'embedded'}
+      showSessionControls={presentation !== 'embedded'}
       isMobile={isMobile}
       onViewCode={disableViewCode ? undefined : handleViewCode}
       onOpenWorkspace={
@@ -1375,17 +1396,28 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         onSelectSession: onSelectSession ?? (() => {}),
         isInitialSendMode: isNewSessionMode,
         isNewSessionMode: needsExecutorSelection,
-        onNewSession: onStartNewSession,
-        onRenameSession: handleRenameSession,
+        onNewSession:
+          presentation === 'embedded' ? undefined : onStartNewSession,
+        onRenameSession:
+          presentation === 'embedded' ? undefined : handleRenameSession,
         onDeleteSession:
-          mode === 'existing-session' ? handleDeleteSession : undefined,
+          mode === 'existing-session' && presentation !== 'embedded'
+            ? handleDeleteSession
+            : undefined,
         deletingSessionId,
       }}
       toolbarActions={{
         items: toolbarActionItems,
       }}
       onPrCommentClick={
-        actionCtx.hasOpenPR ? handleInsertPrComments : undefined
+        presentation !== 'embedded' &&
+        branchStatus?.some((repo) =>
+          repo.merges?.some(
+            (merge) => merge.type === 'pr' && merge.pr_info.status === 'open'
+          )
+        )
+          ? handleInsertPrComments
+          : undefined
       }
       stats={{
         filesChanged,
@@ -1466,7 +1498,9 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       dropzone={{ getRootProps, getInputProps, isDragActive }}
       modelSelector={modelSelectorNode}
       resumeSelector={
-        needsExecutorSelection || configurationLocked
+        presentation === 'embedded' ||
+        needsExecutorSelection ||
+        configurationLocked
           ? undefined
           : resumePickerNode
       }

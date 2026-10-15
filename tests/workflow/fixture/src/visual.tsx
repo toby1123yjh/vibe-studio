@@ -16,6 +16,11 @@ import { WorkflowConfigurationFrame } from "@/features/workflow/ui/WorkflowConfi
 import { WorkflowRunCanvasTab } from "@/features/workflow/ui/WorkflowRunCanvasTab";
 import { WorkflowRunResult } from "@/features/workflow/ui/WorkflowRunResult";
 import {
+  createConversationFixtureRouter,
+  RouterProvider,
+  ScratchScopeFixture,
+} from "./conversation-support";
+import {
   getWorkflowNodeActionGate,
   getWorkflowNodeExecutionForWork,
   getWorkflowRuntimeView,
@@ -91,17 +96,26 @@ const fixtureGraph: WorkflowGraph = fileDriven
       ),
     }
   : graph;
-client.setQueryData(workflowTemplateQueryKeys.detail("visual-template"), {
-  id: "visual-template",
-  graph_json: JSON.stringify(fixtureGraph),
-});
+client.setQueryData(
+  workflowTemplateQueryKeys.detail(
+    "visual-template",
+    new URLSearchParams(location.search).get("host"),
+  ),
+  {
+    id: "visual-template",
+    graph_json: JSON.stringify(fixtureGraph),
+  },
+);
 
 // Navigation must never accidentally leave the isolated fixture or run an Agent.
 function unexpectedNavigation(): never {
   throw new Error("Visual fixture must not navigate to an execution");
 }
 const navigation: AppNavigation = {
-  resolveFromPath: () => null,
+  resolveFromPath: () => {
+    const hostId = new URLSearchParams(location.search).get("host");
+    return hostId ? { kind: "workspaces", hostId } : null;
+  },
   goToRoot: unexpectedNavigation,
   goToOnboarding: unexpectedNavigation,
   goToOnboardingSignIn: unexpectedNavigation,
@@ -374,12 +388,45 @@ function makeFileDrivenRun(): WorkflowRunResponse {
       ],
     },
   ];
+  // Match real runtime bindings: internal work shares a Node, not a Session.
+  const baseExecution = makeReusedRun().nodes[0];
+  run.nodes = [
+    {
+      ...baseExecution,
+      id: "split-execution",
+      run_id: run.id,
+      node_id: "plan",
+      node_type: "task_splitter",
+      session_id: null,
+    },
+    ...run.split_batches[0].subtasks
+      .filter((task) => task.node_execution_id && task.session_id)
+      .map((task) => ({
+        ...baseExecution,
+        id: task.node_execution_id!,
+        run_id: run.id,
+        node_id: task.node_id!,
+        session_id: task.session_id,
+        status:
+          task.state === "failed"
+            ? "failed"
+            : task.state === "succeeded"
+              ? "succeeded"
+              : "running",
+      })),
+  ];
   const view = run.runtime_view!;
   view.node_work = view.node_work.map((work) => ({
     ...work,
     orchestration_node_execution_id: `orchestration-${work.node_id}`,
     active_agent_run_id: work.node_id === "build" ? "analysis-run" : null,
   }));
+  if (new URLSearchParams(location.search).get("clone") === "1") {
+    run.split_batches[0].source_batch_id = "original-batch";
+    run.nodes = run.nodes.filter(
+      (execution) => execution.id !== "research-execution",
+    );
+  }
   return run;
 }
 
@@ -548,13 +595,21 @@ function Fixture() {
   );
 }
 
+const router = createConversationFixtureRouter(
+  new URLSearchParams(location.search).get("mode") === "scratch-scope" ? (
+    <ScratchScopeFixture />
+  ) : (
+    <ReactFlowProvider>
+      <Fixture />
+    </ReactFlowProvider>
+  ),
+);
+
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={client}>
     <AppNavigationProvider value={navigation}>
       <ThemeProvider initialTheme={ThemeMode.LIGHT}>
-        <ReactFlowProvider>
-          <Fixture />
-        </ReactFlowProvider>
+        <RouterProvider router={router} />
       </ThemeProvider>
     </AppNavigationProvider>
   </QueryClientProvider>,

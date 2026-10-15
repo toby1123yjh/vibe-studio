@@ -22,6 +22,9 @@ import {
 import { workflowNodeStatusKey } from './workflowI18n';
 import { WorkflowRunCanvasTab } from './WorkflowRunCanvasTab';
 import { WorkflowRunResult } from './WorkflowRunResult';
+import { WorkflowMainSessionButton } from './WorkflowMainSessionButton';
+import { useHostId } from '@/shared/providers/HostIdProvider';
+import type { WorkflowMainSessionView } from 'shared/types';
 
 export interface WorkflowRunPageProps {
   projectId: string;
@@ -32,6 +35,12 @@ type CancelSubmissionState = 'idle' | 'submitting' | 'awaiting-projection';
 
 export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
   const { t } = useTranslation('common');
+  const hostId = useHostId();
+  const [mainSessionRequest, setMainSessionRequest] = useState<{
+    scope: string;
+    prepared: WorkflowMainSessionView;
+    trigger: HTMLElement;
+  } | null>(null);
   const {
     data: run,
     isLoading,
@@ -192,6 +201,19 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          <WorkflowMainSessionButton
+            key={`${hostId}:${run.id}`}
+            projectId={projectId}
+            workflowId={run.workflow_id}
+            taskId={run.task_id}
+            onPrepared={(prepared, trigger) =>
+              setMainSessionRequest({
+                scope: `${hostId}:${run.id}`,
+                prepared,
+                trigger,
+              })
+            }
+          />
           <WorkflowRunResult key={run.id} run={run} projectId={projectId} />
           {showCancel ? (
             <Button
@@ -231,7 +253,21 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
           />
         ) : null}
 
-        <WorkflowRunCanvasTab projectId={projectId} run={run} />
+        <WorkflowRunCanvasTab
+          key={`${hostId}:${run.id}`}
+          projectId={projectId}
+          run={run}
+          mainSessionRequest={
+            mainSessionRequest?.scope === `${hostId}:${run.id}`
+              ? mainSessionRequest.prepared
+              : null
+          }
+          mainSessionTrigger={
+            mainSessionRequest?.scope === `${hostId}:${run.id}`
+              ? mainSessionRequest.trigger
+              : null
+          }
+        />
       </div>
     </div>
   );

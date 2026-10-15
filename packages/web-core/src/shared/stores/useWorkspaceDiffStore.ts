@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { createContext, useContext } from 'react';
 import type { Diff, DiffStats, UnifiedPrComment } from 'shared/types';
 import type { NormalizedGitHubComment } from '@/shared/hooks/useWorkspaceContext';
 
@@ -86,7 +87,19 @@ export const useDiffs = () => useWorkspaceDiffStore((s) => s.diffs);
 
 export const useDiffError = () => useWorkspaceDiffStore((s) => s.diffError);
 
-export const useDiffPaths = () => useWorkspaceDiffStore((s) => s.diffPaths);
+const WorkspaceDiffPathsContext = createContext<Set<string> | undefined>(
+  undefined
+);
+
+/** A read-only scope for embedded messages; it never mutates the page store. */
+export const WorkspaceDiffPathsProvider = WorkspaceDiffPathsContext.Provider;
+
+export const useDiffPaths = (scopedPaths?: Set<string>) => {
+  const contextPaths = useContext(WorkspaceDiffPathsContext);
+  return useWorkspaceDiffStore(
+    (s) => scopedPaths ?? contextPaths ?? s.diffPaths
+  );
+};
 
 export const useDiffStats = () => useWorkspaceDiffStore((s) => s.diffStats);
 

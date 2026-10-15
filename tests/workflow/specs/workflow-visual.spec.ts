@@ -1,4 +1,14 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  mockWorkflowConversations,
+  mockWorkflowFileContext,
+} from "../support/conversation-api";
+
+async function expandDeliverables(page: Page) {
+  const toggle = page.getByTestId("workflow-deliverables-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+}
 
 function canvas(page: Page) {
   return page.getByTestId("visual-canvas");
@@ -48,6 +58,7 @@ test.beforeEach(async ({ page }) => {
   // a real backend; fonts are irrelevant to these deterministic style checks.
   await page.route("**/api/**", (route) => route.abort());
   await page.route("https://fonts.googleapis.com/**", (route) => route.abort());
+  await mockWorkflowFileContext(page);
 });
 
 test("uses one quiet background and readable cards in both themes without resetting the graph", async ({
@@ -222,6 +233,7 @@ test("reused results stay read-only, identify every source iteration, and preser
     .getByRole("button", { name: "Rework with reused results" })
     .click();
   await expect(plan).toContainText("Reused");
+  await plan.click();
   expect(await viewportTransform(page)).toBe(transform);
   await expect(
     canvas(page).locator('.react-flow__node[data-id="plan"]'),
@@ -314,6 +326,7 @@ test("explicit fit animates smoothly and reacts to a reduced-motion preference c
 test("split progress retains failures, independent work, and the precise execution sessions", async ({
   page,
 }) => {
+  await mockWorkflowConversations(page);
   const mutations: string[] = [];
   page.on("request", (request) => {
     if (request.method() !== "GET" && request.url().includes("/api/")) {
@@ -324,6 +337,7 @@ test("split progress retains failures, independent work, and the precise executi
   const splitter = page.getByTestId("workflow-run-node-plan");
   await expect(splitter).toContainText("1 / 4 completed");
   await splitter.click();
+  await expandDeliverables(page);
   const batch = page.getByTestId("workflow-split-batch");
   await expect(batch.getByTestId("workflow-split-progress")).toContainText(
     "1 / 4 completed",
@@ -344,21 +358,51 @@ test("split progress retains failures, independent work, and the precise executi
   await expect(tasks.nth(1)).toContainText("Source material was removed");
   await expect(tasks.nth(2)).toContainText("Running");
   await expect(tasks.nth(3)).toContainText("Dependency not met");
-  const workspaceHref =
-    "/projects/visual-project/tasks/visual-issue/workspaces/visual-workspace";
   for (const [index, session] of [
     "research-session",
     "review-session",
     "analysis-session",
   ].entries()) {
+    await tasks
+      .nth(index)
+      .getByRole("button", { name: "Open execution session" })
+      .click();
     await expect(
-      tasks.nth(index).getByRole("link", { name: "Open execution session" }),
-    ).toHaveAttribute("href", `${workspaceHref}?session_id=${session}`);
+      page.getByTestId("workflow-conversation-panel"),
+    ).toHaveAttribute("data-session-id", session);
+    await page
+      .getByRole("button", { name: "Back to work list", exact: true })
+      .click();
+    await expandDeliverables(page);
   }
-  await expect(tasks.nth(3).getByRole("link")).toHaveCount(0);
+  await tasks
+    .nth(3)
+    .getByRole("button", { name: "Open execution session" })
+    .click();
+  await expect(page.getByTestId("workflow-conversation-waiting")).toBeVisible();
+  await expect(page.getByTestId("workflow-conversation-panel")).toHaveAttribute(
+    "data-session-id",
+    "",
+  );
+  await page
+    .getByRole("button", { name: "Back to work list", exact: true })
+    .click();
+  await expandDeliverables(page);
   await expect(
-    batch.getByRole("link", { name: "Open main session" }),
-  ).toHaveAttribute("href", `${workspaceHref}?session_id=main-session`);
+    batch.getByRole("button", { name: "Open main session" }),
+  ).toBeVisible();
+  await batch.getByRole("button", { name: "Open main session" }).click();
+  await expect(page.getByTestId("workflow-conversation-panel")).toHaveAttribute(
+    "data-session-id",
+    "main-session",
+  );
+  await expect(page.getByTestId("workflow-conversation-panel")).toContainText(
+    "Original reply for main-session",
+  );
+  await page
+    .getByRole("button", { name: "Back to work list", exact: true })
+    .click();
+  await expandDeliverables(page);
   expect(mutations).toEqual([]);
 
   await page.getByRole("button", { name: "Await dispatch" }).click();
@@ -402,12 +446,13 @@ test("workflow file previews fetch current content lazily and safely encode down
     },
   );
   await page.goto("/visual.html?mode=file-run");
-  await page.getByTestId("workflow-run-node-build").click();
+  await page.getByTestId("workflow-run-node-plan").click();
+  await expandDeliverables(page);
   const task = page.getByTestId("workflow-split-subtask").first();
   await expect(task).toContainText(filePath);
   expect(paths).toEqual([]);
   await task.getByRole("button", { name: filePath, exact: true }).click();
-  const preview = page.getByRole("dialog", { name: filePath, exact: true });
+  const preview = page.getByTestId("workflow-file-inline-preview");
   await expect(
     preview.getByRole("heading", { name: "Research delivered" }),
   ).toBeVisible();
@@ -420,7 +465,7 @@ test("workflow file previews fetch current content lazily and safely encode down
   expect(rawUrl.searchParams.get("path")).toBe(filePath);
   expect(href).not.toContain(" ");
   await expect(download).toHaveAttribute("download", "");
-  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await preview.getByRole("button", { name: "Back", exact: true }).click();
   await expect(preview).toHaveCount(0);
   await expect(task).toContainText(filePath);
 });
@@ -458,6 +503,7 @@ test("partial summaries are explicit, wait for current work, and retry one idemp
   );
   await page.goto("/visual.html?mode=file-run");
   await page.getByTestId("workflow-run-node-plan").click();
+  await expandDeliverables(page);
   const action = page.getByTestId("workflow-partial-summary-action");
   const submit = action.getByRole("button", {
     name: "Summarize completed work",
@@ -537,12 +583,13 @@ test("a missing workflow file keeps its reference and can be retried without res
   );
   await page.goto("/visual.html?mode=file-run");
   await page.getByTestId("workflow-run-node-plan").click();
+  await expandDeliverables(page);
   await page
     .getByTestId("workflow-split-subtask")
     .first()
     .getByRole("button", { name: filePath, exact: true })
     .click();
-  const preview = page.getByRole("dialog", { name: filePath, exact: true });
+  const preview = page.getByTestId("workflow-file-inline-preview");
   await expect(preview.getByRole("alert")).toContainText(
     "Could not read this workflow file",
   );
@@ -559,7 +606,7 @@ test("a missing workflow file keeps its reference and can be retried without res
   );
   expect(reads).toBe(2);
   expect(mutations).toEqual([]);
-  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await preview.getByRole("button", { name: "Back", exact: true }).click();
   const batch = page.getByTestId("workflow-split-batch");
   await expect(batch.getByTestId("workflow-split-progress")).toContainText(
     "1 / 4 completed",
@@ -608,4 +655,370 @@ test("partial delivery keeps original missing work separate from referenced file
   await expect(evidence).toContainText("deliverables/final.md");
   await expect(evidence).not.toContainText("deliverables/research report.md");
   await expect(evidence).toContainText("This list may be incomplete");
+});
+
+test("the canvas float renders the original conversation and preserves drafts across rapid close and work switches", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page, {
+    holdFirstDraftWrite: true,
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/visual.html?mode=file-run");
+  const node = page.getByTestId("workflow-run-node-build");
+  await expect(node).toBeVisible();
+  const transform = await viewportTransform(page);
+  const canvasBox = await canvas(page).boundingBox();
+  await node.click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  await expect(panel).toHaveAttribute("data-session-id", "analysis-session");
+  await expect(panel).toContainText("Original reply for analysis-session");
+  await expect(
+    page.getByTestId("workflow-deliverables-toggle"),
+  ).toHaveAttribute("aria-expanded", "false");
+  const editor = panel.locator('[contenteditable="true"]').first();
+  await expect(editor).toBeVisible();
+  await editor.fill("Draft kept after closing immediately");
+  await panel
+    .getByRole("button", { name: "Close Node details", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await expect.poll(() => api.writes.includes("analysis-session")).toBe(true);
+  await node.click();
+  await expect(editor).toHaveText("Draft kept after closing immediately");
+  expect(api.drafts.has("analysis-session")).toBe(false);
+  const latestDraft = "Draft edited while the previous save is pending";
+  await editor.fill(latestDraft);
+  api.releaseDraftWrite();
+  await expect.poll(() => api.drafts.has("analysis-session")).toBe(true);
+  await expect(editor).toHaveText(latestDraft);
+  const selector = page.getByTestId("workflow-conversation-work-selector");
+  await selector.selectOption("subtask:visual-batch:research");
+  await expect(panel).toHaveAttribute("data-session-id", "research-session");
+  await expect(panel).toContainText("Original reply for research-session");
+  await expect(panel).not.toContainText("Original reply for analysis-session");
+  await editor.fill("Independent research draft");
+  await selector.selectOption("subtask:visual-batch:independent");
+  await expect(editor).toHaveText(latestDraft);
+  await selector.selectOption("subtask:visual-batch:research");
+  await expect(editor).toHaveText("Independent research draft");
+  expect(await viewportTransform(page)).toBe(transform);
+  expect(await canvas(page).boundingBox()).toEqual(canvasBox);
+  expect(api.requests.filter((request) => request.startsWith("POST "))).toEqual(
+    [],
+  );
+  expect(errors).toEqual([]);
+});
+
+test("remote persisted drafts remain isolated when two Hosts have the same Session ID", async ({
+  page,
+}) => {
+  const editor = page.getByRole("textbox", { name: "Session draft" });
+  const openHost = async (hostId: string) => {
+    await page.goto(
+      `/visual.html?mode=scratch-scope&runtime=remote&host=${hostId}`,
+    );
+    await expect(editor).toBeVisible();
+  };
+
+  await openHost("first-host");
+  await editor.fill("First host draft");
+  await openHost("second-host");
+  await expect(editor).toBeEmpty();
+  await editor.fill("Second host draft");
+  await openHost("first-host");
+  await expect(editor).toHaveValue("First host draft");
+  await page.getByRole("button", { name: "Delete draft" }).click();
+  await expect(editor).toBeEmpty();
+  await openHost("second-host");
+  await expect(editor).toHaveValue("Second host draft");
+});
+
+test("a send acknowledged after close and reopen preserves the replacement session draft", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page);
+  let submitted = false;
+  let releaseSend = () => {};
+  await page.route(
+    "**/api/sessions/analysis-session/follow-up",
+    async (route) => {
+      submitted = true;
+      await new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+      await route.fulfill({ json: { success: true, data: null } });
+    },
+  );
+  await page.goto("/visual.html?mode=file-run");
+  const node = page.getByTestId("workflow-run-node-build");
+  await node.click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  const editor = panel.locator('[contenteditable="true"]').first();
+  await expect(editor).toBeVisible();
+  await editor.fill("The submitted draft");
+  await panel.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => submitted).toBe(true);
+  await panel
+    .getByRole("button", { name: "Close Node details", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await node.click();
+  await expect(editor).toBeVisible();
+  const replacement = "A new draft written after reopening the same Session";
+  await editor.fill(replacement);
+  await expect
+    .poll(() => api.drafts.get("analysis-session"))
+    .toMatchObject({
+      payload: { data: { message: replacement } },
+    });
+  const response = page.waitForResponse((candidate) =>
+    candidate.url().endsWith("/sessions/analysis-session/follow-up"),
+  );
+  releaseSend();
+  await (await response).finished();
+  // Deliver the response through the browser's event/render cycle before reopening.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(editor).toHaveText(replacement);
+  await panel
+    .getByRole("button", { name: "Close Node details", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await node.click();
+  await expect(editor).toHaveText(replacement);
+  expect(
+    api.requests.filter((request) => request.startsWith("DELETE ")),
+  ).toEqual([]);
+});
+
+test("a waiting conversation stays inset, does not start work and remains open on canvas interaction", async ({
+  page,
+}) => {
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/") && request.method() !== "GET")
+      writes.push(request.url());
+  });
+  await page.goto("/visual.html?mode=run");
+  const node = page.getByTestId("workflow-run-node-plan");
+  await expect(node).toBeVisible();
+  const transform = await viewportTransform(page);
+  const canvasBox = await canvas(page).boundingBox();
+  await node.click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  await expect(page.getByTestId("workflow-conversation-waiting")).toBeVisible();
+  await expect
+    .poll(async () => {
+      const bounds = (await panel.boundingBox())!;
+      return Math.round(
+        canvasBox!.x + canvasBox!.width - bounds.x - bounds.width,
+      );
+    })
+    .toBe(24);
+  const bounds = (await panel.boundingBox())!;
+  expect(bounds.width).toBe(440);
+  expect(canvasBox!.x + canvasBox!.width - bounds.x - bounds.width).toBeCloseTo(
+    24,
+    0,
+  );
+  expect(bounds.y - canvasBox!.y).toBeCloseTo(24, 0);
+  await expect(panel).not.toHaveAttribute("aria-modal", "true");
+  await canvas(page)
+    .locator(".react-flow__pane")
+    .click({ position: { x: 20, y: 20 } });
+  await expect(panel).toBeVisible();
+  expect(await viewportTransform(page)).toBe(transform);
+  expect(await canvas(page).boundingBox()).toEqual(canvasBox);
+  await panel
+    .getByRole("button", { name: "Close Node details", exact: true })
+    .focus();
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  expect(writes).toEqual([]);
+});
+
+test("inline file preview keeps the original editor mounted and Escape returns before closing the float", async ({
+  page,
+}, testInfo) => {
+  await mockWorkflowConversations(page);
+  const filePath = "deliverables/research report.md";
+  const reads: string[] = [];
+  await page.route(
+    "**/api/workflow-runs/visual-run/files/content?*",
+    async (route) => {
+      reads.push(new URL(route.request().url()).searchParams.get("path")!);
+      await route.fulfill({
+        json: {
+          success: true,
+          data: {
+            run_id: "visual-run",
+            workspace_id: "visual-workspace",
+            kind: "text",
+            path: filePath,
+            name: "research report.md",
+            mime_type: "text/markdown",
+            language: "markdown",
+            content:
+              "# Original file viewer\n\nThe real shared Markdown viewer.",
+            raw_url: null,
+            size_bytes: 67,
+            truncated: false,
+          },
+        },
+      });
+    },
+  );
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-build").click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  const editor = panel.locator('[contenteditable="true"]').first();
+  await expect(editor).toBeVisible();
+  await editor.fill("Draft retained while reading the file");
+  const editorHandle = await editor.elementHandle();
+  await expandDeliverables(page);
+  await expect(page.getByTestId("workflow-deliverables-toggle")).toContainText(
+    "Deliverables 1",
+  );
+  expect(reads).toEqual([]);
+  await page
+    .getByTestId("workflow-deliverables")
+    .getByRole("button", { name: filePath, exact: true })
+    .first()
+    .click();
+  const preview = page.getByTestId("workflow-file-inline-preview");
+  await expect(
+    preview.getByRole("heading", { name: "Original file viewer" }),
+  ).toBeVisible();
+  await expect(editor).toBeHidden();
+  expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(
+    preview.getByRole("button", { name: "Back", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(panel).toBeVisible();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveText("Draft retained while reading the file");
+  await expect(
+    page
+      .getByTestId("workflow-deliverables")
+      .getByRole("button", { name: filePath, exact: true })
+      .first(),
+  ).toBeFocused();
+  expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(
+    page.getByTestId("workflow-deliverables-toggle"),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(reads).toEqual([filePath]);
+
+  await page.setViewportSize({ width: 620, height: 680 });
+  await expect
+    .poll(async () => {
+      const bounds = (await panel.boundingBox())!;
+      return bounds.x >= 0 && bounds.x + bounds.width <= 620;
+    })
+    .toBe(true);
+  const editorBounds = (await editor.boundingBox())!;
+  expect(editorBounds.y + editorBounds.height).toBeLessThanOrEqual(680);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(620);
+  await page.screenshot({
+    path: testInfo.outputPath("workflow-conversation-narrow.png"),
+  });
+});
+
+test("a cloned completed worker opens its exact original Session read-only even without file references", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page);
+  await page.route(
+    "**/api/workflow-runs/visual-run/file-context**",
+    async (route) => {
+      const id = new URL(route.request().url()).searchParams.get(
+        "node_execution_id",
+      );
+      if (id !== "research-execution") return route.fallback();
+      await route.fulfill({
+        json: {
+          success: true,
+          data: {
+            run_id: "visual-run",
+            workspace_id: "visual-workspace",
+            node_execution_id: id,
+            execution: {
+              run_id: "original-run",
+              workspace_id: "visual-workspace",
+              node_id: "build",
+              node_execution_id: id,
+              session_id: "research-session",
+              status: "succeeded",
+            },
+            files: [],
+            missing_subtasks: [],
+          },
+        },
+      });
+    },
+  );
+  await page.goto("/visual.html?mode=file-run&clone=1");
+  await page.getByTestId("workflow-run-node-plan").click();
+  await expandDeliverables(page);
+  await page.getByTestId("workflow-open-subtask-research").click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  await expect(panel).toHaveAttribute("data-run-id", "original-run");
+  await expect(panel).toHaveAttribute("data-session-id", "research-session");
+  await expect(panel).toContainText("Original reply for research-session");
+  await expect(panel.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(panel).toContainText("Source run original · read only");
+  await expandDeliverables(page);
+  await expect(page.getByTestId("workflow-split-batch")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Back to work list", exact: true })
+    .click();
+  await expect(page.getByTestId("workflow-split-batch")).toBeVisible();
+  expect(api.requests.filter((request) => !request.startsWith("GET "))).toEqual(
+    [],
+  );
+});
+
+test("tool output uses the existing log viewer inside the float and preserves the draft on return", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page, { withToolOutput: true });
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-build").click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  const editor = panel.locator('[contenteditable="true"]').first();
+  await expect(editor).toBeVisible();
+  await editor.fill("Draft kept while reading tool output");
+  await panel.getByRole("button", { name: /inspect_fixture/ }).click();
+  const preview = panel.getByTestId("conversation-log-preview");
+  await expect(preview).toContainText(
+    "Exact tool output retained in the original viewer",
+  );
+  await expect(editor).toBeHidden();
+  await expect(
+    preview.getByRole("button", { name: "Back", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(panel).toBeVisible();
+  await expect(editor).toHaveText("Draft kept while reading tool output");
+  await expect(
+    panel.getByRole("button", { name: /inspect_fixture/ }),
+  ).toBeFocused();
+  expect(api.requests.filter((request) => request.startsWith("POST "))).toEqual(
+    [],
+  );
 });

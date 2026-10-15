@@ -22,13 +22,14 @@ import {
 } from '@/shared/hooks/useArenaGroup';
 import type { ArenaGroupResponse } from '@/shared/lib/arenaApi';
 import { useWorkflowRunMutations } from '@/shared/hooks/useWorkflowRun';
-import { buildWorkspaceSessionHref } from '@/shared/lib/routes/workspaceRoutes';
 import { cn } from '@/shared/lib/utils';
 import { ArenaWinnerConfirmDialog } from '@/shared/dialogs/arena/ArenaWinnerConfirmDialog';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 import {
   buildArenaComparisonView,
   type ArenaComparisonCandidate,
 } from '../../arena/model/arenaComparisonView';
+import { buildWorkflowConversationHref } from '../model/workflowConversationTarget';
 
 export interface WorkflowArenaWinnerPanelProps {
   arenaGroupId: string | null;
@@ -38,6 +39,8 @@ export interface WorkflowArenaWinnerPanelProps {
   nodeExecutionId: string;
   projectId: string;
   runId: string;
+  onOpenCandidate?: (candidate: ArenaComparisonCandidate) => void;
+  allowWinnerSelection?: boolean;
 }
 
 export function WorkflowArenaWinnerPanel(props: WorkflowArenaWinnerPanelProps) {
@@ -58,8 +61,11 @@ function WorkflowArenaWinnerPanelForIdentity({
   nodeExecutionId,
   projectId,
   runId,
+  onOpenCandidate,
+  allowWinnerSelection = true,
 }: WorkflowArenaWinnerPanelProps) {
   const { t } = useTranslation('common');
+  const hostId = useHostId();
   const queryClient = useQueryClient();
   const { selectArenaWinner, isSelectingArenaWinner } =
     useWorkflowRunMutations();
@@ -131,11 +137,16 @@ function WorkflowArenaWinnerPanelForIdentity({
   );
 
   const arenaHref = arenaGroupId
-    ? `/projects/${projectId}/tasks/${taskId}/arena/${arenaGroupId}`
+    ? `${hostId ? `/hosts/${encodeURIComponent(hostId)}` : ''}/projects/${projectId}/tasks/${taskId}/arena/${arenaGroupId}`
     : null;
 
   const handleConfirmWinner = async () => {
-    if (!confirmationCandidate || winnerMutationLockRef.current) return;
+    if (
+      !confirmationCandidate ||
+      winnerMutationLockRef.current ||
+      !allowWinnerSelection
+    )
+      return;
     winnerMutationLockRef.current = true;
     try {
       if (!arenaGroupId) {
@@ -210,7 +221,7 @@ function WorkflowArenaWinnerPanelForIdentity({
             href={arenaHref}
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            Arena
+            {t('arena.title')}
           </a>
         ) : null}
       </div>
@@ -246,12 +257,13 @@ function WorkflowArenaWinnerPanelForIdentity({
             <EmptyState compact title={t('workflow.arenaWinner.noAttempts')} />
           ) : null}
           {candidates.map((candidate) => {
-            const workspaceBaseHref = `/projects/${projectId}/tasks/${taskId}/workspaces/${candidate.workspaceId}`;
-            const workspaceHref =
-              buildWorkspaceSessionHref(
-                workspaceBaseHref,
-                candidate.sessionId
-              ) ?? workspaceBaseHref;
+            const workspaceHref = buildWorkflowConversationHref({
+              hostId,
+              projectId,
+              taskId,
+              workspaceId: candidate.workspaceId,
+              sessionId: candidate.sessionId,
+            });
             const isApplying =
               isSelectingArenaWinner &&
               confirmationCandidate?.candidateId === candidate.candidateId;
@@ -307,20 +319,38 @@ function WorkflowArenaWinnerPanelForIdentity({
                   </div>
 
                   <div className="flex shrink-0 items-center gap-half">
-                    <a
-                      className="inline-flex min-h-8 items-center rounded border border-secondary px-half py-1 text-xs font-medium text-brand hover:bg-secondary"
-                      href={workspaceHref}
-                      aria-label={t('workflow.arenaWinner.openWorkspace', {
-                        label: candidate.label,
-                      })}
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
+                    {onOpenCandidate ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => onOpenCandidate(candidate)}
+                        aria-label={t('workflow.arenaWinner.openWorkspace', {
+                          label: candidate.label,
+                        })}
+                      >
+                        <ExternalLink
+                          className="h-3.5 w-3.5"
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    ) : workspaceHref ? (
+                      <a
+                        className="inline-flex min-h-8 items-center rounded border border-secondary px-half py-1 text-xs font-medium text-brand hover:bg-secondary"
+                        href={workspaceHref}
+                        aria-label={t('workflow.arenaWinner.openWorkspace', {
+                          label: candidate.label,
+                        })}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    ) : null}
                     <Button
                       type="button"
                       size="xs"
                       disabled={
                         !candidate.canSelectWinner ||
+                        !allowWinnerSelection ||
                         isSelectingArenaWinner ||
                         Boolean(arenaError)
                       }

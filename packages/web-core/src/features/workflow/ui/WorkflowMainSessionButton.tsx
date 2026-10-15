@@ -8,6 +8,7 @@ import { buildWorkspaceSessionHref } from '@/shared/lib/routes/workspaceRoutes';
 import { useAppShellProjects } from '@/shared/hooks/useAppShellProjects';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 import { useHostId } from '@/shared/providers/HostIdProvider';
+import type { WorkflowMainSessionView } from 'shared/types';
 
 interface WorkflowMainSessionButtonProps {
   projectId: string;
@@ -15,6 +16,10 @@ interface WorkflowMainSessionButtonProps {
   taskId?: string;
   disabled?: boolean;
   beforePrepare?: () => Promise<boolean>;
+  onPrepared?: (
+    prepared: WorkflowMainSessionView,
+    trigger: HTMLElement
+  ) => void;
 }
 
 export function WorkflowMainSessionButton({
@@ -23,6 +28,7 @@ export function WorkflowMainSessionButton({
   taskId,
   disabled,
   beforePrepare,
+  onPrepared,
 }: WorkflowMainSessionButtonProps) {
   const { t } = useTranslation('common');
   const navigate = useNavigate();
@@ -50,7 +56,7 @@ export function WorkflowMainSessionButton({
     navigation.projectWorkflowUnavailableReason ??
     navigation.agentExecutionUnavailableReason;
 
-  const handlePrepare = async () => {
+  const handlePrepare = async (trigger: HTMLElement) => {
     const scope = scopeRef.current;
     if (scope.pending || disabled || blockedReason) return;
     scope.pending = true;
@@ -82,7 +88,11 @@ export function WorkflowMainSessionButton({
         queryKey: ['app-shell', 'discovery'],
       });
       void queryClient.invalidateQueries({ queryKey: ['project-sessions'] });
-      await navigate({ to: href });
+      if (onPrepared) {
+        onPrepared(prepared, trigger);
+      } else {
+        await navigate({ to: href });
+      }
     } catch (err) {
       if (scopeRef.current === scope) {
         setState({
@@ -107,7 +117,7 @@ export function WorkflowMainSessionButton({
         loading={pending}
         disabled={disabled || !!blockedReason}
         title={blockedReason}
-        onClick={() => void handlePrepare()}
+        onClick={(event) => void handlePrepare(event.currentTarget)}
       >
         {t('workflow.management.openConversation')}
       </Button>

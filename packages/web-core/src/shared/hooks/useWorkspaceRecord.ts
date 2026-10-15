@@ -23,7 +23,7 @@ export function useWorkspaceRecord(workspaceId?: string, opts?: Options) {
 
   return useQuery<Workspace>({
     queryKey: workspaceRecordKeys.byId(workspaceId, hostId),
-    queryFn: () => workspacesApi.get(workspaceId!),
+    queryFn: () => workspacesApi.get(workspaceId!, hostId),
     enabled,
   });
 }

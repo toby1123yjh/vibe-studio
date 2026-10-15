@@ -31,6 +31,7 @@ interface WorkspacesMainProps {
   isMobile?: boolean;
   /** Mobile-only banner rendered between the transcript and the composer. */
   approvalBannerContent?: ReactNode;
+  compact?: boolean;
 }
 
 export function WorkspacesMain({
@@ -48,6 +49,7 @@ export function WorkspacesMain({
   onScrollToBottom,
   isMobile,
   approvalBannerContent,
+  compact = false,
 }: WorkspacesMainProps) {
   const { t } = useTranslation(['tasks', 'common']);
 
@@ -56,8 +58,8 @@ export function WorkspacesMain({
     <main
       ref={containerRef}
       className={cn(
-        'relative flex flex-1 flex-col bg-primary',
-        isMobile ? 'min-h-0' : 'h-full'
+        'relative flex min-h-0 min-w-0 flex-1 flex-col bg-primary',
+        !compact && !isMobile && 'h-full'
       )}
     >
       {/* Conversation content - conditional based on loading/workspace state */}
@@ -162,7 +164,10 @@ export function WorkspacesMain({
         workspaceState !== 'loading' &&
         workspaceState !== 'error' && (
           <div
-            className="flex justify-center @container pl-px"
+            className={cn(
+              'flex shrink-0 justify-center @container pl-px',
+              compact && 'max-h-[55%] overflow-y-auto'
+            )}
             data-chatbox-container="true"
           >
             {chatBoxContent}
