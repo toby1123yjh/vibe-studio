@@ -308,12 +308,12 @@ export function OnboardingSignInPage() {
             <div className="flex justify-center">
               <img
                 src={logoSrc}
-                alt="Vibe Kanban"
+                alt="Vibe Studio"
                 className="h-8 w-auto logo"
               />
             </div>
             <h1 className="text-lg font-semibold text-high">
-              {t('oauth.title', 'Sign in to Vibe Kanban')}
+              {t('oauth.title', 'Sign in to Vibe Studio')}
             </h1>
             {!isLoggedIn && (
               <p className="text-sm text-low">

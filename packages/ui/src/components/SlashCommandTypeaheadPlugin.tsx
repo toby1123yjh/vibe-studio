@@ -89,8 +89,8 @@ const SLASH_COMMAND_GROUP_META: Record<
 > = {
   product: {
     label: '常用命令',
-    badge: 'VK',
-    title: 'vibe-kanban 认可的产品入口',
+    badge: 'VS',
+    title: 'Vibe Studio 认可的产品入口',
     Icon: CheckCircleIcon,
   },
   skill: {

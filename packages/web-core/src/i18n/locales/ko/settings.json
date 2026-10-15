@@ -146,7 +146,7 @@
           "host": {
             "label": "원격 SSH 호스트 (선택사항)",
             "placeholder": "예: 호스트 이름 또는 IP 주소",
-            "helper": "Vibe Kanban이 원격 서버에서 실행 중인 경우 설정하세요. 설정하면 \"에디터에서 열기\"를 클릭할 때 로컬 명령을 실행하는 대신 SSH를 통해 에디터를 여는 URL이 생성됩니다."
+            "helper": "Vibe Studio이 원격 서버에서 실행 중인 경우 설정하세요. 설정하면 \"에디터에서 열기\"를 클릭할 때 로컬 명령을 실행하는 대신 SSH를 통해 에디터를 여는 URL이 생성됩니다."
           },
           "user": {
             "label": "원격 SSH 사용자 (선택사항)",
@@ -276,7 +276,7 @@
       },
       "privacy": {
         "title": "개인정보 보호",
-        "description": "익명 사용 데이터를 공유하여 Vibe-Kanban 개선에 도움을 주세요.",
+        "description": "익명 사용 데이터를 공유하여 Vibe Studio 개선에 도움을 주세요.",
         "telemetry": {
           "label": "원격 분석 활성화",
           "helper": "애플리케이션 개선을 위한 익명 사용 이벤트 추적을 활성화합니다. 프롬프트나 프로젝트 정보는 수집되지 않습니다."
@@ -576,11 +576,11 @@
       },
       "remove": {
         "title": "저장소 제거",
-        "description": "이 저장소를 Vibe Kanban에서 연결 해제합니다. 디스크의 파일은 삭제되지 않습니다.",
+        "description": "이 저장소를 Vibe Studio에서 연결 해제합니다. 디스크의 파일은 삭제되지 않습니다.",
         "button": "제거",
         "confirm": "저장소 제거",
         "dialogTitle": "\"{{name}}\"을(를) 제거하시겠습니까?",
-        "dialogDescription": "저장소를 Vibe Kanban에서 연결 해제합니다. 디스크의 파일은 영향을 받지 않습니다. 나중에 다시 추가할 수 있습니다.",
+        "dialogDescription": "저장소를 Vibe Studio에서 연결 해제합니다. 디스크의 파일은 영향을 받지 않습니다. 나중에 다시 추가할 수 있습니다.",
         "success": "저장소가 성공적으로 제거되었습니다.",
         "error": "저장소 제거에 실패했습니다."
       },

@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Product Identity
+- Display name: **Vibe Studio**. npm package and command: `vibe-studio`.
+- Repository: `https://github.com/toby1123yjh/vibe-studio`.
+- `.vibe-kanban` data directories, `VK_*` environment variables, internal crate names, and bundled executable names remain operational identifiers. Do not mechanically rename them when updating product copy.
+- Preserve attribution to the upstream Vibe Kanban project and the actual names of third-party integrations.
+
 ## Project Structure & Module Organization
 - `crates/`: Rust workspace crates — `server` (API + bins), `db` (SQLx models/migrations), `executors`, `services`, `utils`, `git` (Git operations), `api-types` (shared API types for local + remote), `review` (PR review tool), `deployment`, `local-deployment`, `remote`.
 - `packages/local-web/`: Local React + TypeScript app entrypoint (Vite, Tailwind). Shell source in `packages/local-web/src`.
@@ -42,7 +48,7 @@ Do not manually edit shared/remote-types.ts, instead edit crates/remote/src/bin/
 ## Project Build Policy
 - This section embeds the current local `PROJECT.md` policy. `PROJECT.md` itself is local-only and does not need to be committed or pushed.
 - For validation builds, use GitHub Actions to build and publish to npm. Do not attempt to build release packages on this machine.
-- After the action completes, verify the published `easy-vibe-kanban` version with the official npm registry (`https://registry.npmjs.org/`) and install/run from npm for user-facing checks.
+- After the action completes, verify the published `vibe-studio` version with the official npm registry (`https://registry.npmjs.org/`) and install/run from npm for user-facing checks.
 - `git-build.md` may document historical artifact-based flows, but `PROJECT.md` overrides it for current build/release decisions.
 
 ## Before Completing a Task

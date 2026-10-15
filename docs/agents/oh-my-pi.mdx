@@ -4,7 +4,7 @@ description: "Set up the Oh My Pi coding agent"
 ---
 
 Oh My Pi is integrated as an external `omp` runtime over its stdio RPC
-protocol. Vibe Kanban keeps the provider-native session and protocol records
+protocol. Vibe Studio keeps the provider-native session and protocol records
 separate from the canonical conversation timeline.
 
 <Steps>
@@ -13,8 +13,8 @@ separate from the canonical conversation timeline.
   npm install --global @oh-my-pi/pi-coding-agent
   ```
 
-  This installs the `omp` executable that Vibe Kanban launches from your PATH.
-  Keep Oh My Pi updated independently; Vibe Kanban does not bundle or pin its
+  This installs the `omp` executable that Vibe Studio launches from your PATH.
+  Keep Oh My Pi updated independently; Vibe Studio does not bundle or pin its
   runtime version.
 </Step>
 
@@ -24,11 +24,11 @@ separate from the canonical conversation timeline.
   installation and authentication details.
 </Step>
 
-<Step title="Start Vibe Kanban">
-  Once authenticated, launch Vibe Kanban:
+<Step title="Start Vibe Studio">
+  Once authenticated, launch Vibe Studio:
 
   ```bash
-  npx easy-vibe-kanban
+  npx vibe-studio@beta
   ```
 
   You can now select Oh My Pi when creating task attempts.
@@ -36,6 +36,6 @@ separate from the canonical conversation timeline.
 </Steps>
 
 <Info>
-Vibe Kanban invokes the real `omp --mode rpc` executable. It does not embed a
+Vibe Studio invokes the real `omp --mode rpc` executable. It does not embed a
 Node SDK or replace Oh My Pi's native tools, MCP servers, or subagent model.
 </Info>

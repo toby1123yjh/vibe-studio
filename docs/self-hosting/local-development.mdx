@@ -1,9 +1,9 @@
 ---
 title: "Local Development"
-description: "Run Vibe Kanban Cloud locally"
+description: "Run Vibe Studio Cloud locally"
 ---
 
-This guide walks you through setting up a local Vibe Kanban Cloud instance for development and testing.
+This guide walks you through setting up a local Vibe Studio Cloud instance for development and testing.
 
 ## Prerequisites
 
@@ -17,8 +17,8 @@ Before you begin, ensure you have:
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/BloopAI/vibe-kanban.git
-cd vibe-kanban
+git clone https://github.com/toby1123yjh/vibe-studio.git
+cd vibe-studio
 ```
 
 ## Step 2: Create OAuth Application
@@ -31,7 +31,7 @@ You need at least one OAuth provider. Choose GitHub, Google, or both.
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
 2. Click **New OAuth App**
 3. Fill in the details:
-   - **Application name**: Vibe Kanban Local
+   - **Application name**: Vibe Studio Local
    - **Homepage URL**: `http://localhost:3000`
    - **Authorization callback URL**: `http://localhost:3000/v1/oauth/github/callback`
 4. Click **Register application**
@@ -131,7 +131,7 @@ remote-server-1  | INFO remote: Server listening on 0.0.0.0:8081
 
 ## Step 5: Access the Web Interface
 
-Open [http://localhost:3000](http://localhost:3000) in your browser. You should see the Vibe Kanban Cloud login page.
+Open [http://localhost:3000](http://localhost:3000) in your browser. You should see the Vibe Studio Cloud login page.
 
 Sign in with your configured OAuth provider (GitHub or Google).
 

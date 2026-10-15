@@ -296,7 +296,7 @@
   "ok": "확인",
   "error": "오류",
   "oauth": {
-    "title": "Vibe Kanban 로그인",
+    "title": "Vibe Studio 로그인",
     "description": "로그인하여 조직에 참여하고 팀과 작업을 공유하세요",
     "continueWithGitHub": "GitHub로 계속",
     "continueWithGoogle": "Google로 계속",
@@ -482,7 +482,7 @@
   "workspacesGuide": {
     "welcome": {
       "title": "환영합니다",
-      "content": "Vibe Kanban의 새롭게 디자인된 UI인 Workspaces에 오신 것을 환영합니다. 초기 피드백을 위해 일부 사용자에게 먼저 공개하고 있습니다. 네비게이션 바의 피드백 아이콘을 통해 언제든지 의견을 공유해 주세요."
+      "content": "Vibe Studio의 새롭게 디자인된 UI인 Workspaces에 오신 것을 환영합니다. 초기 피드백을 위해 일부 사용자에게 먼저 공개하고 있습니다. 네비게이션 바의 피드백 아이콘을 통해 언제든지 의견을 공유해 주세요."
     },
     "commandBar": {
       "title": "명령 바",
@@ -722,7 +722,7 @@
     "projectsGuide": {
       "intro": {
         "title": "Welcome",
-        "content": "Welcome to Vibe Kanban. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
+        "content": "Welcome to Vibe Studio. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
       },
       "welcome": {
         "title": "Projects",
@@ -738,7 +738,7 @@
       },
       "organizations": {
         "title": "Invite your team",
-        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Kanban. Export your cloud data before shutdown."
+        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Studio. Export your cloud data before shutdown."
       }
     }
   },
@@ -1084,7 +1084,7 @@
     "commands": {
       "manager": {
         "title": "네이티브 명령",
-        "description": "선택한 Agent의 Provider 네이티브 프롬프트 명령을 검색하고 관리합니다. Vibe Kanban은 Adapter가 승인한 필드만 사용합니다."
+        "description": "선택한 Agent의 Provider 네이티브 프롬프트 명령을 검색하고 관리합니다. Vibe Studio은 Adapter가 승인한 필드만 사용합니다."
       },
       "actions": {
         "refresh": "새로 고침",
@@ -1165,7 +1165,7 @@
       "errors": {
         "operationFailed": "명령 작업에 실패했습니다.",
         "operationCode": "{{message}} ({{code}})",
-        "staleRevision": "이 명령이 Vibe Kanban 외부에서 변경되었습니다. 새로 고친 후 다시 시도하세요."
+        "staleRevision": "이 명령이 Vibe Studio 외부에서 변경되었습니다. 새로 고친 후 다시 시도하세요."
       },
       "notices": {
         "saved": "명령 목록이 업데이트되었습니다."

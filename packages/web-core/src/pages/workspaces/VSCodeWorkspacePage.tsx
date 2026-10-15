@@ -290,7 +290,7 @@ export function VSCodeWorkspacePage() {
                   <EmptyState
                     className="flex-1"
                     title={t('workspaces.notFound')}
-                    description="Return to Vibe Kanban and open an existing workspace."
+                    description="Return to Vibe Studio and open an existing workspace."
                   />
                 ) : (
                   <>

@@ -5,7 +5,7 @@ interface BrandLogoProps {
 
 export function BrandLogo({
   className = "h-8 w-auto",
-  alt = "Vibe Kanban",
+  alt = "Vibe Studio",
 }: BrandLogoProps) {
   return (
     <picture>

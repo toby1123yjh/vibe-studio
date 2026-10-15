@@ -21,7 +21,8 @@ import { SimpleMarkdown } from '@/shared/components/SimpleMarkdown';
 import { useTranslation } from 'react-i18next';
 import { formatLocalizedDateTime } from '@/shared/lib/date';
 
-const GITHUB_RELEASES_URL = 'https://github.com/BloopAI/vibe-kanban/releases';
+const GITHUB_RELEASES_URL =
+  'https://github.com/toby1123yjh/vibe-studio/releases';
 
 function formatDate(dateStr: string): string {
   try {

@@ -107,7 +107,7 @@ export default function LoginPage() {
               <BrandLogo className="h-8 w-auto" />
             </div>
             <h1 className="text-2xl font-semibold text-high">
-              Sign in to Vibe Kanban
+              Sign in to Vibe Studio
             </h1>
             <p className="text-sm text-low">Sign in to continue</p>
           </header>
@@ -249,7 +249,7 @@ export default function LoginPage() {
           <p className="text-center text-sm text-low">
             Need help getting started?{" "}
             <a
-              href="https://www.vibekanban.com/docs"
+              href="https://github.com/toby1123yjh/vibe-studio/tree/main/docs"
               target="_blank"
               rel="noopener noreferrer"
               className="text-normal underline decoration-border underline-offset-4 transition-colors hover:text-high"

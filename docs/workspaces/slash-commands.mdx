@@ -31,11 +31,11 @@ To use a slash command:
 
 ## Available Commands by Agent
 
-The available slash commands depend on which coding agent you're using. Vibe Kanban discovers commands from the selected agent where possible, then shows whether each command is handled by Vibe Kanban, passed through to the agent, or provided by an extension such as a skill or custom command.
+The available slash commands depend on which coding agent you're using. Vibe Studio discovers commands from the selected agent where possible, then shows whether each command is handled by Vibe Studio, passed through to the agent, or provided by an extension such as a skill or custom command.
 
 <Note>
   Some built-in commands that require TUI interaction (such as `/model` or
-  `/theme`) are not currently supported in Vibe Kanban. Only non-interactive
+  `/theme`) are not currently supported in Vibe Studio. Only non-interactive
   commands are available.
 </Note>
 
@@ -43,18 +43,18 @@ The available slash commands depend on which coding agent you're using. Vibe Kan
 
 Claude Code commands are discovered from your installed Claude Code CLI. The list can change when you update Claude Code, install skills, add project or user commands, or enable plugins. For full details, see the [built-in commands](https://code.claude.com/docs/en/interactive-mode#built-in-commands) and [skills](https://code.claude.com/docs/en/skills) documentation.
 
-Vibe Kanban labels Claude commands by support level:
+Vibe Studio labels Claude commands by support level:
 
 | Label         | Meaning                                                                                                                                                                                   |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VK 支持`     | Vibe Kanban recognises this as a product-level entry point. The first version still passes Claude commands through to Claude Code unless a Vibe Kanban handler is explicitly implemented. |
+| `VK 支持`     | Vibe Studio recognises this as a product-level entry point. The first version still passes Claude commands through to Claude Code unless a Vibe Studio handler is explicitly implemented. |
 | `Claude 原生` | The command is a Claude Code native command and is passed through unchanged.                                                                                                              |
 | `Skill`       | The command comes from Claude Code skills and is handled by Claude Code.                                                                                                                  |
 | `Custom`      | The command comes from a project command, user command, or plugin command and is handled by Claude Code.                                                                                  |
 | `诊断`        | The command is diagnostic or debugging-oriented, so it is not treated as a normal product workflow.                                                                                       |
-| `Fallback`    | The command comes from Vibe Kanban's fallback list because live discovery did not return commands.                                                                                        |
+| `Fallback`    | The command comes from Vibe Studio's fallback list because live discovery did not return commands.                                                                                        |
 
-Common Claude Code commands that Vibe Kanban recognises include `/compact`, `/review`, `/security-review`, `/init`, `/context`, `/usage`, `/insights`, and `/goal`. Commands such as `/config`, `/reload-skills`, and `/team-onboarding` remain Claude-native pass-through commands.
+Common Claude Code commands that Vibe Studio recognises include `/compact`, `/review`, `/security-review`, `/init`, `/context`, `/usage`, `/insights`, and `/goal`. Commands such as `/config`, `/reload-skills`, and `/team-onboarding` remain Claude-native pass-through commands.
 
 <Warning>
   Claude Code commands may vary by CLI version. Treat the typeahead result as
@@ -63,7 +63,7 @@ Common Claude Code commands that Vibe Kanban recognises include `/compact`, `/re
 
 ### OpenAI Codex
 
-Vibe Kanban surfaces a curated subset of Codex built-in commands. For the full upstream list, see the [Codex slash commands documentation](https://developers.openai.com/codex/cli/slash-commands/).
+Vibe Studio surfaces a curated subset of Codex built-in commands. For the full upstream list, see the [Codex slash commands documentation](https://developers.openai.com/codex/cli/slash-commands/).
 
 | Command        | Description                                             |
 | -------------- | ------------------------------------------------------- |
@@ -80,13 +80,13 @@ Vibe Kanban surfaces a curated subset of Codex built-in commands. For the full u
 ### Gemini CLI and Oh My Pi
 
 Gemini CLI and Oh My Pi expose provider-native commands through their runtime
-protocols. Vibe Kanban discovers commands when the runtime supports discovery;
+protocols. Vibe Studio discovers commands when the runtime supports discovery;
 otherwise the command list is empty rather than copied from a different
 provider.
 
 ## Command Discovery
 
-When you select an agent, Vibe Kanban automatically discovers the available slash commands. You'll see "Discovering commands..." in the typeahead while this happens.
+When you select an agent, Vibe Studio automatically discovers the available slash commands. You'll see "Discovering commands..." in the typeahead while this happens.
 
 Commands are cached per workspace and agent, so subsequent uses are instant.
 

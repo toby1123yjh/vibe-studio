@@ -445,7 +445,7 @@ ${Array.from(
   (_, index) => `* Follow-up detail ${index + 1}: keyboard and touch behavior.`
 ).join('\n')}
 
-Read the [full release](https://github.com/BloopAI/vibe-kanban/releases).`;
+Read the [full release](https://github.com/toby1123yjh/vibe-studio/releases).`;
 
 function KeyboardMotionHarness() {
   const [open, setOpen] = React.useState(false);
@@ -489,7 +489,7 @@ function ReleaseNotesHarness() {
           <DialogHeader className="fixture-release-notes-header">
             <DialogTitle>What&apos;s New</DialogTitle>
             <DialogDescription id="fixture-release-notes-description">
-              Release notes for recent Vibe Kanban versions.
+              Release notes for recent Vibe Studio versions.
             </DialogDescription>
           </DialogHeader>
           <div className="fixture-release-notes-body">

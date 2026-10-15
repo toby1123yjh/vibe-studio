@@ -1122,7 +1122,7 @@ async fn fetch_status_message(
                     "- **History mode**: `{}`",
                     format!("{:?}", thread.history_mode).to_ascii_lowercase()
                 ));
-                let source_label = format!("{:?}", thread.source).replace("VsCode", "Vibe Kanban");
+                let source_label = format!("{:?}", thread.source).replace("VsCode", "Vibe Studio");
                 lines.push(format!("- **Source**: `{source_label}`"));
             }
             Err(err) => {

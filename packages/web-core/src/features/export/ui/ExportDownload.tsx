@@ -27,7 +27,7 @@ export function ExportDownload({
   const [isExporting, setIsExporting] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [filename, setFilename] = useState('vibe-kanban-export.zip');
+  const [filename, setFilename] = useState('vibe-studio-export.zip');
   const hasStartedRef = useRef(false);
 
   const startExport = useCallback(async () => {
@@ -46,7 +46,7 @@ export function ExportDownload({
         throw new Error(`Export failed (${response.status})`);
       }
 
-      let downloadFilename = 'vibe-kanban-export.zip';
+      let downloadFilename = 'vibe-studio-export.zip';
       const disposition = response.headers.get('content-disposition');
       if (disposition) {
         const match = disposition.match(/filename="?([^"]+)"?/);

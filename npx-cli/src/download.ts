@@ -267,9 +267,12 @@ export async function ensureDesktopBundle(
   };
 }
 
-export async function getLatestVersion(): Promise<string | undefined> {
-  const manifest = await fetchJson<BinaryManifest>(
-    `${R2_BASE_URL}/binaries/manifest.json`
+export async function getLatestVersion(
+  packageName: string,
+  tag: string
+): Promise<string | undefined> {
+  const manifest = await fetchJson<{ version?: string }>(
+    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(tag)}`
   );
-  return manifest.latest;
+  return manifest.version;
 }

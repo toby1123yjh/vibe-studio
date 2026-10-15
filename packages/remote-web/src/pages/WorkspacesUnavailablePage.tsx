@@ -70,7 +70,7 @@ export default function WorkspacesUnavailablePage({
               </p>
               <ol className="list-inside list-decimal space-y-half">
                 <li>
-                  On that machine, open Vibe Kanban and confirm the host is
+                  On that machine, open Vibe Studio and confirm the host is
                   online.
                 </li>
                 <li>

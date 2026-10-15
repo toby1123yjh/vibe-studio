@@ -676,7 +676,7 @@ impl ProviderCommandAssetManager {
                 native_path: entrypoint,
                 relative_path: relative,
                 error: Some(
-                    "Executable TypeScript commands are discovered read-only; Vibe Kanban does not execute or expose their source.".into(),
+                    "Executable TypeScript commands are discovered read-only; Vibe Studio does not execute or expose their source.".into(),
                 ),
             });
         }

@@ -246,7 +246,7 @@
           "host": {
             "label": "Remote SSH Host (Optional)",
             "placeholder": "e.g., hostname or IP address",
-            "helper": "Set this if Vibe Kanban is running on a remote server. When set, clicking \"Open in Editor\" will generate a URL to open your editor via SSH instead of spawning a local command."
+            "helper": "Set this if Vibe Studio is running on a remote server. When set, clicking \"Open in Editor\" will generate a URL to open your editor via SSH instead of spawning a local command."
           },
           "user": {
             "label": "Remote SSH User (Optional)",
@@ -376,7 +376,7 @@
       },
       "privacy": {
         "title": "Privacy",
-        "description": "Help improve Vibe-Kanban by sharing anonymous usage data.",
+        "description": "Help improve Vibe Studio by sharing anonymous usage data.",
         "telemetry": {
           "label": "Enable Telemetry",
           "helper": "Enables anonymous usage events tracking to help improve the application. No prompts or project information are collected."
@@ -681,11 +681,11 @@
       },
       "remove": {
         "title": "Remove Repository",
-        "description": "Unlink this repository from Vibe Kanban. Files on disk will not be deleted.",
+        "description": "Unlink this repository from Vibe Studio. Files on disk will not be deleted.",
         "button": "Remove",
         "confirm": "Remove Repository",
         "dialogTitle": "Remove \"{{name}}\"?",
-        "dialogDescription": "This will unlink the repository from Vibe Kanban. Your files on disk will not be affected. You can re-add it later.",
+        "dialogDescription": "This will unlink the repository from Vibe Studio. Your files on disk will not be affected. You can re-add it later.",
         "success": "Repository removed successfully.",
         "error": "Failed to remove repository."
       },

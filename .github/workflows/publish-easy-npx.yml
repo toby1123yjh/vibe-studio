@@ -1,4 +1,4 @@
-name: Publish Easy NPX to npm
+name: Publish Vibe Studio to npm
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
       npm_tag:
         description: "npm dist-tag"
         required: true
-        default: "latest"
+        default: "beta"
         type: choice
         options:
           - latest
@@ -58,6 +58,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       npm_tag: ${{ steps.version.outputs.npm_tag }}
       publish_mode: ${{ steps.version.outputs.publish_mode }}
+      package_name: ${{ steps.version.outputs.package_name }}
     steps:
       - uses: actions/checkout@v6
 
@@ -75,7 +76,7 @@ jobs:
           const fs = require('node:fs');
 
           const requestedVersion = (process.env.REQUESTED_VERSION || '').trim();
-          const sourceVersion = JSON.parse(fs.readFileSync('npx-cli/package.json', 'utf8')).version;
+          const { name: packageName, version: sourceVersion } = JSON.parse(fs.readFileSync('npx-cli/package.json', 'utf8'));
           const autoVersionBase = (process.env.AUTO_VERSION_BASE || '').trim();
           const baseMatch = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(beta|easy)\.(0|[1-9][0-9]*)$/.exec(autoVersionBase);
           if (!baseMatch) {
@@ -86,21 +87,30 @@ jobs:
           const baseSequence = Number(baseMatch[5]);
           let version = requestedVersion;
 
-          if (!version) {
-            let publishedVersions = [];
-            try {
-              const raw = execFileSync(
-                'npm',
-                ['view', 'easy-vibe-kanban', 'versions', '--json', '--registry', 'https://registry.npmjs.org/'],
-                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-              );
-              const parsed = JSON.parse(raw);
-              publishedVersions = Array.isArray(parsed) ? parsed : [parsed];
-            } catch {
-              // A new package has no versions yet. The first automatic release
-              // starts at the configured AUTO_VERSION_BASE sequence.
+          let publishedVersions = [];
+          let packageExists = true;
+          try {
+            const raw = execFileSync(
+              'npm',
+              ['view', packageName, 'versions', '--json', '--registry', 'https://registry.npmjs.org/'],
+              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+            );
+            const parsed = JSON.parse(raw);
+            publishedVersions = Array.isArray(parsed) ? parsed : [parsed];
+            if (!publishedVersions.every((value) => typeof value === 'string')) {
+              throw new Error('npm returned invalid version metadata');
             }
+          } catch (error) {
+            let code;
+            try { code = JSON.parse(String(error.stdout || '')).error?.code; } catch {}
+            if (code !== 'E404') {
+              throw new Error(`Cannot read published versions for ${packageName}; retry after checking npm registry access.`, { cause: error });
+            }
+            // Only a genuine not-found response starts a new package's line.
+            packageExists = false;
+          }
 
+          if (!version) {
             const escapedCore = coreVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const pattern = new RegExp(`^${escapedCore}-${releaseChannel}\\.(\\d+)$`);
             let next = baseSequence - 1;
@@ -115,6 +125,9 @@ jobs:
           if (!versionPattern.test(version) || version !== version.trim()) {
             throw new Error(`Invalid npm version: ${version}`);
           }
+          if (publishedVersions.includes(version)) {
+            throw new Error(`${packageName}@${version} already exists on npm.`);
+          }
 
           const npmTag = process.env.EVENT_NAME === 'push'
             ? ((process.env.AUTO_NPM_TAG || '').trim() || 'latest')
@@ -122,17 +135,19 @@ jobs:
           const publishMode = process.env.EVENT_NAME === 'push'
             ? 'publish'
             : ((process.env.REQUESTED_PUBLISH_MODE || '').trim() || 'publish');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nnpm_tag=${npmTag}\npublish_mode=${publishMode}\n`);
-          console.log(`Resolved ${version} (${npmTag}, ${publishMode}) from ${sourceVersion}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nnpm_tag=${npmTag}\npublish_mode=${publishMode}\npackage_name=${packageName}\npackage_exists=${packageExists}\n`);
+          console.log(`Resolved ${packageName}@${version} (${npmTag}, ${publishMode}) from ${sourceVersion}`);
           NODE
 
-      - name: Reject an already published version
+      - name: Check first-publication credentials
+        if: steps.version.outputs.publish_mode == 'publish' && steps.version.outputs.package_exists == 'false'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
         run: |
           set -euo pipefail
-          if npm view "easy-vibe-kanban@$VERSION" version --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
-            echo "easy-vibe-kanban@$VERSION already exists on npm."
+          if [[ -z "${NPM_TOKEN:-}" ]]; then
+            echo "::error::${PACKAGE_NAME} has not been published yet. Add NPM_TOKEN with permission to create this public package before the first publish; then configure its trusted publisher for ${GITHUB_REPOSITORY}/.github/workflows/publish-easy-npx.yml."
             exit 1
           fi
 
@@ -333,6 +348,7 @@ jobs:
         if: needs.resolve-version.outputs.publish_mode == 'publish'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_NAME: ${{ needs.resolve-version.outputs.package_name }}
         run: |
           set -euo pipefail
           cd npx-cli
@@ -361,7 +377,7 @@ jobs:
                   --tag "${{ needs.resolve-version.outputs.npm_tag }}" \
                   --registry https://registry.npmjs.org/
               else
-                echo "::error::npm publish failed and NPM_TOKEN is not configured. Configure npm Trusted Publishing for ${GITHUB_REPOSITORY}/.github/workflows/publish-easy-npx.yml, or add a repo secret named NPM_TOKEN with publish access to easy-vibe-kanban."
+                echo "::error::npm publish failed and NPM_TOKEN is not configured. Configure npm Trusted Publishing for ${GITHUB_REPOSITORY}/.github/workflows/publish-easy-npx.yml, or add a repo secret named NPM_TOKEN with publish access to ${PACKAGE_NAME}."
                 exit "$publish_status"
               fi
             else
@@ -385,7 +401,7 @@ jobs:
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: easy-vibe-kanban-${{ needs.resolve-version.outputs.version }}-linux-windows-x64-npx
+          name: ${{ needs.resolve-version.outputs.package_name }}-${{ needs.resolve-version.outputs.version }}-linux-windows-x64-npx
           path: |
             npx-cli/*.tgz
             npx-cli/dist/linux-x64/*.zip

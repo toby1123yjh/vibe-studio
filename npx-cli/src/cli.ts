@@ -11,7 +11,6 @@ import {
   DESKTOP_CACHE_DIR,
   LOCAL_DEV_MODE,
   LOCAL_DIST_DIR,
-  R2_BASE_URL,
   getLatestVersion,
 } from "./download";
 import {
@@ -21,6 +20,8 @@ import {
 } from "./desktop";
 
 const CLI_VERSION: string = require("../package.json").version;
+const CLI_NAME: string = require("../package.json").name;
+const UPDATE_TAG = CLI_VERSION.includes("-beta.") ? "beta" : "latest";
 
 type RootOptions = {
   desktop?: boolean;
@@ -204,17 +205,16 @@ async function extractAndRun(
 }
 
 function checkForUpdates(): void {
-  const hasValidR2Url = !R2_BASE_URL.startsWith("__");
-  if (LOCAL_DEV_MODE || !hasValidR2Url) {
+  if (LOCAL_DEV_MODE) {
     return;
   }
 
-  getLatestVersion()
+  getLatestVersion(CLI_NAME, UPDATE_TAG)
     .then((latest) => {
       if (latest && latest !== CLI_VERSION) {
         setTimeout(() => {
           console.log(`\nUpdate available: ${CLI_VERSION} -> ${latest}`);
-          console.log(`Run: npx easy-vibe-kanban@latest`);
+          console.log(`Run: npx ${CLI_NAME}@${UPDATE_TAG}`);
         }, 2000);
       }
     })
@@ -260,7 +260,7 @@ async function runMain(desktopMode: boolean): Promise<void> {
   if (desktopMode && tauriPlatform) {
     try {
       console.log(
-        `Starting vibe-kanban desktop v${CLI_VERSION}${modeLabel}...`,
+        `Starting Vibe Studio desktop v${CLI_VERSION}${modeLabel}...`,
       );
       const bundleInfo = await ensureDesktopBundle(tauriPlatform, showProgress);
       console.error(""); // newline after progress
@@ -280,7 +280,7 @@ async function runMain(desktopMode: boolean): Promise<void> {
   }
 
   // Browser mode (default — headless server + opens browser)
-  console.log(`Starting vibe-kanban v${CLI_VERSION}${modeLabel}...`);
+  console.log(`Starting Vibe Studio v${CLI_VERSION}${modeLabel}...`);
   await extractAndRun("vibe-kanban", (bin) => {
     execSync(`"${bin}"`, { stdio: "inherit" });
   });
@@ -315,10 +315,10 @@ function runOrExit(task: Promise<void>): void {
 
 async function main(): Promise<void> {
   fs.mkdirSync(versionCacheDir, { recursive: true });
-  const cli = cac("easy-vibe-kanban");
+  const cli = cac(CLI_NAME);
 
   cli
-    .command("[...args]", "Launch the local vibe-kanban app")
+    .command("[...args]", "Launch Vibe Studio in your browser")
     .option("--desktop", "Launch the desktop app instead of browser mode")
     .allowUnknownOptions()
     .action((_args: string[], options: RootOptions) => {

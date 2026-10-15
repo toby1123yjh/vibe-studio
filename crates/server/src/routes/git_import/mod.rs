@@ -56,7 +56,7 @@ fn ensure_owner() -> Result<(), ApiError> {
             .read(true)
             .write(true)
             .open(path)?;
-        file.try_lock().map_err(|_|conflict("Another Vibe Kanban process manages Git imports for this data directory. Use that instance or close it before retrying."))?;
+        file.try_lock().map_err(|_|conflict("Another Vibe Studio process manages Git imports for this data directory. Use that instance or close it before retrying."))?;
         *owner = Some(file);
     }
     Ok(())

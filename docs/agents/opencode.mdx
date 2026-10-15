@@ -3,7 +3,7 @@ title: "OpenCode"
 description: "Use your locally installed OpenCode agent in sessions and workflows"
 ---
 
-Vibe Kanban launches your installed `opencode acp` executable. You can use
+Vibe Studio launches your installed `opencode acp` executable. You can use
 OpenCode in ordinary sessions, workflow Nodes and the workflow's main Agent.
 Its native configuration, tools and session history remain owned by OpenCode.
 
@@ -20,9 +20,9 @@ Configure your chosen model provider using
 OpenCode supports multiple model providers; installing its executable does not
 configure every provider's credentials.
 
-If you install it manually, rescan the host on Vibe Kanban's Agent page. The
+If you install it manually, rescan the host on Vibe Studio's Agent page. The
 server process must be able to find `opencode` on its PATH. Use a command
-override for a custom executable path. Vibe Kanban does not pin a runtime version
+override for a custom executable path. Vibe Studio does not pin a runtime version
 or download a replacement CLI when you start a session.
 
 ## Native assets
@@ -38,13 +38,13 @@ its OAuth login or tokens.
 
 ## Protocol limits
 
-Sessions created through Vibe Kanban can continue using their native session
-ID. Importing arbitrary existing OpenCode history into Vibe Kanban is not yet
+Sessions created through Vibe Studio can continue using their native session
+ID. Importing arbitrary existing OpenCode history into Vibe Studio is not yet
 supported.
 
 Model and reasoning choices use options advertised by your installed CLI.
 Session continuation prefers native resume without replaying historical
-messages. If the installed version supports only load, Vibe Kanban suppresses
+messages. If the installed version supports only load, Vibe Studio suppresses
 old transcript updates before sending your new prompt.
 
 <Note>

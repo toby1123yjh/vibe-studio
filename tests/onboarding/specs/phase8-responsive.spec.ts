@@ -20,7 +20,7 @@ for (const width of viewports) {
     await page.goto('/?page=landing');
 
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-      'Set up Vibe Kanban'
+      'Set up Vibe Studio'
     );
     await expect(page.getByRole('heading', { level: 2 })).toHaveCount(3);
     await expectContained(page);
@@ -51,7 +51,7 @@ for (const width of viewports) {
     await page.goto('/?page=signin');
 
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-      'Sign in to Vibe Kanban'
+      'Sign in to Vibe Studio'
     );
     await expectContained(page);
 

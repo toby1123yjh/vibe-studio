@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use crate::DeploymentImpl;
 
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
-const GITHUB_API_URL: &str = "https://api.github.com/repos/BloopAI/vibe-kanban/releases";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/toby1123yjh/vibe-studio/releases";
 
 type ReleasesCache = RwLock<Option<(Vec<GitHubRelease>, Instant)>>;
 
@@ -21,7 +21,7 @@ static RELEASES_CACHE: OnceLock<ReleasesCache> = OnceLock::new();
 fn client() -> &'static Client {
     HTTP_CLIENT.get_or_init(|| {
         Client::builder()
-            .user_agent("vibe-kanban-server")
+            .user_agent("vibe-studio-server")
             .build()
             .expect("failed to build releases HTTP client")
     })

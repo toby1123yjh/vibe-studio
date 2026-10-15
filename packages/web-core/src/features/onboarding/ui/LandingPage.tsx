@@ -119,12 +119,12 @@ const SOCIAL_LINKS = [
   },
   {
     label: 'GitHub',
-    href: 'https://github.com/BloopAI/vibe-kanban',
+    href: 'https://github.com/toby1123yjh/vibe-studio',
     icon: GithubLogoIcon,
   },
   {
     label: 'Docs',
-    href: 'https://www.vibekanban.com/docs',
+    href: 'https://github.com/toby1123yjh/vibe-studio/tree/main/docs',
     icon: BookOpenIcon,
   },
 ];
@@ -355,7 +355,7 @@ export function LandingPage() {
         {/* Header */}
         <header className="shrink-0 space-y-base p-double pb-base">
           <div className="flex items-center justify-between">
-            <img src={logoSrc} alt="Vibe Kanban" className="h-8 w-auto logo" />
+            <img src={logoSrc} alt="Vibe Studio" className="h-8 w-auto logo" />
             <div className="flex flex-wrap items-center gap-2">
               {SOCIAL_LINKS.map((link) => (
                 <PrimaryButton
@@ -370,7 +370,7 @@ export function LandingPage() {
             </div>
           </div>
           <h1 className="text-lg font-semibold text-high">
-            Set up Vibe Kanban
+            Set up Vibe Studio
           </h1>
           <div className="rounded-sm border border-brand bg-brand/20 p-base">
             <div className="flex items-start gap-base">
@@ -379,12 +379,12 @@ export function LandingPage() {
                 weight="fill"
               />
               <p className="text-sm text-normal">
-                Vibe Kanban runs AI coding agents with{' '}
+                Vibe Studio runs AI coding agents with{' '}
                 <code>--dangerously-skip-permissions</code> /{' '}
                 <code>--yolo</code> by default. Always review what agents are
                 doing.{' '}
                 <a
-                  href="https://www.vibekanban.com/docs/getting-started#safety-notice"
+                  href="https://github.com/toby1123yjh/vibe-studio/blob/main/docs/settings/agent-configurations.mdx#key-concepts"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-brand hover:underline"

@@ -1,26 +1,26 @@
 {
-  "name": "easy-vibe-kanban",
+  "name": "vibe-studio",
   "private": false,
-  "version": "0.1.44-easy.64",
+  "version": "2.0.0-beta.1",
   "main": "index.js",
   "bin": {
-    "easy-vibe-kanban": "bin/cli.js"
+    "vibe-studio": "bin/cli.js"
   },
   "scripts": {
     "build": "esbuild src/cli.ts --bundle --platform=node --target=node18 --format=cjs --outfile=bin/cli.js --external:adm-zip --banner:js=\"#!/usr/bin/env node\"",
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [],
-  "author": "bloop",
+  "author": "toby1123yjh",
   "repository": {
     "type": "git",
-    "url": "https://github.com/toby1123yjh/easy-vibe-kanban"
+    "url": "https://github.com/toby1123yjh/vibe-studio"
   },
   "engines": {
     "node": ">=18.18.0"
   },
-  "license": "",
-  "description": "Local-first NPX wrapper around vibe-kanban and vibe-kanban-mcp",
+  "license": "Apache-2.0",
+  "description": "A multi-agent studio for independent developers and one-person companies",
   "devDependencies": {
     "esbuild": "^0.27.2"
   },

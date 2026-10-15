@@ -723,9 +723,9 @@ function MobileHeader({
   return (
     <header className="vk-mobile-header">
       <div className="vk-mobile-header__identity">
-        <span className="vk-shell-identity__mark">VK</span>
+        <span className="vk-shell-identity__mark">VS</span>
         <span>
-          <strong>Vibe Kanban</strong>
+          <strong>Vibe Studio</strong>
           <small>{adapter.environmentLabel}</small>
         </span>
       </div>
@@ -794,9 +794,9 @@ function MobileHeader({
 function Identity({ adapter }: { adapter: AppShellCapabilityAdapter }) {
   return (
     <div className="vk-shell-identity" data-tauri-drag-region>
-      <span className="vk-shell-identity__mark">VK</span>
+      <span className="vk-shell-identity__mark">VS</span>
       <span className="vk-shell-identity__copy">
-        <strong>Vibe Kanban</strong>
+        <strong>Vibe Studio</strong>
         <small>{adapter.environmentLabel}</small>
       </span>
     </div>
@@ -895,7 +895,7 @@ export function ProductSidebar(props: ProductSidebarProps) {
         className="vk-product-rail"
         aria-label={t('appShell.navigation.rail')}
       >
-        <span className="vk-shell-identity__mark">VK</span>
+        <span className="vk-shell-identity__mark">VS</span>
         <PrimaryNavigation
           adapter={props.adapter}
           newSession={props.newSession}

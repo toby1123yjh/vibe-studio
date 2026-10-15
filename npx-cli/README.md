@@ -1,183 +1,46 @@
-# Vibe Kanban
+# Vibe Studio
 
-> A visual project management tool for developers that integrates with git repositories and coding agents including Claude Code, Gemini, Codex, and Oh My Pi.
+A multi-agent studio for independent developers and one-person companies (OPCs).
+Use your agents in a browser, organise tasks and files, and connect agents through
+reusable workflows.
 
-## Quick Start
+## Start
 
-Run vibe kanban instantly without installation:
-
-```bash
-npx easy-vibe-kanban
-```
-
-This will launch the application locally and open it in your browser automatically.
-
-Helpful entrypoints:
+After the beta package is published, run:
 
 ```bash
-npx easy-vibe-kanban --help
-npx easy-vibe-kanban --version
-npx easy-vibe-kanban review --help
-npx easy-vibe-kanban mcp --help
+npx vibe-studio@beta
 ```
 
-## What is Vibe Kanban?
+Vibe Studio starts on your machine and opens in your browser. The current npm
+release includes Windows x64 and Linux x64 binaries. Node.js 18.18 or newer is
+required; Git is needed for Git repository features.
 
-Vibe Kanban is a modern project management tool designed specifically for developers. It helps you organize your coding projects with kanban-style task management while providing powerful integrations with git repositories and AI coding agents.
-
-### ✨ Key Features
-
-**🗂️ Project Management**
-
-- Add git repositories as projects (existing or create new ones)
-- Automatic git integration and repository validation
-- Project search functionality across all files
-- Custom setup and development scripts per project
-
-**📋 Task Management**
-
-- Create and manage tasks with kanban-style boards
-- Task status tracking (Todo, In Progress, Done)
-- Rich task descriptions and notes
-- Task execution with multiple AI agents
-
-**🤖 AI Agent Integration**
-
-- **Claude Code**: Anthropic's coding agent CLI
-- **Gemini**: Google's Gemini CLI coding agent
-- **Codex**: OpenAI's Codex CLI coding agent
-- **Oh My Pi**: The `omp` coding agent with stdio RPC integration
-- Create tasks and immediately start agent execution
-- Follow-up task execution for iterative development
-
-**⚡ Development Workflow**
-
-- Create isolated git worktrees for each task attempt
-- View diffs of changes made by agents
-- Merge successful changes back to main branch
-- Rebase task branches to stay up-to-date
-- Manual file editing and deletion
-- Integrated development server support
-
-**🎛️ Developer Tools**
-
-- Browse and validate git repositories from filesystem
-- Open task worktrees in your preferred editor (VS Code, Cursor, Windsurf, IntelliJ, Zed)
-- Real-time execution monitoring and process control
-- Stop running processes individually or all at once
-- Sound notifications for task completion
-
-## How It Works
-
-1. **Add Projects**: Import existing git repositories or create new ones
-2. **Create Tasks**: Define what needs to be built or fixed
-3. **Execute with AI**: Let coding agents work on your tasks in isolated environments
-4. **Review Changes**: See exactly what was modified using git diffs
-5. **Merge Results**: Incorporate successful changes into your main codebase
-
-## Core Functionality
-
-Vibe Kanban provides a complete project management experience with these key capabilities:
-
-**Project Repository Management**
-
-- Full CRUD operations for managing coding projects
-- Automatic git repository detection and validation
-- Initialize new repositories or import existing ones
-- Project-wide file search functionality
-
-**Task Lifecycle Management**
-
-- Create, update, and delete tasks with rich descriptions
-- Track task progress through customizable status workflows
-- One-click task creation with immediate AI agent execution
-- Task attempt tracking with detailed execution history
-
-**AI Agent Execution Environment**
-
-- Isolated git worktrees for safe code experimentation
-- Real-time execution monitoring and activity logging
-- Process management with ability to stop individual or all processes
-- Support for follow-up executions to iterate on solutions
-
-**Code Change Management**
-
-- View detailed diffs of all changes made during task execution
-- Branch status monitoring to track divergence from main
-- One-click merging of successful changes back to main branch
-- Automatic rebasing to keep task branches up-to-date
-- Manual file deletion and cleanup capabilities
-
-**Development Integration**
-
-- Open task worktrees directly in your preferred code editor
-- Start and manage development servers for testing changes
-- Browse local filesystem to add new projects
-- Health monitoring for service availability
-
-## Configuration
-
-Vibe Kanban supports customization through its configuration system:
-
-- **Editor Integration**: Choose your preferred code editor
-- **Sound Notifications**: Customize completion sounds
-- **Project Defaults**: Set default setup and development scripts
-
-## Technical Architecture
-
-- **Backend**: Rust with Axum web framework
-- **Frontend**: React with TypeScript
-- **Database**: SQLite for local data storage
-- **Git Integration**: Native git operations for repository management
-- **Process Management**: Tokio-based async execution monitoring
-
-## Requirements
-
-- Node.js (for npx execution)
-- Git (for repository operations)
-- Your preferred code editor (optional, for opening task worktrees)
-
-## Supported Platforms
-
-- Linux x64
-- Windows x64
-- macOS x64 (Intel)
-- macOS ARM64 (Apple Silicon)
-
-## Use Cases
-
-**🔧 Bug Fixes**
-
-- Create a task describing the bug
-- Let an AI agent analyze and fix the issue
-- Review the proposed changes
-- Merge if satisfied, or provide follow-up instructions
-
-**✨ Feature Development**
-
-- Break down features into manageable tasks
-- Use agents for initial implementation
-- Iterate with follow-up executions
-- Test using integrated development servers
-
-**🚀 Project Setup**
-
-- Bootstrap new projects with AI assistance
-- Set up development environments
-- Configure build and deployment scripts
-
-**📚 Code Documentation**
-
-- Generate documentation for existing code
-- Create README files and API documentation
-- Maintain up-to-date project information
-
----
-
-**Ready to supercharge your development workflow?**
+You can install Claude Code, Codex, Gemini CLI, Oh My Pi, OpenCode and DeepSeek
+Harness from the Agent Center, or use agents already installed on the same host.
+Configure credentials and models for the agents you use.
 
 ```bash
-npx easy-vibe-kanban
+npx vibe-studio@beta --help
+npx vibe-studio@beta --version
+npx vibe-studio@beta review --help
+npx vibe-studio@beta mcp --help
 ```
 
-_Start managing your projects with the power of AI coding agents today!_
+## Features
+
+- Agent conversations with native configuration, skills, MCP and commands.
+- Projects and tasks backed by local directories.
+- Multi-agent workflows with file handoffs and deliverables.
+- Shared-directory or isolated worktree execution.
+- Review changes and continue work from the same conversation.
+- API integration for external systems.
+
+## Development and releases
+
+Source, setup instructions and release status:
+[toby1123yjh/vibe-studio](https://github.com/toby1123yjh/vibe-studio).
+
+The package command is `vibe-studio`. Internal `vibe-kanban` executable names and
+data directories are retained so existing runtime and storage paths keep working.
+Based on [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI.

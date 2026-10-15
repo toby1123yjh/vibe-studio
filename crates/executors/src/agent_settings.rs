@@ -1875,7 +1875,7 @@ impl ProviderSettingsManager {
                     message: "Native configuration could not be parsed.".to_string(),
                     file_id: Some(file.spec.id.clone()),
                     setting_key: None,
-                    recovery: "Fix this file's syntax outside Vibe Kanban, then refresh."
+                    recovery: "Fix this file's syntax outside Vibe Studio, then refresh."
                         .to_string(),
                 });
             }
@@ -2103,7 +2103,7 @@ impl ProviderSettingsManager {
                 changed: rendered.before.as_deref() != Some(rendered.after.as_slice()),
             }],
             warnings: vec![
-                "Raw editing can change provider-native fields that Vibe Kanban does not interpret."
+                "Raw editing can change provider-native fields that Vibe Studio does not interpret."
                     .to_string(),
             ],
         })

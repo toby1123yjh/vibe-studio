@@ -10,8 +10,8 @@ icon: https://www.vibekanban.com/images/logos/openai-logo.svg
   npm install --global @openai/codex
   ```
 
-  Vibe Kanban launches the `codex app-server` command from your PATH. Keep
-  the CLI updated independently; Vibe Kanban does not bundle or pin a Codex
+  Vibe Studio launches the `codex app-server` command from your PATH. Keep
+  the CLI updated independently; Vibe Studio does not bundle or pin a Codex
   runtime version.
 </Step>
 
@@ -21,11 +21,11 @@ icon: https://www.vibekanban.com/images/logos/openai-logo.svg
   Alternatively, Codex can be used via the OpenAI API by setting the `OPENAI_API_KEY` environment variable. For more details, see the [OpenAI documentation](https://developers.openai.com/codex/pricing/#use-an-openai-api-key)
 </Step>
 
-<Step title="Start Vibe Kanban">
-  Once authenticated, launch Vibe Kanban:
+<Step title="Start Vibe Studio">
+  Once authenticated, launch Vibe Studio:
 
   ```bash
-  npx easy-vibe-kanban
+  npx vibe-studio@beta
   ```
 
   You can now select OpenAI Codex when creating task attempts.
@@ -34,12 +34,12 @@ icon: https://www.vibekanban.com/images/logos/openai-logo.svg
 
 ## Custom Configuration Directory
 
-By default, Codex stores its configuration and session data in `~/.codex`. If you have configured a custom location using the `CODEX_HOME` environment variable, Vibe Kanban will automatically detect and use that location.
+By default, Codex stores its configuration and session data in `~/.codex`. If you have configured a custom location using the `CODEX_HOME` environment variable, Vibe Studio will automatically detect and use that location.
 
 ```bash
 # Example: Using a project-specific Codex configuration
 export CODEX_HOME=/path/to/custom/codex
-npx easy-vibe-kanban
+npx vibe-studio@beta
 ```
 
 This is useful for:

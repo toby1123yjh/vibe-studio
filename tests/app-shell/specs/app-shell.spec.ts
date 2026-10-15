@@ -21,7 +21,7 @@ test("desktop keeps fixed shell zones and automatically pages the middle object 
   const system = sidebar.locator(".vk-system-zone");
 
   await expect(sidebar).toBeVisible();
-  await expect(identity).toContainText("Vibe Kanban");
+  await expect(identity).toContainText("Vibe Studio");
   await expect(identity).toContainText("Fixture / Local");
   await expect(primary.getByRole("button")).toHaveCount(6);
   const unavailableWorkflow = primary.getByRole("button", {

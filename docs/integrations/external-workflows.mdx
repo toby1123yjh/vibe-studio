@@ -3,7 +3,7 @@ title: "External workflow API"
 description: "Create projects and Tasks, upload materials, and run prepared workflows from another system."
 ---
 
-You can use Vibe Kanban as a workflow service for documents, research, coding, or other file-based work. Your application creates a project and a Task, selects a workflow prepared in Vibe Kanban, and submits an asynchronous run. Files stay in the project's working directory.
+You can use Vibe Studio as a workflow service for documents, research, coding, or other file-based work. Your application creates a project and a Task, selects a workflow prepared in Vibe Studio, and submits an asynchronous run. Files stay in the project's working directory.
 
 You use the same HTTP API from the same machine or another machine. You do not need a Git repository for ordinary workflows. Nodes with Git-specific requirements, such as Arena nodes, still require a suitable repository.
 
@@ -13,17 +13,17 @@ A **Task** describes the work you want done. An **Execution** is an Agent, Workf
 
 On an execution host, your project's `.vibe-kanban/project.json` stores its task definitions, statuses, tags, and task relationships. The board, local API, external API, and workflow main agent use the same data. The host database keeps local execution and conversation records, plus an index derived from the project document.
 
-To move your tasks to another host, copy the project directory, including `.vibe-kanban`, then open that directory as a project in Vibe Kanban. Existing project and task identities are retained. Opening the directory does not start an agent.
+To move your tasks to another host, copy the project directory, including `.vibe-kanban`, then open that directory as a project in Vibe Studio. Existing project and task identities are retained. Opening the directory does not start an agent.
 
 <Note>
 This moves business task data, not conversations, execution history, workflow templates, credentials, or running processes. Configure agents and workflow templates on the destination host before starting new work.
 </Note>
 
-If a registered project document is missing or invalid, task operations report an error. They do not restore old task content from the host database or overwrite the document with an empty board. Keep `.vibe-kanban` in your project backups. Removing a project from Vibe Kanban does not delete its working directory.
+If a registered project document is missing or invalid, task operations report an error. They do not restore old task content from the host database or overwrite the document with an empty board. Keep `.vibe-kanban` in your project backups. Removing a project from Vibe Studio does not delete its working directory.
 
 ## Prepare access
 
-In Vibe Kanban, configure your agents, prepare a workflow template, and turn on **Allow external calls** on its template card. Open **Settings → External integrations**, create an integration, and copy its API key when it appears. You cannot retrieve the plaintext key afterwards.
+In Vibe Studio, configure your agents, prepare a workflow template, and turn on **Allow external calls** on its template card. Open **Settings → External integrations**, create an integration, and copy its API key when it appears. You cannot retrieve the plaintext key afterwards.
 
 Grant the integration access to each existing project it needs. A project created through the integration API automatically grants access to its creating integration. The built-in default project is not available through this API.
 
@@ -44,7 +44,7 @@ Set `VK_BASE_URL` to your running service address and `VK_API_KEY` to the key yo
 
 ```bash
 set -euo pipefail
-read -r -p 'Vibe Kanban base URL: ' VK_BASE_URL
+read -r -p 'Vibe Studio base URL: ' VK_BASE_URL
 read -r -s -p 'Integration API key: ' VK_API_KEY
 printf '\n'
 VK_API="${VK_BASE_URL%/}/api/integrations/v1"
@@ -68,7 +68,7 @@ PROJECT_ID=$(curl --fail-with-body --silent --show-error \
   --data '{"name":"Research documents"}' | jq -er '.data.id')
 ```
 
-The response returns the ordinary Vibe Kanban project ID. Vibe Kanban allocates its own directory beneath the configured default working directory. You do not send an absolute server path. To use an existing authorised project, set `PROJECT_ID` to that project's ID instead.
+The response returns the ordinary Vibe Studio project ID. Vibe Studio allocates its own directory beneath the configured default working directory. You do not send an absolute server path. To use an existing authorised project, set `PROJECT_ID` to that project's ID instead.
 
 </Step>
 <Step title="Upload your materials">
@@ -95,7 +95,7 @@ TASK_ID=$(curl --fail-with-body --silent --show-error \
   | jq -er '.data.id')
 ```
 
-You can optionally supply a `status_id` belonging to this project. Otherwise, Vibe Kanban uses its first visible status. Creating the Task does not start execution.
+You can optionally supply a `status_id` belonging to this project. Otherwise, Vibe Studio uses its first visible status. Creating the Task does not start execution.
 
 </Step>
 <Step title="Select a prepared template and create a workflow execution">
@@ -167,7 +167,7 @@ Downloads return the file's current contents, not a snapshot of the run.
 
 ## Queue, status, and cancellation
 
-Only one workflow run occupies a project's execution slot at a time. Runs submitted from Vibe Kanban and from external integrations share this queue. Waiting for a human decision, an Arena result, or cancellation to finish keeps that slot occupied. Other projects have independent queues.
+Only one workflow run occupies a project's execution slot at a time. Runs submitted from Vibe Studio and from external integrations share this queue. Waiting for a human decision, an Arena result, or cancellation to finish keeps that slot occupied. Other projects have independent queues.
 
 | Field | Value | Meaning |
 | --- | --- | --- |
@@ -212,7 +212,7 @@ Use the returned interaction `id`, not just the Node name. Each interaction iden
 | Choose condition branches | `{"action":"select_branch","selected_target_node_ids":["approved"],"reason":"Ready to proceed"}` |
 | Choose an Arena winner | `{"action":"select_arena_winner","candidate_id":"UUID of the chosen candidate"}` |
 
-Use the interaction's `branch_targets` for branch choices and `arena_candidate_ids` for Arena choices. Replaying a consumed or stale interaction cannot authorise a later iteration. You can also handle these decisions inside Vibe Kanban. Agent-native tool permission requests remain in Vibe Kanban's existing agent approval interface; they are not workflow interactions.
+Use the interaction's `branch_targets` for branch choices and `arena_candidate_ids` for Arena choices. Replaying a consumed or stale interaction cannot authorise a later iteration. You can also handle these decisions inside Vibe Studio. Agent-native tool permission requests remain in Vibe Studio's existing agent approval interface; they are not workflow interactions.
 
 ## Files and change evidence
 
@@ -278,7 +278,7 @@ Errors use `success: false` with `error_data.code`, `error_data.message`, and a 
 | 404 `not_found` | Check that the resource or file still exists |
 | 409 `idempotency_conflict` | Restore the original request body or use a new key for a new operation |
 | 409 `file_exists` | Inspect the destination; opt into overwrite only if intended |
-| `project_space_required` | Configure a single existing working directory for the project in Vibe Kanban |
+| `project_space_required` | Configure a single existing working directory for the project in Vibe Studio |
 | 409 `conflict` | Read the message; the task, template, directory, or interaction state no longer permits the operation |
 | Other 4xx `invalid_request` | Correct the request fields or relative path |
 | 5xx `internal_error` | Check server logs; retry creation with the same key |

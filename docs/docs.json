@@ -1,8 +1,8 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Vibe Kanban",
-  "description": "A kanban board for developers to track coding tasks with AI coding agents",
+  "name": "Vibe Studio",
+  "description": "A multi-agent studio for independent developers and one-person companies",
   "appearance": {
     "default": "light"
   },
@@ -125,13 +125,13 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/BloopAI/vibe-kanban"
+        "href": "https://github.com/toby1123yjh/vibe-studio"
       }
     ],
     "primary": {
       "type": "button",
       "label": "Get Started",
-      "href": "https://vibekanban.com/docs"
+      "href": "/getting-started"
     }
   },
   "contextual": {
@@ -164,8 +164,7 @@
   ],
   "footer": {
     "socials": {
-      "github": "https://github.com/BloopAI/vibe-kanban",
-      "x": "https://x.com/vibekanban"
+      "github": "https://github.com/toby1123yjh/vibe-studio"
     }
   }
 }

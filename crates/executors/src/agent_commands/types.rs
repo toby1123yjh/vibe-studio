@@ -632,7 +632,7 @@ pub enum AgentCommandError {
     NotFound(String),
     #[error("command already exists: {0}")]
     Collision(String),
-    #[error("command changed outside Vibe Kanban; refresh and retry")]
+    #[error("command changed outside Vibe Studio; refresh and retry")]
     StaleRevision,
     #[error("unsupported command operation: {0}")]
     Unsupported(String),

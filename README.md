@@ -2,15 +2,15 @@
   <picture>
     <source srcset="packages/public/vibe-kanban-logo-dark.svg" media="(prefers-color-scheme: dark)">
     <source srcset="packages/public/vibe-kanban-logo.svg" media="(prefers-color-scheme: light)">
-    <img src="packages/public/vibe-kanban-logo.svg" alt="easy-vibe-kanban logo">
+    <img src="packages/public/vibe-kanban-logo.svg" alt="Vibe Studio logo">
   </picture>
 </p>
 
-<p align="center"><strong>Your AI agents, together in one web interface.</strong></p>
-<p align="center">Install and use agent CLIs, manage their settings and tools, then organize bigger work with projects, Tasks, and multi-agent workflows.</p>
+<p align="center"><strong>A multi-agent studio for independent developers and one-person companies.</strong></p>
+<p align="center">Install and use AI agents in one web interface. Manage their settings and tools, then bring them together to build products, research ideas, and create deliverables.</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easy-vibe-kanban"><img alt="npm beta" src="https://img.shields.io/npm/v/easy-vibe-kanban/beta?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/vibe-studio"><img alt="npm beta" src="https://img.shields.io/npm/v/vibe-studio/beta?style=flat-square" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" /></a>
 </p>
 
@@ -21,12 +21,12 @@
 Install [Node.js](https://nodejs.org/) (22 recommended), then run:
 
 ```bash
-npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban@beta
+npx --yes --registry https://registry.npmjs.org/ vibe-studio@beta
 ```
 
-The current 2.0 version line is published under the npm `beta` tag; omitting `@beta` selects the older `latest` channel. Published builds currently cover **Linux x64 and Windows x64**. Rust is not needed to run the npm package.
+The 2.0 version line uses the npm `beta` tag. The renamed `vibe-studio` package becomes available after its first successful release; check the [release workflow](https://github.com/toby1123yjh/vibe-studio/actions/workflows/publish-easy-npx.yml) for publication status. Release builds target **Linux x64 and Windows x64**. Rust is not needed to run the npm package.
 
-Open the address printed at startup. Vibe Kanban manages the machine running its service: agent CLIs, configuration, project files, and execution all live on that host, even when you access the web UI from elsewhere.
+Open the address printed at startup. Vibe Studio manages the machine running its service: agent CLIs, configuration, project files, and execution all live on that host, even when you access the web UI from elsewhere.
 
 ### Connect an agent
 
@@ -37,7 +37,7 @@ Open **Agents → Agent Center**:
 3. Complete the agent's own login or API-key setup. Installation is not authentication, and scanning cannot verify every provider's login state.
 4. Manage the settings the agent supports—such as API key, API base URL, model, and reasoning effort—alongside its MCP servers, skills, and commands.
 
-Manual installation remains supported. If the preset installer fails, install the CLI on the same host yourself and rescan; there is no need to recreate your Vibe Kanban setup.
+Manual installation remains supported. If the preset installer fails, install the CLI on the same host yourself and rescan; there is no need to recreate your Vibe Studio setup.
 
 | Agent | Native runtime | Setup |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ Manual installation remains supported. If the preset installer fails, install th
 | OpenCode | `opencode` over ACP | [Guide](docs/agents/opencode.mdx) |
 | DeepSeek Harness | `dsh` over ACP · developer preview | [Guide](docs/agents/deepseek-harness.mdx) |
 
-Agent capabilities and authentication methods differ. Vibe Kanban uses your installed CLIs rather than bundling a fixed version of each agent.
+Agent capabilities and authentication methods differ. Vibe Studio uses your installed CLIs rather than bundling a fixed version of each agent.
 
 ## Start your first conversation
 
@@ -100,7 +100,7 @@ Start → Plan ─────┤              ├→ Review → Produce report 
 
 ## Connect another system
 
-The external workflow API lets another application create or reuse a project, create a Task, upload materials, and submit an asynchronous run of a workflow prepared in Vibe Kanban. It can query status, handle pending human decisions, cancel work, and browse or download project files.
+The external workflow API lets another application create or reuse a project, create a Task, upload materials, and submit an asynchronous run of a workflow prepared in Vibe Studio. It can query status, handle pending human decisions, cancel work, and browse or download project files.
 
 Configure an integration key, grant project access, and enable external calls on the workflow. Requests use project IDs and project-relative paths, not arbitrary server paths. A project runs at most one active workflow execution at a time; additional accepted requests queue.
 
@@ -114,8 +114,8 @@ See the [external workflow API guide](docs/integrations/external-workflows.mdx) 
 
 - Project Task definitions, statuses, tags, and relationships live in `.vibe-kanban/project.json`. The board and external API use this same project-owned data.
 - The host database keeps local conversation, execution, and runtime records. Moving a project directory does not move those records, credentials, workflow templates, or running processes.
-- Provider-native sessions and configuration stay in the provider's own locations. They are not automatically imported into Vibe Kanban's history.
-- Removing a project from Vibe Kanban does not delete its working directory.
+- Provider-native sessions and configuration stay in the provider's own locations. They are not automatically imported into Vibe Studio's history.
+- Removing a project from Vibe Studio does not delete its working directory.
 
 ## Development
 
@@ -148,6 +148,6 @@ The frontend is in `packages/local-web` and `packages/web-core`; the backend is 
 
 ## Acknowledgements and license
 
-easy-vibe-kanban is an independently maintained fork of [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI. Thanks to the original team for building and open-sourcing it.
+Vibe Studio is an independently maintained fork of [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI. Thanks to the original team for building and open-sourcing it.
 
 Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution details.

@@ -296,7 +296,7 @@
   "ok": "OK",
   "error": "エラー",
   "oauth": {
-    "title": "Vibe Kanbanにサインイン",
+    "title": "Vibe Studioにサインイン",
     "description": "サインインして組織に参加し、チームとタスクを共有します",
     "continueWithGitHub": "GitHubで続行",
     "continueWithGoogle": "Googleで続行",
@@ -482,7 +482,7 @@
   "workspacesGuide": {
     "welcome": {
       "title": "ようこそ",
-      "content": "Vibe Kanbanの新しいUIであるWorkspacesへようこそ。早期フィードバックのために一部のユーザーに先行公開しています。ナビバーのフィードバックアイコンからいつでもご意見をお聞かせください。"
+      "content": "Vibe Studioの新しいUIであるWorkspacesへようこそ。早期フィードバックのために一部のユーザーに先行公開しています。ナビバーのフィードバックアイコンからいつでもご意見をお聞かせください。"
     },
     "commandBar": {
       "title": "コマンドバー",
@@ -722,7 +722,7 @@
     "projectsGuide": {
       "intro": {
         "title": "Welcome",
-        "content": "Welcome to Vibe Kanban. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
+        "content": "Welcome to Vibe Studio. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
       },
       "welcome": {
         "title": "Projects",
@@ -738,7 +738,7 @@
       },
       "organizations": {
         "title": "Invite your team",
-        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Kanban. Export your cloud data before shutdown."
+        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Studio. Export your cloud data before shutdown."
       }
     }
   },
@@ -1084,7 +1084,7 @@
     "commands": {
       "manager": {
         "title": "ネイティブコマンド",
-        "description": "選択した Agent の Provider ネイティブなプロンプトコマンドを検出・管理します。Vibe Kanban は Adapter が承認したフィールドのみを使用します。"
+        "description": "選択した Agent の Provider ネイティブなプロンプトコマンドを検出・管理します。Vibe Studio は Adapter が承認したフィールドのみを使用します。"
       },
       "actions": {
         "refresh": "更新",
@@ -1165,7 +1165,7 @@
       "errors": {
         "operationFailed": "コマンド操作に失敗しました。",
         "operationCode": "{{message}}（{{code}}）",
-        "staleRevision": "このコマンドは Vibe Kanban の外部で変更されました。更新してから再試行してください。"
+        "staleRevision": "このコマンドは Vibe Studio の外部で変更されました。更新してから再試行してください。"
       },
       "notices": {
         "saved": "コマンド一覧を更新しました。"

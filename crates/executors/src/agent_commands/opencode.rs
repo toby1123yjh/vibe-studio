@@ -110,7 +110,7 @@ pub(super) fn render(
     markdown::render(source, &[("description", description.as_deref())], body)
 }
 
-pub(super) const LIMITATION: &str = "OpenCode Markdown commands are managed natively. Inline JSONC commands are shown read-only with separate provenance; precedence depends on native config-directory/inline layers. Legacy alias commands cannot be moved into disabled storage. Templates are never evaluated by Vibe Kanban. ACP does not support /undo or /redo.";
+pub(super) const LIMITATION: &str = "OpenCode Markdown commands are managed natively. Inline JSONC commands are shown read-only with separate provenance; precedence depends on native config-directory/inline layers. Legacy alias commands cannot be moved into disabled storage. Templates are never evaluated by Vibe Studio. ACP does not support /undo or /redo.";
 
 #[cfg(test)]
 mod tests {

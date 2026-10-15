@@ -34,7 +34,7 @@ import { RemoteCloudHostsSettingsCardContent } from './RemoteCloudHostsSettingsC
 
 const RELAY_PAIRED_CLIENTS_QUERY_KEY = ['relay', 'paired-clients'] as const;
 const RELAY_REMOTE_CONTROL_DOCS_URL =
-  'https://www.vibekanban.com/docs/remote-control';
+  'https://github.com/toby1123yjh/vibe-studio/blob/main/docs/self-hosting/deploy-docker.mdx#optional-enable-relaytunnel-in-production';
 
 interface RelaySettingsSectionInitialState {
   hostId?: string;

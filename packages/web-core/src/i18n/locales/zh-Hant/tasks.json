@@ -15,8 +15,8 @@
     "stopFailed": "智能體尚未停止，執行和工作階段已保留，請稍後重試。",
     "taskTitle": "刪除 執行 和工作階段？",
     "sessionTitle": "刪除工作階段？",
-    "taskDescription": "從 Vibe Kanban 刪除「{{name}}」及其綁定工作階段的歷史記錄？任務、專案、工作空間、其他 執行 和工作階段、工作檔案及 智能體 原生歷史記錄均會保留。此操作無法復原。",
-    "sessionDescription": "從 Vibe Kanban 刪除工作階段「{{name}}」及其歷史記錄？工作空間、其他工作階段、工作檔案及 智能體 原生歷史記錄均會保留。此操作無法復原。",
+    "taskDescription": "從 Vibe Studio 刪除「{{name}}」及其綁定工作階段的歷史記錄？任務、專案、工作空間、其他 執行 和工作階段、工作檔案及 智能體 原生歷史記錄均會保留。此操作無法復原。",
+    "sessionDescription": "從 Vibe Studio 刪除工作階段「{{name}}」及其歷史記錄？工作空間、其他工作階段、工作檔案及 智能體 原生歷史記錄均會保留。此操作無法復原。",
     "resolving": "正在檢查目前 執行 與工作階段的綁定關係…",
     "deleteTask": "刪除 執行 和工作階段",
     "deleteSession": "刪除工作階段",
@@ -203,7 +203,7 @@
       "prMerged": "PR #{{number}} 已合併",
       "loginRequired": {
         "title": "登入以管理 Git 操作",
-        "description": "登入 Vibe Kanban，才能推送分支、合併變更或為此任務建立 PR。",
+        "description": "登入 Vibe Studio，才能推送分支、合併變更或為此任務建立 PR。",
         "action": "登入"
       }
     },
@@ -521,7 +521,7 @@
       "renaming": "正在重新命名...",
       "delete": "刪除工作階段",
       "deleteTitle": "刪除工作階段？",
-      "deleteDescription": "這會刪除 Vibe Kanban 中的工作階段歷史，不會影響工作空間檔案或智能體原生歷史。",
+      "deleteDescription": "這會刪除 Vibe Studio 中的工作階段歷史，不會影響工作空間檔案或智能體原生歷史。",
       "deleteFailed": "無法刪除工作階段",
       "deleteFailedDescription": "工作階段刪除失敗。"
     },

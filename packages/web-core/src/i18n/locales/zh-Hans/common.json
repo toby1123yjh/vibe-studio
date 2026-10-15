@@ -6,7 +6,7 @@
   },
   "releaseNotes": {
     "title": "更新日志",
-    "description": "了解 Vibe Kanban 的最新变化。",
+    "description": "了解 Vibe Studio 的最新变化。",
     "loading": "正在加载更新日志",
     "loadingDescription": "正在获取最新更新...",
     "failed": "无法加载更新日志",
@@ -342,7 +342,7 @@
   "ok": "确定",
   "error": "错误",
   "oauth": {
-    "title": "登录 Vibe Kanban",
+    "title": "登录 Vibe Studio",
     "description": "登录以加入组织并与团队共享任务",
     "continueWithGitHub": "使用 GitHub 继续",
     "continueWithGoogle": "使用 Google 继续",
@@ -1336,7 +1336,7 @@
   "workspacesGuide": {
     "welcome": {
       "title": "欢迎",
-      "content": "欢迎使用 Workspaces，这是 Vibe Kanban 的全新设计界面。我们正在向部分用户推出以获取早期反馈。您可以随时通过导航栏中的反馈图标分享您的想法。"
+      "content": "欢迎使用 Workspaces，这是 Vibe Studio 的全新设计界面。我们正在向部分用户推出以获取早期反馈。您可以随时通过导航栏中的反馈图标分享您的想法。"
     },
     "commandBar": {
       "title": "命令栏",
@@ -1576,7 +1576,7 @@
     "projectsGuide": {
       "intro": {
         "title": "欢迎",
-        "content": "欢迎使用 Vibe Kanban。使用此面板中的帮助内容了解基本流程，然后创建第一个任务。你可以随时从导航栏重新打开此帮助对话框或提交反馈。"
+        "content": "欢迎使用 Vibe Studio。使用此面板中的帮助内容了解基本流程，然后创建第一个任务。你可以随时从导航栏重新打开此帮助对话框或提交反馈。"
       },
       "welcome": {
         "title": "项目",
@@ -1592,7 +1592,7 @@
       },
       "organizations": {
         "title": "邀请你的团队",
-        "content": "我们已自动创建个人组织和初始项目，方便你开始使用 Vibe Kanban。关闭前请导出云端数据。"
+        "content": "我们已自动创建个人组织和初始项目，方便你开始使用 Vibe Studio。关闭前请导出云端数据。"
       }
     }
   },
@@ -1961,7 +1961,7 @@
     "commands": {
       "manager": {
         "title": "原生命令",
-        "description": "发现并管理当前智能体的原生提示词命令。Vibe Kanban 只使用适配器批准的字段。"
+        "description": "发现并管理当前智能体的原生提示词命令。Vibe Studio 只使用适配器批准的字段。"
       },
       "actions": {
         "refresh": "刷新",
@@ -2042,7 +2042,7 @@
       "errors": {
         "operationFailed": "命令操作失败。",
         "operationCode": "{{message}}（{{code}}）",
-        "staleRevision": "此命令已在 Vibe Kanban 外部发生变化，请刷新后重试。"
+        "staleRevision": "此命令已在 Vibe Studio 外部发生变化，请刷新后重试。"
       },
       "notices": {
         "saved": "命令清单已更新。"

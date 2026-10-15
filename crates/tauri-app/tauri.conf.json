@@ -32,8 +32,8 @@
       "icons/icon.ico"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "AI-powered development workspace",
-    "longDescription": "Vibe Kanban: Collaborative AI workspace for software development",
+    "shortDescription": "Multi-agent studio for independent creators",
+    "longDescription": "Vibe Studio: A multi-agent studio for independent developers and one-person companies",
     "createUpdaterArtifacts": true
   },
   "plugins": {

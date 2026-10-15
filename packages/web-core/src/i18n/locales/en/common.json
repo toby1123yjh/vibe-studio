@@ -6,7 +6,7 @@
   },
   "releaseNotes": {
     "title": "Release notes",
-    "description": "What's new in Vibe Kanban.",
+    "description": "What's new in Vibe Studio.",
     "loading": "Loading release notes",
     "loadingDescription": "Fetching the latest updates...",
     "failed": "Could not load release notes",
@@ -347,7 +347,7 @@
   },
   "personal": "Personal",
   "oauth": {
-    "title": "Sign in to Vibe Kanban",
+    "title": "Sign in to Vibe Studio",
     "description": "Sign in to join organizations and share tasks with your team",
     "continueWithGitHub": "Continue with GitHub",
     "continueWithGoogle": "Continue with Google",
@@ -1591,7 +1591,7 @@
     "projectsGuide": {
       "intro": {
         "title": "Welcome",
-        "content": "Welcome to Vibe Kanban. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
+        "content": "Welcome to Vibe Studio. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
       },
       "welcome": {
         "title": "Projects",
@@ -1607,7 +1607,7 @@
       },
       "organizations": {
         "title": "Invite your team",
-        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Kanban. Export your cloud data before shutdown."
+        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Studio. Export your cloud data before shutdown."
       }
     }
   },
@@ -1851,7 +1851,7 @@
     "commands": {
       "manager": {
         "title": "Native Commands",
-        "description": "Discover and manage the selected Agent's provider-native prompt commands. Vibe Kanban only uses the fields approved by the adapter."
+        "description": "Discover and manage the selected Agent's provider-native prompt commands. Vibe Studio only uses the fields approved by the adapter."
       },
       "actions": {
         "refresh": "Refresh",
@@ -1932,7 +1932,7 @@
       "errors": {
         "operationFailed": "The command operation failed.",
         "operationCode": "{{message}} ({{code}})",
-        "staleRevision": "This command changed outside Vibe Kanban. Refresh before trying again."
+        "staleRevision": "This command changed outside Vibe Studio. Refresh before trying again."
       },
       "notices": {
         "saved": "Command inventory updated."

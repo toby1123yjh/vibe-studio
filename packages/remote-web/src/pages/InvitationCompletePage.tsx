@@ -108,7 +108,7 @@ export default function InvitationCompletePage() {
           </p>
           <Button asChild className="mt-double min-h-11" size="lg">
             <a
-              href="https://www.vibekanban.com/docs/getting-started"
+              href="https://github.com/toby1123yjh/vibe-studio/blob/main/docs/getting-started.mdx"
               target="_blank"
               rel="noopener noreferrer"
             >

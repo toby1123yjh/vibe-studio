@@ -296,7 +296,7 @@
   "ok": "OK",
   "error": "Error",
   "oauth": {
-    "title": "Iniciar sesión en Vibe Kanban",
+    "title": "Iniciar sesión en Vibe Studio",
     "description": "Inicia sesión para unirte a organizaciones y compartir tareas con tu equipo",
     "continueWithGitHub": "Continuar con GitHub",
     "continueWithGoogle": "Continuar con Google",
@@ -482,7 +482,7 @@
   "workspacesGuide": {
     "welcome": {
       "title": "Bienvenido",
-      "content": "Bienvenido a Workspaces, una interfaz rediseñada para Vibe Kanban. Estamos lanzando esto a usuarios seleccionados para recibir comentarios tempranos. Comparte tus opiniones en cualquier momento usando el ícono de comentarios en la barra de navegación."
+      "content": "Bienvenido a Workspaces, una interfaz rediseñada para Vibe Studio. Estamos lanzando esto a usuarios seleccionados para recibir comentarios tempranos. Comparte tus opiniones en cualquier momento usando el ícono de comentarios en la barra de navegación."
     },
     "commandBar": {
       "title": "Barra de comandos",
@@ -722,7 +722,7 @@
     "projectsGuide": {
       "intro": {
         "title": "Welcome",
-        "content": "Welcome to Vibe Kanban. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
+        "content": "Welcome to Vibe Studio. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
       },
       "welcome": {
         "title": "Projects",
@@ -738,7 +738,7 @@
       },
       "organizations": {
         "title": "Invite your team",
-        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Kanban. Export your cloud data before shutdown."
+        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Studio. Export your cloud data before shutdown."
       }
     }
   },
@@ -1084,7 +1084,7 @@
     "commands": {
       "manager": {
         "title": "Comandos nativos",
-        "description": "Detecta y gestiona los comandos de prompt nativos del Agent seleccionado. Vibe Kanban solo usa los campos aprobados por el adaptador."
+        "description": "Detecta y gestiona los comandos de prompt nativos del Agent seleccionado. Vibe Studio solo usa los campos aprobados por el adaptador."
       },
       "actions": {
         "refresh": "Actualizar",
@@ -1165,7 +1165,7 @@
       "errors": {
         "operationFailed": "La operación del comando ha fallado.",
         "operationCode": "{{message}} ({{code}})",
-        "staleRevision": "Este comando cambió fuera de Vibe Kanban. Actualiza antes de volver a intentarlo."
+        "staleRevision": "Este comando cambió fuera de Vibe Studio. Actualiza antes de volver a intentarlo."
       },
       "notices": {
         "saved": "Inventario de comandos actualizado."

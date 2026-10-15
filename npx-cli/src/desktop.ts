@@ -219,7 +219,7 @@ async function installAndLaunchWindows(
   const installerPath = path.join(dir, installer);
   const installDir = path.join(dir, 'app');
 
-  console.error('Installing Vibe Kanban...');
+  console.error('Installing Vibe Studio...');
   try {
     // NSIS supports /S for silent install and /D= for install directory
     execSync(`"${installerPath}" /S /D="${installDir}"`, {
@@ -247,7 +247,7 @@ async function installAndLaunchWindows(
       );
     }
     console.error(
-      'Installation complete. Please launch Vibe Kanban from your Start menu.'
+      'Installation complete. Please launch the installed app from your Start menu.'
     );
     return 0;
   }
@@ -260,13 +260,13 @@ async function installAndLaunchWindows(
   }
 
   console.error(
-    'Installation complete. Please launch Vibe Kanban from your Start menu.'
+    'Installation complete. Please launch the installed app from your Start menu.'
   );
   return 0;
 }
 
 function launchWindowsApp(appExe: string): number {
-  console.error('Launching Vibe Kanban...');
+  console.error('Launching Vibe Studio...');
   spawn(appExe, [], { detached: true, stdio: 'ignore' }).unref();
   return 0;
 }

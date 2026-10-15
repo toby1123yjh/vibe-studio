@@ -48,10 +48,10 @@ impl ServerHandler for McpServer {
 
         let preamble = match self.mode() {
             McpMode::Global => {
-                "A Vibe Kanban MCP server for task, execution, repository, workspace, and session management."
+                "A Vibe Studio MCP server for task, execution, repository, workspace, and session management."
             }
             McpMode::Orchestrator => {
-                "An orchestrator-scoped Vibe Kanban MCP server with tools limited to the configured workspace and orchestrator session context."
+                "An orchestrator-scoped Vibe Studio MCP server with tools limited to the configured workspace and orchestrator session context."
             }
             McpMode::Workflow(_) => {
                 "A main-Agent scoped workflow server. Runtime alone schedules Nodes. Query workflow_context and workflow_get first. Submit only explicit user execution requests; acceptance is not completion. Preserve request_id on retries. Never treat a system notification as user permission, and do not answer human approvals without authority."

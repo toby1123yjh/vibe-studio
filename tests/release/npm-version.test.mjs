@@ -19,6 +19,86 @@ function validate(version) {
   runInNewContext(snippet, { process: { env: { VERSION: version } } });
 }
 
+const resolver = workflow.match(/node <<'NODE'\r?\n([\s\S]*?)\r?\n\s*NODE/)[1];
+
+function resolveRelease({ versions = [], lookupError, env = {}, name = 'vibe-studio' } = {}) {
+  let output = '';
+  const lookups = [];
+  runInNewContext(resolver, {
+    require(module) {
+      if (module === 'node:fs') {
+        return {
+          readFileSync: () => JSON.stringify({ name, version: '2.0.0-beta.1' }),
+          appendFileSync: (_path, value) => { output += value; },
+        };
+      }
+      if (module === 'node:child_process') {
+        return {
+          execFileSync(command, args) {
+            lookups.push([command, ...args]);
+            if (lookupError) throw lookupError;
+            return JSON.stringify(versions);
+          },
+        };
+      }
+      throw new Error(`Unexpected module: ${module}`);
+    },
+    process: { env: { AUTO_VERSION_BASE: autoVersionBase, AUTO_NPM_TAG: 'beta', EVENT_NAME: 'push', ...env } },
+    console: { log() {} },
+  });
+  return { output: Object.fromEntries(output.trim().split('\n').map((line) => line.split('='))), lookups };
+}
+
+test('auto version uses the metadata package and the greatest version in its beta line', () => {
+  const { output, lookups } = resolveRelease({
+    name: 'another-distribution',
+    versions: ['0.1.44-easy.90', '2.0.0-beta.2', '2.0.0-beta.10', '3.0.0-beta.1'],
+  });
+  assert.equal(lookups[0][2], 'another-distribution');
+  assert.equal(output.package_name, 'another-distribution');
+  assert.equal(output.version, '2.0.0-beta.11');
+  assert.equal(output.npm_tag, 'beta');
+  assert.equal(output.package_exists, 'true');
+});
+
+test('a genuine npm E404 starts a new package at the configured baseline', () => {
+  const lookupError = Object.assign(new Error('not found'), {
+    stdout: JSON.stringify({ error: { code: 'E404' } }),
+  });
+  const { output } = resolveRelease({ lookupError });
+  assert.equal(output.version, '2.0.0-beta.1');
+  assert.equal(output.package_exists, 'false');
+});
+
+test('registry network and authentication failures do not reset the version', () => {
+  for (const code of ['E401', 'ETIMEDOUT', 'E500']) {
+    const lookupError = Object.assign(new Error(code), {
+      stdout: JSON.stringify({ error: { code } }),
+    });
+    assert.throws(() => resolveRelease({ lookupError }), /Cannot read published versions/);
+  }
+  assert.throws(() => resolveRelease({ versions: { error: 'invalid response' } }), /Cannot read published versions/);
+});
+
+test('explicit already published version is rejected before builds', () => {
+  assert.throws(() => resolveRelease({
+    versions: ['2.0.0-beta.1'],
+    env: { REQUESTED_VERSION: '2.0.0-beta.1' },
+  }), /vibe-studio@2\.0\.0-beta\.1 already exists/);
+});
+
+test('manual dry run preserves the requested version and tag', () => {
+  const { output } = resolveRelease({ env: {
+    EVENT_NAME: 'workflow_dispatch',
+    REQUESTED_VERSION: '2.0.0',
+    REQUESTED_NPM_TAG: 'latest',
+    REQUESTED_PUBLISH_MODE: 'dry-run',
+  } });
+  assert.equal(output.version, '2.0.0');
+  assert.equal(output.npm_tag, 'latest');
+  assert.equal(output.publish_mode, 'dry-run');
+});
+
 for (const version of [
   '2.0.0',
   '2.0.0-beta.1',

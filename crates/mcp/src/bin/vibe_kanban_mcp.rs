@@ -167,7 +167,7 @@ fn init_process_logging(log_prefix: &str, version: &str) {
         .init();
 
     tracing::debug!(
-        "[{}] Starting Vibe Kanban MCP server version {}...",
+        "[{}] Starting Vibe Studio MCP server version {}...",
         log_prefix,
         version
     );

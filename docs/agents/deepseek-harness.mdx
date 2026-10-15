@@ -3,12 +3,12 @@ title: "DeepSeek Harness"
 description: "Use DeepSeek Harness through its native ACP profile"
 ---
 
-Vibe Kanban launches your installed `dsh --profile acp` executable. You can use
+Vibe Studio launches your installed `dsh --profile acp` executable. You can use
 DeepSeek Harness in ordinary sessions, workflow Nodes and the main Agent.
 
 <Warning>
   DeepSeek Harness is a developer preview. Upstream may make breaking protocol
-  or configuration changes. Vibe Kanban uses your locally installed version;
+  or configuration changes. Vibe Studio uses your locally installed version;
   installation alone does not confirm that model authentication works.
 </Warning>
 
@@ -24,7 +24,7 @@ Configure a model route and its credentials following the
 [DeepSeek Harness provider guide](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.md).
 The server process must have the same environment and user directory that hold
 your native configuration. After a manual installation, rescan the host in
-Vibe Kanban. Use a command override if `dsh` is not on the server's PATH.
+Vibe Studio. Use a command override if `dsh` is not on the server's PATH.
 
 ## Native configuration
 
@@ -37,13 +37,13 @@ stored credentials.
 MCP servers are native MCP-client plugin entries with a `disabled` switch.
 Skills use provider-owned `.dsh/skills` directories and compatible shared
 skill roots. Generic project settings and project MCP configuration are not
-invented by Vibe Kanban. Complex custom plugin expressions may require editing
+invented by Vibe Studio. Complex custom plugin expressions may require editing
 in the native application.
 
 ## ACP behaviour
 
-Sessions created through Vibe Kanban can continue using their native session
-ID. Importing pre-existing DSH history into Vibe Kanban is not yet supported.
+Sessions created through Vibe Studio can continue using their native session
+ID. Importing pre-existing DSH history into Vibe Studio is not yet supported.
 
 - Continuation uses `session/resume`. Native transcript replay and
   `session/load` are unavailable.

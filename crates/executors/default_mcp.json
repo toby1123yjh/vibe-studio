@@ -3,7 +3,7 @@
     "command": "npx",
     "args": [
       "-y",
-      "easy-vibe-kanban@latest",
+      "vibe-studio@beta",
       "--mcp"
     ]
   },
@@ -46,9 +46,9 @@
   },
   "meta": {
     "vibe_kanban": {
-      "name": "Vibe Kanban",
-      "description": "Create, update and delete Vibe Kanban tasks",
-      "url": "https://www.vibekanban.com/docs/integrations/vibe-kanban-mcp-server",
+      "name": "Vibe Studio",
+      "description": "Create, update and delete Vibe Studio tasks",
+      "url": "https://github.com/toby1123yjh/vibe-studio/blob/main/docs/integrations/vibe-kanban-mcp-server.mdx",
       "icon": "favicon-vk-light.svg"
     },
     "context7": {

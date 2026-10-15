@@ -15,8 +15,8 @@
     "stopFailed": "The agent has not stopped yet. Your execution and session were kept; retry when ready.",
     "taskTitle": "Delete Execution and session?",
     "sessionTitle": "Delete session?",
-    "taskDescription": "Delete \"{{name}}\" and its bound session history from Vibe Kanban? The Task, Project, Workspace, other Executions and sessions, working files, and the agent's native history are preserved. This cannot be undone.",
-    "sessionDescription": "Delete session \"{{name}}\" and its history from Vibe Kanban? The Workspace, other sessions, working files, and the agent's native history are preserved. This cannot be undone.",
+    "taskDescription": "Delete \"{{name}}\" and its bound session history from Vibe Studio? The Task, Project, Workspace, other Executions and sessions, working files, and the agent's native history are preserved. This cannot be undone.",
+    "sessionDescription": "Delete session \"{{name}}\" and its history from Vibe Studio? The Workspace, other sessions, working files, and the agent's native history are preserved. This cannot be undone.",
     "resolving": "Checking the current Execution and session binding…",
     "deleteTask": "Delete Execution and session",
     "deleteSession": "Delete session",
@@ -195,7 +195,7 @@
       "renaming": "Renaming...",
       "delete": "Delete session",
       "deleteTitle": "Delete session?",
-      "deleteDescription": "This removes the session history from Vibe Kanban. Your workspace files and the agent's native history are not affected.",
+      "deleteDescription": "This removes the session history from Vibe Studio. Your workspace files and the agent's native history are not affected.",
       "deleteFailed": "Unable to delete session",
       "deleteFailedDescription": "The session could not be deleted."
     },
@@ -343,7 +343,7 @@
       "prMerged": "PR #{{number}} is already merged",
       "loginRequired": {
         "title": "Sign in to manage git actions",
-        "description": "Sign in to Vibe Kanban so you can push branches, merge changes, or open pull requests for this task.",
+        "description": "Sign in to Vibe Studio so you can push branches, merge changes, or open pull requests for this task.",
         "action": "Sign in"
       }
     },

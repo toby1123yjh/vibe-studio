@@ -2,15 +2,15 @@
   <picture>
     <source srcset="packages/public/vibe-kanban-logo-dark.svg" media="(prefers-color-scheme: dark)">
     <source srcset="packages/public/vibe-kanban-logo.svg" media="(prefers-color-scheme: light)">
-    <img src="packages/public/vibe-kanban-logo.svg" alt="easy-vibe-kanban logo">
+    <img src="packages/public/vibe-kanban-logo.svg" alt="Vibe Studio logo">
   </picture>
 </p>
 
-<p align="center"><strong>一个 Web 界面，使用和管理你的 AI 智能体。</strong></p>
-<p align="center">安装并使用智能体 CLI，管理配置和工具，再通过项目、任务与多智能体工作流完成更复杂的工作。</p>
+<p align="center"><strong>面向独立开发者和 OPC（一人公司）的多智能体工作室。</strong></p>
+<p align="center">在一个 Web 界面安装和使用 AI 智能体，管理配置和工具，再让它们协作开发产品、研究想法、完成交付。</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easy-vibe-kanban"><img alt="npm beta" src="https://img.shields.io/npm/v/easy-vibe-kanban/beta?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/vibe-studio"><img alt="npm beta" src="https://img.shields.io/npm/v/vibe-studio/beta?style=flat-square" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" /></a>
 </p>
 
@@ -21,12 +21,12 @@
 安装 [Node.js](https://nodejs.org/)（推荐 22），然后运行：
 
 ```bash
-npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban@beta
+npx --yes --registry https://registry.npmjs.org/ vibe-studio@beta
 ```
 
-当前 2.0 版本线发布在 npm 的 `beta` 标签下；省略 `@beta` 会使用旧的 `latest` 通道。目前发布的安装包支持 **Linux x64 和 Windows x64**。使用 npm 安装包不需要 Rust。
+2.0 版本线使用 npm 的 `beta` 标签。更名后的 `vibe-studio` 包在首次成功发布后可用，发布状态见 [GitHub Actions](https://github.com/toby1123yjh/vibe-studio/actions/workflows/publish-easy-npx.yml)。发布包面向 **Linux x64 和 Windows x64**。使用 npm 安装包不需要 Rust。
 
-打开启动时输出的访问地址。Vibe Kanban 管理的是运行服务的那台机器：智能体 CLI、配置、项目文件和执行都在该主机上，即使你从别处打开 Web 界面也一样。
+打开启动时输出的访问地址。Vibe Studio 管理的是运行服务的那台机器：智能体 CLI、配置、项目文件和执行都在该主机上，即使你从别处打开 Web 界面也一样。
 
 ### 接入智能体
 
@@ -37,7 +37,7 @@ npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban@beta
 3. 完成智能体自己的登录或 API Key 配置。安装不等于认证成功，扫描也不能验证所有智能体的登录状态。
 4. 管理智能体支持的设置，例如 API Key、API 地址、模型和思考等级，以及 MCP 服务、技能和命令。
 
-也支持手动安装。预设安装失败时，可以直接在同一台主机上安装 CLI，再回到这里重新扫描，不必重新配置 Vibe Kanban。
+也支持手动安装。预设安装失败时，可以直接在同一台主机上安装 CLI，再回到这里重新扫描，不必重新配置 Vibe Studio。
 
 | 智能体 | 原生运行时 | 配置说明 |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban@beta
 | OpenCode | 通过 ACP 使用 `opencode` | [文档](docs/agents/opencode.mdx) |
 | DeepSeek Harness | 通过 ACP 使用 `dsh` · 开发预览 | [文档](docs/agents/deepseek-harness.mdx) |
 
-各智能体的能力和认证方式不同。Vibe Kanban 使用你安装的 CLI，而不是为每个智能体内置固定版本。
+各智能体的能力和认证方式不同。Vibe Studio 使用你安装的 CLI，而不是为每个智能体内置固定版本。
 
 ## 开始第一次对话
 
@@ -100,7 +100,7 @@ npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban@beta
 
 ## 接入其他系统
 
-外部工作流 API 允许其他应用创建或复用项目、创建任务、上传材料，并异步运行已在 Vibe Kanban 中准备好的工作流。调用方可以查询状态、处理待人工决定的事项、取消工作，以及浏览或下载项目文件。
+外部工作流 API 允许其他应用创建或复用项目、创建任务、上传材料，并异步运行已在 Vibe Studio 中准备好的工作流。调用方可以查询状态、处理待人工决定的事项、取消工作，以及浏览或下载项目文件。
 
 先配置接入凭据、授权项目，并开启工作流的外部调用。请求使用项目 ID 和项目相对路径，不传任意服务器路径。同一项目同时最多运行一个活跃工作流执行，后续已受理请求进入队列。
 
@@ -114,8 +114,8 @@ API 还会返回能够确认属于本次智能体执行的文件变更。这个�
 
 - 项目的任务定义、状态、标签和关联保存在 `.vibe-kanban/project.json` 中，看板和外部 API 使用同一份项目数据。
 - 本机数据库保存会话、执行和运行时记录。移动项目目录不会带走这些记录、凭据、工作流模板或正在运行的进程。
-- 智能体原生会话和配置仍保存在各自位置，不会自动导入 Vibe Kanban 的历史记录。
-- 从 Vibe Kanban 中移除项目不会删除项目工作目录。
+- 智能体原生会话和配置仍保存在各自位置，不会自动导入 Vibe Studio 的历史记录。
+- 从 Vibe Studio 中移除项目不会删除项目工作目录。
 
 ## 本地开发
 
@@ -148,6 +148,6 @@ pnpm run dev
 
 ## 致谢与许可
 
-easy-vibe-kanban 是 Bloop AI 的 [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) 的独立维护分叉版本，感谢原团队的开发与开源。
+Vibe Studio 是 Bloop AI 的 [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) 的独立维护分叉版本，感谢原团队的开发与开源。
 
 基于 [Apache License 2.0](LICENSE) 开源，署名信息见 [NOTICE](NOTICE)。

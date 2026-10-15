@@ -1,6 +1,6 @@
 ---
 title: "Troubleshooting"
-description: "Common issues and solutions when using Vibe Kanban"
+description: "Common issues and solutions when using Vibe Studio"
 ---
 
 ## Agent Reports Empty Codebase
@@ -24,14 +24,14 @@ If you need more detailed logs to help debug an issue, you can enable debug-leve
 **Usage:**
 
 ```bash
-RUST_LOG=debug npx easy-vibe-kanban
+RUST_LOG=debug npx vibe-studio@beta
 ```
 
 This will provide verbose logging output that can help identify the root cause of issues.
 
 ## DANGER: Wiping Your Database 
 
-If you encounter irrecoverable errors and need to completely wipe your Vibe Kanban database, you can delete the application data directory for your operating system. 
+If you encounter irrecoverable errors and need to completely wipe your Vibe Studio database, you can delete the application data directory for your operating system.
 
 <Warning>
 This action is irreversible and will result in the loss of ALL your tasks and settings. Make sure to back up any important information before proceeding.
@@ -61,4 +61,4 @@ Typically: `C:\Users\<username>\AppData\Roaming\bloop\vibe-kanban\`
 </Tab>
 </Tabs>
 
-After deleting the application data directory, restart Vibe Kanban to reset with an empty database and default settings.
+After deleting the application data directory, restart Vibe Studio to reset with an empty database and default settings.

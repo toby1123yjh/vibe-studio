@@ -17,7 +17,7 @@ for (const width of viewports) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/?page=login');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-      'Sign in to Vibe Kanban'
+      'Sign in to Vibe Studio'
     );
     await expect(page.locator('main')).toHaveCount(1);
     await expectNoOverflow(page);

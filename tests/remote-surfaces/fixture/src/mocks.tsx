@@ -72,7 +72,7 @@ export function storeInvitationToken() {
 }
 
 export function BrandLogo({ className }: { className?: string }) {
-  return <span className={className} role="img" aria-label="Vibe Kanban" />;
+  return <span className={className} role="img" aria-label="Vibe Studio" />;
 }
 
 export function useSettingsNavigation() {

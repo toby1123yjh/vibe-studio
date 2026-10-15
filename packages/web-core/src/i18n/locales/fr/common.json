@@ -296,7 +296,7 @@
   "ok": "OK",
   "error": "Erreur",
   "oauth": {
-    "title": "Se connecter à Vibe Kanban",
+    "title": "Se connecter à Vibe Studio",
     "description": "Connectez-vous pour rejoindre des organisations et partager des tâches avec votre équipe",
     "continueWithGitHub": "Continuer avec GitHub",
     "continueWithGoogle": "Continuer avec Google",
@@ -482,7 +482,7 @@
   "workspacesGuide": {
     "welcome": {
       "title": "Bienvenue",
-      "content": "Bienvenue dans les Espaces de travail, une interface repensée pour Vibe Kanban. Nous la déployons auprès d'utilisateurs sélectionnés pour recueillir leurs premiers retours. Partagez vos impressions à tout moment en utilisant l'icône de feedback dans la barre de navigation."
+      "content": "Bienvenue dans les Espaces de travail, une interface repensée pour Vibe Studio. Nous la déployons auprès d'utilisateurs sélectionnés pour recueillir leurs premiers retours. Partagez vos impressions à tout moment en utilisant l'icône de feedback dans la barre de navigation."
     },
     "commandBar": {
       "title": "Barre de commandes",
@@ -722,7 +722,7 @@
     "projectsGuide": {
       "intro": {
         "title": "Welcome",
-        "content": "Welcome to Vibe Kanban. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
+        "content": "Welcome to Vibe Studio. Use the help sections in this panel to learn how things work, then create your first task. You can re-open this help dialog or give feedback anytime from the navbar."
       },
       "welcome": {
         "title": "Projects",
@@ -738,7 +738,7 @@
       },
       "organizations": {
         "title": "Invite your team",
-        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Kanban. Export your cloud data before shutdown."
+        "content": "We've automatically created a personal organization and initial project so you can get started with Vibe Studio. Export your cloud data before shutdown."
       }
     }
   },
@@ -1084,7 +1084,7 @@
     "commands": {
       "manager": {
         "title": "Commandes natives",
-        "description": "Découvrez et gérez les commandes de prompt natives de l’Agent sélectionné. Vibe Kanban utilise uniquement les champs approuvés par l’adaptateur."
+        "description": "Découvrez et gérez les commandes de prompt natives de l’Agent sélectionné. Vibe Studio utilise uniquement les champs approuvés par l’adaptateur."
       },
       "actions": {
         "refresh": "Actualiser",
@@ -1165,7 +1165,7 @@
       "errors": {
         "operationFailed": "L’opération sur la commande a échoué.",
         "operationCode": "{{message}} ({{code}})",
-        "staleRevision": "Cette commande a changé hors de Vibe Kanban. Actualisez avant de réessayer."
+        "staleRevision": "Cette commande a changé hors de Vibe Studio. Actualisez avant de réessayer."
       },
       "notices": {
         "saved": "Inventaire des commandes mis à jour."

@@ -15,8 +15,8 @@
     "stopFailed": "智能体尚未停止，执行和会话已保留，请稍后重试。",
     "taskTitle": "删除 执行 和会话？",
     "sessionTitle": "删除会话？",
-    "taskDescription": "从 Vibe Kanban 中删除“{{name}}”及其绑定会话的历史记录？任务、项目、工作空间、其他 执行 和会话、工作文件及 智能体 原生历史记录均会保留。此操作无法撤销。",
-    "sessionDescription": "从 Vibe Kanban 中删除会话“{{name}}”及其历史记录？工作空间、其他会话、工作文件及 智能体 原生历史记录均会保留。此操作无法撤销。",
+    "taskDescription": "从 Vibe Studio 中删除“{{name}}”及其绑定会话的历史记录？任务、项目、工作空间、其他 执行 和会话、工作文件及 智能体 原生历史记录均会保留。此操作无法撤销。",
+    "sessionDescription": "从 Vibe Studio 中删除会话“{{name}}”及其历史记录？工作空间、其他会话、工作文件及 智能体 原生历史记录均会保留。此操作无法撤销。",
     "resolving": "正在检查当前 执行 与会话的绑定关系…",
     "deleteTask": "删除 执行 和会话",
     "deleteSession": "删除会话",
@@ -203,7 +203,7 @@
       "prMerged": "PR #{{number}} 已合并",
       "loginRequired": {
         "title": "登录以管理 git 操作",
-        "description": "登录 Vibe Kanban，以便您可以推送分支、合并更改或为此任务打开拉取请求。",
+        "description": "登录 Vibe Studio，以便您可以推送分支、合并更改或为此任务打开拉取请求。",
         "action": "登录"
       }
     },
@@ -450,7 +450,7 @@
       "renaming": "正在重命名...",
       "delete": "删除会话",
       "deleteTitle": "删除会话？",
-      "deleteDescription": "这会删除 Vibe Kanban 中的会话历史，不会影响工作空间文件或智能体原生历史。",
+      "deleteDescription": "这会删除 Vibe Studio 中的会话历史，不会影响工作空间文件或智能体原生历史。",
       "deleteFailed": "无法删除会话",
       "deleteFailedDescription": "会话删除失败。"
     },

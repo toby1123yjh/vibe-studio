@@ -1,130 +1,72 @@
-# Easy NPX npm 发布流程
+# Vibe Studio npm 发布流程
 
-本文档用于维护 `easy-vibe-kanban` 的 GitHub Actions 自动发布流程。
-
-## 推荐发布方式
-
-使用 npm Trusted Publishing，不在 GitHub Secrets 中保存长期 npm token。
-
-对应 workflow：
-
-```text
-.github/workflows/publish-easy-npx.yml
-```
-
-这个 workflow 会完成：
-
-1. 构建 Windows x64 后端二进制。
-2. 构建本地 Web 前端。
-3. 打包 `npx-cli/dist/windows-x64/*.zip`。
-4. 临时更新 `npx-cli/package.json` 的 npm 版本号。
-5. 执行 `npm pack`。
-6. 使用 npm Trusted Publishing 发布到 npm registry。
-7. 上传 `.tgz` 和 Windows zip 作为 GitHub artifact。
+`vibe-studio` 使用 GitHub Actions 构建 Windows x64、Linux x64 和 Web 前端，再发布到 npm 官方源。本机不构建发布包。
 
 ## main 自动发布
 
-推送到 `main` 会自动运行同一个 workflow。当前重构产品使用新的版本线：
+推送到 `main` 会运行 **Publish Vibe Studio to npm**。workflow 文件名保持为 `.github/workflows/publish-easy-npx.yml`，npm Trusted Publishing 必须绑定这个文件名。
 
 ```text
 AUTO_VERSION_BASE: 2.0.0-beta.1
 AUTO_NPM_TAG: beta
 ```
 
-workflow 会读取 npm registry 中已经存在的 `2.0.0-beta.N`，选择下一个未发布的版本。当前已有 `2.0.0-beta.1` 和 `2.0.0-beta.2` 时，下一次 main 推送会发布 `2.0.0-beta.3`。开始新的版本线时，只需要调整 workflow 中的 `AUTO_VERSION_BASE` 和对应的 npm tag。
+workflow 从 `npx-cli/package.json` 读取包名，查询这个包已发布的 `2.0.0-beta.N`，再选择下一个序号。新包从 `2.0.0-beta.1` 开始；旧包 `easy-vibe-kanban` 的版本不会影响它。只有 npm 明确返回 E404 才视为新包；网络或认证错误会中止版本计算。
 
-手动触发时仍可以填写精确版本；留空版本会使用上面的自动版本线。`dry-run` 只打包和校验，不会发布。
+构建会把解析出的版本临时写入 npm 包，然后打包、发布并上传 `.tgz` 和平台 zip。它不会自动创建 GitHub Release。
 
-## npm 后台配置
+## 新包首次发布
 
-首次使用前，需要在 npm 网站中配置 trusted publisher。
+仓库改名不会把旧 npm 包和它的发布授权转移到新包。`vibe-studio` 尚未发布时，先在 GitHub 仓库的 Actions secrets 中设置 `NPM_TOKEN`。token 需要具有创建并发布这个公共 npm 包的权限；如果 npm 账号要求发布时 2FA，应使用满足该发布策略的 token。
 
-包名：
-
-```text
-easy-vibe-kanban
-```
-
-在 npm package settings 中添加 GitHub Actions trusted publisher：
+执行一次 `publish`，在 npm 官方源确认包已经创建，然后到 **vibe-studio 的 package settings** 配置 GitHub Actions trusted publisher：
 
 ```text
 Repository owner: toby1123yjh
-Repository name: vibe-kanban
+Repository name: vibe-studio
 Workflow filename: publish-easy-npx.yml
 Environment name: 留空
 ```
 
-当前 workflow 没有配置 GitHub environment。如果后续想加发布审批，可以在 GitHub 里创建例如 `npm` environment，并同步把 npm trusted publisher 的 Environment name 改成同一个值。
+之后的发布可以使用 OIDC，验证成功后可移除用于首次发布的 `NPM_TOKEN`。workflow 没有 GitHub environment；如以后增加 environment，需同步 npm 的对应设置。
 
-## 手动发布步骤
+新包没有 `NPM_TOKEN` 时，workflow 会在版本解析后立即报出配置错误，避免继续执行注定无法发布的大型构建。`dry-run` 不需要此首次发布凭据。
 
-1. 打开 GitHub 仓库。
-2. 进入 `Actions`。
-3. 选择 `Publish Easy NPX to npm`。
-4. 点击 `Run workflow`。
-5. 填写参数：
+## 手动发布
+
+进入仓库 **Actions → Publish Vibe Studio to npm → Run workflow**：
 
 ```text
-version: 2.0.0-beta.3
+version: 留空，自动选择下一个版本
 npm_tag: beta
 publish_mode: publish
 ```
 
-建议每次正式发布前，先用：
-
-```text
-publish_mode: dry-run
-```
-
-确认打包流程无误后，再重新执行一次 `publish`。
-
-## 版本号规则
-
-npm 不允许重复发布同一个 `name@version`。已经发布过的版本号不能再使用。
-
-推荐规则：
-
-```text
-2.0.0-beta.1
-2.0.0-beta.2
-2.0.0-beta.3
-2.0.0-beta.4
-```
-
-当前自动发布使用 `2.0.0-beta.N` 版本线，推送 `main` 会自动选择下一个未发布的序号并使用 `beta` tag。
-
-如果需要开始新的产品版本线，调整 workflow 中的 `AUTO_VERSION_BASE` 和 `AUTO_NPM_TAG`，并同步更新本节示例。
+也可以填写精确版本（如 `2.0.0-beta.1`）；npm 不允许重复发布相同的 `name@version`。选择 `dry-run` 只构建和校验，不发布。
 
 ## 发布后验证
 
-强制使用 npm 官方源验证：
+先确认 npm 官方源上的实际版本，再运行该版本：
 
 ```powershell
-npx --yes --registry https://registry.npmjs.org/ easy-vibe-kanban
+npm view vibe-studio@beta version --registry https://registry.npmjs.org/
+npx --yes --registry https://registry.npmjs.org/ vibe-studio@beta
 ```
 
-也可以显式指定 package 和 bin：
+显式指定包与命令：
 
 ```powershell
-npx --yes --registry https://registry.npmjs.org/ --package easy-vibe-kanban easy-vibe-kanban
+npx --yes --registry https://registry.npmjs.org/ --package vibe-studio@beta vibe-studio
 ```
 
-如果本机默认使用第三方镜像源，发布后可能需要等待镜像同步，或者测试时继续显式指定官方 registry。
+第三方镜像可能延迟同步。首次发布完成前，新的安装命令还不可用；仓库改名或构建成功本身不代表 npm 发布成功。
 
 ## 失败排查
 
-如果 npm publish 报认证错误，优先检查：
+- 首次发布报缺少凭据：配置允许创建此包的 `NPM_TOKEN`，重新运行 workflow。
+- 已发布包认证失败：检查 trusted publisher 的 owner、repository、workflow filename 与当前仓库完全一致，确认没有额外的 environment 要求。
+- 包元数据校验失败：`npx-cli/package.json` 的 `repository.url` 必须是 `https://github.com/toby1123yjh/vibe-studio`。
+- 版本已存在：留空版本以自动选择新版本，或填写未发布的版本。
+- registry 查询失败：先解决 npm 网络/认证错误，再重跑；不要把这类错误当成新包。
 
-1. npm package settings 中 trusted publisher 的 owner、repo、workflow filename 是否完全匹配。
-2. workflow 权限是否包含：
-
-```yaml
-permissions:
-  contents: read
-  id-token: write
-```
-
-3. workflow 是否使用 npm 11.5.1 或更高版本。
-4. npm 后台是否要求 Environment name，但 GitHub job 没有配置对应 environment。
-
-如果 npm publish 报版本已存在，换一个新的 `version` 重新执行 workflow。
+发布 job 使用 npm 11.12.0，保留 `contents: read` 和 `id-token: write` 权限。归档内部的 `vibe-kanban`、`agent-process-host`、`vibe-kanban-mcp` 名称属于执行协议，不能只随产品展示名称一起替换。
