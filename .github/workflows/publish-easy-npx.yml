@@ -344,6 +344,17 @@ jobs:
           echo "package-file=$PACKAGE_FILE" >> "$GITHUB_OUTPUT"
           echo "Packed $PACKAGE_FILE"
 
+      # Retain the built package even if npm rejects the subsequent publication.
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibe-studio-${{ needs.resolve-version.outputs.version }}-linux-windows-x64-npx
+          path: |
+            npx-cli/*.tgz
+            npx-cli/dist/linux-x64/*.zip
+            npx-cli/dist/windows-x64/*.zip
+          if-no-files-found: error
+
       - name: Publish package to npm
         if: needs.resolve-version.outputs.publish_mode == 'publish'
         env:
@@ -397,13 +408,3 @@ jobs:
             --access public \
             --tag "${{ needs.resolve-version.outputs.npm_tag }}" \
             --registry https://registry.npmjs.org/
-
-      - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ needs.resolve-version.outputs.package_name }}-${{ needs.resolve-version.outputs.version }}-linux-windows-x64-npx
-          path: |
-            npx-cli/*.tgz
-            npx-cli/dist/linux-x64/*.zip
-            npx-cli/dist/windows-x64/*.zip
-          if-no-files-found: error

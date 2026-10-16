@@ -20,7 +20,8 @@ import {
 } from "./desktop";
 
 const CLI_VERSION: string = require("../package.json").version;
-const CLI_NAME: string = require("../package.json").name;
+const PACKAGE_NAME: string = require("../package.json").name;
+const CLI_NAME = "vibe-studio";
 const UPDATE_TAG = CLI_VERSION.includes("-beta.") ? "beta" : "latest";
 
 type RootOptions = {
@@ -209,12 +210,12 @@ function checkForUpdates(): void {
     return;
   }
 
-  getLatestVersion(CLI_NAME, UPDATE_TAG)
+  getLatestVersion(PACKAGE_NAME, UPDATE_TAG)
     .then((latest) => {
       if (latest && latest !== CLI_VERSION) {
         setTimeout(() => {
           console.log(`\nUpdate available: ${CLI_VERSION} -> ${latest}`);
-          console.log(`Run: npx ${CLI_NAME}@${UPDATE_TAG}`);
+          console.log(`Run: npx ${PACKAGE_NAME}@${UPDATE_TAG}`);
         }, 2000);
       }
     })

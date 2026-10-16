@@ -10,7 +10,7 @@
 <p align="center">Install and use AI agents in one web interface. Manage their settings and tools, then bring them together to build products, research ideas, and create deliverables.</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/vibe-studio"><img alt="npm beta" src="https://img.shields.io/npm/v/vibe-studio/beta?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/@toby1123yjh/vibe-studio"><img alt="npm beta" src="https://img.shields.io/npm/v/@toby1123yjh/vibe-studio/beta?style=flat-square" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" /></a>
 </p>
 
@@ -21,10 +21,10 @@
 Install [Node.js](https://nodejs.org/) (22 recommended), then run:
 
 ```bash
-npx --yes --registry https://registry.npmjs.org/ vibe-studio@beta
+npx --yes --registry https://registry.npmjs.org/ @toby1123yjh/vibe-studio@beta
 ```
 
-The 2.0 version line uses the npm `beta` tag. The renamed `vibe-studio` package becomes available after its first successful release; check the [release workflow](https://github.com/toby1123yjh/vibe-studio/actions/workflows/publish-easy-npx.yml) for publication status. Release builds target **Linux x64 and Windows x64**. Rust is not needed to run the npm package.
+The 2.0 version line uses the npm `beta` tag. The package is `@toby1123yjh/vibe-studio`; the executable command is `vibe-studio`. Check the [release workflow](https://github.com/toby1123yjh/vibe-studio/actions/workflows/publish-easy-npx.yml) for publication status. Release builds target **Linux x64 and Windows x64**. Rust is not needed to run the npm package.
 
 Open the address printed at startup. Vibe Studio manages the machine running its service: agent CLIs, configuration, project files, and execution all live on that host, even when you access the web UI from elsewhere.
 

@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Product Identity
-- Display name: **Vibe Studio**. npm package and command: `vibe-studio`.
+- Display name: **Vibe Studio**. npm package: `@toby1123yjh/vibe-studio`. Command: `vibe-studio`.
 - Repository: `https://github.com/toby1123yjh/vibe-studio`.
 - `.vibe-kanban` data directories, `VK_*` environment variables, internal crate names, and bundled executable names remain operational identifiers. Do not mechanically rename them when updating product copy.
 - Preserve attribution to the upstream Vibe Kanban project and the actual names of third-party integrations.
@@ -48,7 +48,7 @@ Do not manually edit shared/remote-types.ts, instead edit crates/remote/src/bin/
 ## Project Build Policy
 - This section embeds the current local `PROJECT.md` policy. `PROJECT.md` itself is local-only and does not need to be committed or pushed.
 - For validation builds, use GitHub Actions to build and publish to npm. Do not attempt to build release packages on this machine.
-- After the action completes, verify the published `vibe-studio` version with the official npm registry (`https://registry.npmjs.org/`) and install/run from npm for user-facing checks.
+- After the action completes, verify the published `@toby1123yjh/vibe-studio` version with the official npm registry (`https://registry.npmjs.org/`) and install/run from npm for user-facing checks.
 - `git-build.md` may document historical artifact-based flows, but `PROJECT.md` overrides it for current build/release decisions.
 
 ## Before Completing a Task

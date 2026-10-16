@@ -10,7 +10,7 @@
 <p align="center">在一个 Web 界面安装和使用 AI 智能体，管理配置和工具，再让它们协作开发产品、研究想法、完成交付。</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/vibe-studio"><img alt="npm beta" src="https://img.shields.io/npm/v/vibe-studio/beta?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/@toby1123yjh/vibe-studio"><img alt="npm beta" src="https://img.shields.io/npm/v/@toby1123yjh/vibe-studio/beta?style=flat-square" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" /></a>
 </p>
 
@@ -21,10 +21,10 @@
 安装 [Node.js](https://nodejs.org/)（推荐 22），然后运行：
 
 ```bash
-npx --yes --registry https://registry.npmjs.org/ vibe-studio@beta
+npx --yes --registry https://registry.npmjs.org/ @toby1123yjh/vibe-studio@beta
 ```
 
-2.0 版本线使用 npm 的 `beta` 标签。更名后的 `vibe-studio` 包在首次成功发布后可用，发布状态见 [GitHub Actions](https://github.com/toby1123yjh/vibe-studio/actions/workflows/publish-easy-npx.yml)。发布包面向 **Linux x64 和 Windows x64**。使用 npm 安装包不需要 Rust。
+2.0 版本线使用 npm 的 `beta` 标签。包名为 `@toby1123yjh/vibe-studio`，安装后的命令为 `vibe-studio`。发布状态见 [GitHub Actions](https://github.com/toby1123yjh/vibe-studio/actions/workflows/publish-easy-npx.yml)。发布包面向 **Linux x64 和 Windows x64**。使用 npm 安装包不需要 Rust。
 
 打开启动时输出的访问地址。Vibe Studio 管理的是运行服务的那台机器：智能体 CLI、配置、项目文件和执行都在该主机上，即使你从别处打开 Web 界面也一样。
 

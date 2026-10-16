@@ -21,7 +21,7 @@ function validate(version) {
 
 const resolver = workflow.match(/node <<'NODE'\r?\n([\s\S]*?)\r?\n\s*NODE/)[1];
 
-function resolveRelease({ versions = [], lookupError, env = {}, name = 'vibe-studio' } = {}) {
+function resolveRelease({ versions = [], lookupError, env = {}, name = '@toby1123yjh/vibe-studio' } = {}) {
   let output = '';
   const lookups = [];
   runInNewContext(resolver, {
@@ -65,9 +65,30 @@ test('a genuine npm E404 starts a new package at the configured baseline', () =>
   const lookupError = Object.assign(new Error('not found'), {
     stdout: JSON.stringify({ error: { code: 'E404' } }),
   });
-  const { output } = resolveRelease({ lookupError });
+  const { output, lookups } = resolveRelease({ lookupError });
+  assert.equal(lookups[0][2], '@toby1123yjh/vibe-studio');
+  assert.equal(output.package_name, '@toby1123yjh/vibe-studio');
   assert.equal(output.version, '2.0.0-beta.1');
   assert.equal(output.package_exists, 'false');
+});
+
+test('scoped packages increment their own published versions', () => {
+  const { output, lookups } = resolveRelease({ versions: ['2.0.0-beta.1'] });
+  assert.equal(lookups[0][2], '@toby1123yjh/vibe-studio');
+  assert.equal(output.package_name, '@toby1123yjh/vibe-studio');
+  assert.equal(output.version, '2.0.0-beta.2');
+});
+
+test('built artifacts are saved before publishing with a filesystem-safe name', () => {
+  const pack = workflow.indexOf('- name: Build and pack NPX package');
+  const upload = workflow.indexOf('- name: Upload package artifacts');
+  const publish = workflow.indexOf('- name: Publish package to npm');
+  assert.ok(pack >= 0 && pack < upload && upload < publish);
+  const uploadStep = workflow.slice(upload, publish);
+  const artifactName = uploadStep.match(/\n\s+name: (.+)/)?.[1]
+    .replace('${{ needs.resolve-version.outputs.version }}', '2.0.0-beta.1');
+  assert.ok(artifactName);
+  assert.doesNotMatch(artifactName, /["<>|:*?\\/\r\n${}]/);
 });
 
 test('registry network and authentication failures do not reset the version', () => {

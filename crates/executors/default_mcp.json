@@ -3,7 +3,7 @@
     "command": "npx",
     "args": [
       "-y",
-      "vibe-studio@beta",
+      "@toby1123yjh/vibe-studio@beta",
       "--mcp"
     ]
   },

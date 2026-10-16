@@ -1,6 +1,6 @@
 # Vibe Studio npm 发布流程
 
-`vibe-studio` 使用 GitHub Actions 构建 Windows x64、Linux x64 和 Web 前端，再发布到 npm 官方源。本机不构建发布包。
+Vibe Studio 使用 GitHub Actions 构建 Windows x64、Linux x64 和 Web 前端，再以 `@toby1123yjh/vibe-studio` 发布到 npm 官方源。本机不构建发布包；安装后的命令仍为 `vibe-studio`。
 
 ## main 自动发布
 
@@ -13,13 +13,13 @@ AUTO_NPM_TAG: beta
 
 workflow 从 `npx-cli/package.json` 读取包名，查询这个包已发布的 `2.0.0-beta.N`，再选择下一个序号。新包从 `2.0.0-beta.1` 开始；旧包 `easy-vibe-kanban` 的版本不会影响它。只有 npm 明确返回 E404 才视为新包；网络或认证错误会中止版本计算。
 
-构建会把解析出的版本临时写入 npm 包，然后打包、发布并上传 `.tgz` 和平台 zip。它不会自动创建 GitHub Release。
+构建会把解析出的版本临时写入 npm 包，然后打包、上传 `.tgz` 和平台 zip，最后发布到 npm。这样发布失败时仍可下载构建产物。artifact 名使用不含 npm scope 的名称，避免 `/` 导致上传失败。它不会自动创建 GitHub Release。
 
 ## 新包首次发布
 
-仓库改名不会把旧 npm 包和它的发布授权转移到新包。`vibe-studio` 尚未发布时，先在 GitHub 仓库的 Actions secrets 中设置 `NPM_TOKEN`。token 需要具有创建并发布这个公共 npm 包的权限；如果 npm 账号要求发布时 2FA，应使用满足该发布策略的 token。
+仓库改名不会把旧 npm 包和它的发布授权转移到新包。`@toby1123yjh/vibe-studio` 尚未发布时，先在 GitHub 仓库的 Actions secrets 中设置 `NPM_TOKEN`。token 需要具有在 `toby1123yjh` scope 下创建并发布这个公共 npm 包的权限；如果 npm 账号要求发布时 2FA，应使用满足该发布策略的 token。workflow 通过 `--access public` 发布公共包。
 
-执行一次 `publish`，在 npm 官方源确认包已经创建，然后到 **vibe-studio 的 package settings** 配置 GitHub Actions trusted publisher：
+执行一次 `publish`，在 npm 官方源确认包已经创建，然后到 **@toby1123yjh/vibe-studio 的 package settings** 配置 GitHub Actions trusted publisher：
 
 ```text
 Repository owner: toby1123yjh
@@ -49,14 +49,14 @@ publish_mode: publish
 先确认 npm 官方源上的实际版本，再运行该版本：
 
 ```powershell
-npm view vibe-studio@beta version --registry https://registry.npmjs.org/
-npx --yes --registry https://registry.npmjs.org/ vibe-studio@beta
+npm view @toby1123yjh/vibe-studio@beta version --registry https://registry.npmjs.org/
+npx --yes --registry https://registry.npmjs.org/ @toby1123yjh/vibe-studio@beta
 ```
 
 显式指定包与命令：
 
 ```powershell
-npx --yes --registry https://registry.npmjs.org/ --package vibe-studio@beta vibe-studio
+npx --yes --registry https://registry.npmjs.org/ --package @toby1123yjh/vibe-studio@beta vibe-studio
 ```
 
 第三方镜像可能延迟同步。首次发布完成前，新的安装命令还不可用；仓库改名或构建成功本身不代表 npm 发布成功。

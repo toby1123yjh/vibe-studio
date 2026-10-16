@@ -9,7 +9,7 @@ reusable workflows.
 After the beta package is published, run:
 
 ```bash
-npx vibe-studio@beta
+npx @toby1123yjh/vibe-studio@beta
 ```
 
 Vibe Studio starts on your machine and opens in your browser. The current npm
@@ -21,10 +21,10 @@ Harness from the Agent Center, or use agents already installed on the same host.
 Configure credentials and models for the agents you use.
 
 ```bash
-npx vibe-studio@beta --help
-npx vibe-studio@beta --version
-npx vibe-studio@beta review --help
-npx vibe-studio@beta mcp --help
+npx @toby1123yjh/vibe-studio@beta --help
+npx @toby1123yjh/vibe-studio@beta --version
+npx @toby1123yjh/vibe-studio@beta review --help
+npx @toby1123yjh/vibe-studio@beta mcp --help
 ```
 
 ## Features
@@ -41,6 +41,7 @@ npx vibe-studio@beta mcp --help
 Source, setup instructions and release status:
 [toby1123yjh/vibe-studio](https://github.com/toby1123yjh/vibe-studio).
 
-The package command is `vibe-studio`. Internal `vibe-kanban` executable names and
+The npm package is `@toby1123yjh/vibe-studio` and its command is `vibe-studio`.
+Internal `vibe-kanban` executable names and
 data directories are retained so existing runtime and storage paths keep working.
 Based on [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI.
