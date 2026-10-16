@@ -11,6 +11,8 @@ import {
 } from '@phosphor-icons/react';
 import type { BaseCodingAgent, ExecutorConfig, ModelInfo } from 'shared/types';
 import { PermissionPolicy } from 'shared/types';
+import { useOptionalAgentRunSession } from '@/features/agent-runtime/model/AgentRunSessionContext';
+import { ProviderRunOptionsMenu } from './ProviderRunOptionsMenu';
 import { toPrettyCase } from '@/shared/lib/string';
 import {
   getModelKey,
@@ -26,11 +28,11 @@ import {
   parseModelId,
   appendPresetModel,
   resolveDefaultModelId,
-  isModelAvailable,
   buildModelSelectionOverride,
   findModelForSelection,
   resolveReasoningOverrideState,
   resolveModelDisplayId,
+  getCurrentObservedConfiguration,
 } from '@/shared/lib/modelSelector';
 import { profilesApi } from '@/shared/lib/api';
 import { resolveModelDiscoveryVariant } from '@/shared/lib/executorDiscovery';
@@ -59,6 +61,7 @@ interface ModelSelectorContainerProps {
   executorConfig: ExecutorConfig | null;
   presetOptions: ExecutorConfig | null | undefined;
   readOnly?: boolean;
+  onInputModalitiesChange?: (modalities: string[] | undefined) => void;
 }
 
 const EMPTY_REASONING_OPTIONS: ModelInfo['reasoning_options'] = [];
@@ -79,8 +82,10 @@ export function ModelSelectorContainer({
   executorConfig,
   presetOptions,
   readOnly = false,
+  onInputModalitiesChange,
 }: ModelSelectorContainerProps) {
   const { t } = useTranslation('common');
+  const runSession = useOptionalAgentRunSession();
   const { theme } = useTheme();
   const resolvedTheme = getResolvedTheme(theme);
   const [isOpen, setIsOpen] = useState(false);
@@ -117,8 +122,9 @@ export function ModelSelectorContainer({
     config: streamConfig,
     loadingModels,
     error: streamError,
+    refresh,
   } = useModelSelectorConfig(agent, {
-    workspaceId: sessionId ? workspaceId : undefined,
+    workspaceId,
     sessionId,
     variant: resolveModelDiscoveryVariant(agent, resolvedPreset),
   });
@@ -153,7 +159,7 @@ export function ModelSelectorContainer({
   );
 
   const fallbackProviderId = availableProviderIds[0] ?? null;
-  const resolvedConfigProviderId = resolveProviderId(configProviderId);
+  const resolvedConfigProviderId = configProviderId;
 
   const { providerId: presetProviderId } = useMemo(
     () => parseModelId(presetOptions?.model_id, hasProviders),
@@ -192,21 +198,9 @@ export function ModelSelectorContainer({
     ? presetModelId
     : null;
 
-  const selectedModelId = (() => {
-    const candidate = hasModelOverride
-      ? configModelId
-      : (resolvedPresetModelId ?? defaultModelId);
-    if (!candidate || !config || !selectedProviderId) return candidate;
-    const hasMatch = isModelAvailable(config, selectedProviderId, candidate);
-    return hasMatch
-      ? candidate
-      : resolveDefaultModelId(
-          config.models,
-          selectedProviderId,
-          config.default_model,
-          hasProviders
-        );
-  })();
+  const selectedModelId = hasModelOverride
+    ? configModelId
+    : (resolvedPresetModelId ?? defaultModelId);
 
   const selectedModel = config
     ? getSelectedModel(config.models, selectedProviderId, selectedModelId)
@@ -214,14 +208,21 @@ export function ModelSelectorContainer({
   const discoveredSelectedModel = baseConfig
     ? getSelectedModel(baseConfig.models, selectedProviderId, selectedModelId)
     : null;
+  const inputModalities =
+    !streamError && !loadingModels
+      ? discoveredSelectedModel?.capabilities?.input_modalities
+      : undefined;
+  useEffect(() => {
+    onInputModalitiesChange?.(inputModalities);
+  }, [inputModalities, onInputModalitiesChange]);
 
   const selectedReasoningOptions =
     selectedModel?.reasoning_options ?? EMPTY_REASONING_OPTIONS;
-  const hasConfiguredReasoning = Boolean(
-    executorConfig &&
-      Object.prototype.hasOwnProperty.call(executorConfig, 'reasoning_id')
-  );
-  const configuredReasoningId = executorConfig?.reasoning_id;
+  const configuredReasoningId =
+    executorConfig?.reasoning_id !== undefined
+      ? executorConfig.reasoning_id
+      : presetOptions?.reasoning_id;
+  const hasConfiguredReasoning = configuredReasoningId !== undefined;
   const reasoningOverrideState = useMemo(
     () =>
       resolveReasoningOverrideState(
@@ -233,22 +234,22 @@ export function ModelSelectorContainer({
   );
   const selectedReasoningId = reasoningOverrideState.selectedReasoningId;
 
-  useEffect(() => {
-    // Appended saved/custom models have no discovered capability metadata.
-    // Missing or failed discovery is not evidence to erase saved reasoning.
-    if (loadingModels || streamError || !discoveredSelectedModel) return;
-
-    const repair = reasoningOverrideState.repair;
-    if (repair) {
-      onOverrideChange(repair);
-    }
-  }, [
-    loadingModels,
-    streamError,
-    discoveredSelectedModel,
-    onOverrideChange,
-    reasoningOverrideState,
-  ]);
+  const providerOptions =
+    executorConfig?.provider_options !== undefined
+      ? executorConfig.provider_options
+      : presetOptions?.provider_options;
+  const latestRun =
+    sessionId && runSession?.timeline?.sessionId === sessionId
+      ? runSession.timeline.latestRun
+      : null;
+  const runState = latestRun?.timeline?.state ?? latestRun?.summary.state;
+  const currentObservation = getCurrentObservedConfiguration(
+    runState,
+    sessionId
+  );
+  const capabilityWarning =
+    configuredReasoningId != null &&
+    (!discoveredSelectedModel || reasoningOverrideState.unavailable);
 
   const defaultAgentId =
     config?.agents.find((entry) => entry.is_default)?.id ?? null;
@@ -258,7 +259,9 @@ export function ModelSelectorContainer({
       ? executorConfig.agent_id
       : (presetOptions?.agent_id ?? defaultAgentId);
 
-  const supportsPermissions = (config?.permissions.length ?? 0) > 0;
+  // Claude has one native mode control; auto is not bypassPermissions.
+  const supportsPermissions =
+    agent !== 'CLAUDE_CODE' && (config?.permissions.length ?? 0) > 0;
 
   const basePermissionPolicy = supportsPermissions
     ? (presetOptions?.permission_policy ?? config?.permissions[0] ?? null)
@@ -438,6 +441,15 @@ export function ModelSelectorContainer({
             disabled
           />
         </DropdownMenu>
+        {!readOnly && streamError && (
+          <button
+            type="button"
+            onClick={refresh}
+            className="text-sm text-error focus-visible:ring-1 focus-visible:ring-brand"
+          >
+            {t('modelSelector.retryDiscovery')}
+          </button>
+        )}
       </>
     );
   }
@@ -483,11 +495,38 @@ export function ModelSelectorContainer({
     : null;
   const permissionIcon = permissionMeta?.icon ?? HandIcon;
 
+  const observationDetails = (
+    <>
+      <DropdownMenuLabel>{t('modelSelector.latestAttempt')}</DropdownMenuLabel>
+      <p className="max-w-72 break-words px-base pb-half text-sm text-low">
+        {currentObservation
+          ? t('modelSelector.observed', {
+              model:
+                currentObservation.model_id ?? t('modelSelector.unconfirmed'),
+              reasoning:
+                currentObservation.reasoning_id ??
+                t('modelSelector.unconfirmed'),
+            })
+          : t('modelSelector.unconfirmed')}
+      </p>
+      {currentObservation && (
+        <p className="max-w-72 break-words px-base pb-half text-sm text-low">
+          {t('modelSelector.observationSource', {
+            source: currentObservation.source,
+          })}
+        </p>
+      )}
+    </>
+  );
+
   if (readOnly) {
     return (
-      <span className="text-sm text-normal" title={modelLabel}>
-        {modelLabel}
-      </span>
+      <DropdownMenu>
+        <DropdownMenuTriggerButton size="sm" label={modelLabel} wrapLabel />
+        <DropdownMenuContent align="start">
+          {observationDetails}
+        </DropdownMenuContent>
+      </DropdownMenu>
     );
   }
 
@@ -503,6 +542,7 @@ export function ModelSelectorContainer({
               : undefined
           }
           showCaret={false}
+          aria-label={t('modelSelector.custom')}
         />
         <DropdownMenuContent align="start">
           <DropdownMenuLabel>{t('modelSelector.preset')}</DropdownMenuLabel>
@@ -520,11 +560,69 @@ export function ModelSelectorContainer({
             <DropdownMenuItem disabled>{presetLabel}</DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
+          <DropdownMenuLabel>{t('modelSelector.requested')}</DropdownMenuLabel>
+          <p className="max-w-72 break-words px-base pb-half text-sm text-normal">
+            {modelLabel}
+          </p>
+          {capabilityWarning && (
+            <p
+              role="status"
+              className="max-w-72 px-base pb-half text-sm text-error"
+            >
+              {t('modelSelector.reasoningUnverified', {
+                value: configuredReasoningId,
+              })}
+            </p>
+          )}
+          {configuredReasoningId != null && (
+            <DropdownMenuItem onClick={() => handleReasoningSelect(null)}>
+              {t('modelSelector.clearReasoning')}
+            </DropdownMenuItem>
+          )}
+          {observationDetails}
+          <ProviderRunOptionsMenu
+            agent={agent}
+            options={providerOptions}
+            model={discoveredSelectedModel}
+            onChange={onOverrideChange}
+          />
+          {agent === 'GEMINI' && (
+            <p className="max-w-72 px-base py-half text-sm text-low">
+              {t('modelSelector.geminiNativeThinking')}
+            </p>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={refresh} disabled={loadingModels}>
+            {t('modelSelector.refreshDiscovery')}
+          </DropdownMenuItem>
+          <p className="max-w-72 px-base pb-half text-sm text-low">
+            {t('modelSelector.refreshScope')}
+          </p>
           <DropdownMenuItem icon={GearIcon} onClick={onAdvancedSettings}>
             {t('modelSelector.custom')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {(streamError || capabilityWarning) && (
+        <button
+          type="button"
+          onClick={streamError ? refresh : () => setIsOpen(true)}
+          className="text-sm text-error focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+          title={
+            streamError ??
+            t('modelSelector.reasoningUnverified', {
+              value: configuredReasoningId,
+            })
+          }
+        >
+          {t(
+            streamError
+              ? 'modelSelector.retryDiscovery'
+              : 'modelSelector.checkReasoning'
+          )}
+        </button>
+      )}
 
       {showModelSelector && (
         <ModelSelectorPopover

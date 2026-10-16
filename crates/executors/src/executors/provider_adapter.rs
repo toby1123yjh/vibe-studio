@@ -70,7 +70,7 @@ pub async fn launch_direct_provider(
 
     match &mut agent {
         CodingAgent::Gemini(agent) => {
-            agent.apply_direct_overrides(request.executor_config);
+            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -83,7 +83,7 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::Codex(agent) => {
-            agent.apply_direct_overrides(request.executor_config);
+            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -97,7 +97,7 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::ClaudeCode(agent) => {
-            agent.apply_direct_overrides(request.executor_config);
+            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -111,7 +111,7 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::OhMyPi(agent) => {
-            agent.apply_direct_overrides(request.executor_config);
+            agent.apply_direct_overrides(request.executor_config)?;
             agent
                 .launch_direct(
                     request.intent,
@@ -123,7 +123,7 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::Opencode(agent) => {
-            agent.apply_direct_overrides(request.executor_config);
+            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -136,7 +136,7 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::DeepseekHarness(agent) => {
-            agent.apply_direct_overrides(request.executor_config);
+            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -157,6 +157,10 @@ pub async fn launch_direct_provider(
 }
 
 fn validate_direct_launch(request: &DirectProviderLaunchRequest<'_>) -> Result<(), ExecutorError> {
+    request
+        .executor_config
+        .validate_provider_options()
+        .map_err(ExecutorError::InvalidConfiguration)?;
     let configured_provider = DirectProvider::from_base_agent(request.executor_config.executor)
         .ok_or_else(|| profile_provider_mismatch(request.provider, request.executor_config))?;
     if configured_provider != request.provider {
@@ -1051,6 +1055,12 @@ fn classify_payload(
         });
     };
 
+    if provider == DirectProvider::OhMyPi
+        && let Some(typed) = super::oh_my_pi::rpc::classify(payload)
+    {
+        return Ok(typed);
+    }
+
     if provider.transport() == AgentTransportKind::Acp
         && let Ok(acp_event) = serde_json::from_value::<super::acp::AcpEvent>(payload.clone())
     {
@@ -1368,6 +1378,10 @@ fn classify_acp_event(
         AcpEvent::SessionStart(session) => TypedProviderEvent::SessionObserved(session),
         AcpEvent::CatalogObserved(observation) => TypedProviderEvent::Unknown {
             event_type: super::acp::session_config::ACP_CATALOG_EVENT.to_string(),
+            payload: serde_json::to_value(observation).unwrap_or(Value::Null),
+        },
+        AcpEvent::ConfigurationObserved(observation) => TypedProviderEvent::Unknown {
+            event_type: "runtime_configuration".into(),
             payload: serde_json::to_value(observation).unwrap_or(Value::Null),
         },
         AcpEvent::User(content) => TypedProviderEvent::Message {
@@ -1887,6 +1901,36 @@ mod tests {
     }
 
     #[test]
+    fn runtime_configuration_frames_cross_native_audit_as_extensions() {
+        for provider in [
+            DirectProvider::ClaudeCode,
+            DirectProvider::Codex,
+            DirectProvider::Gemini,
+            DirectProvider::OhMyPi,
+            DirectProvider::Opencode,
+            DirectProvider::DeepseekHarness,
+        ] {
+            let value = serde_json::json!({
+                "type":"runtime_configuration", "model_id":"native-resolved-model", "source":"native.fixture"
+            });
+            let decoded = provider
+                .decode_native_frame(&frame(provider, value.clone()))
+                .unwrap();
+            assert!(
+                matches!(&decoded.typed, TypedProviderEvent::Unknown { event_type, payload } if event_type == "runtime_configuration" && payload == &value)
+            );
+            let manifest = fixture_manifest(provider);
+            let events = provider.map_provider_event(&decoded, &manifest).unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].run_attempt_id, manifest.run_attempt_id);
+            assert_eq!(events[0].session_id, manifest.session_id);
+            assert!(
+                matches!(&events[0].payload, AgentEventPayload::ProviderExtension { provider_namespace, provider_event, payload } if provider_namespace == provider.id() && provider_event == "runtime_configuration" && payload["model_id"] == "native-resolved-model" && payload.get("reasoning_id").is_none())
+            );
+        }
+    }
+
+    #[test]
     fn codex_app_server_messages_and_turn_completion_are_canonical() {
         let delta = DirectProvider::Codex
             .decode_native_frame(&frame(
@@ -2189,7 +2233,7 @@ mod tests {
             snapshot.resolve(crate::runtime::AgentCapability::Approval),
             CapabilityState::Native
         );
-        let error = encode_control(
+        let marker = encode_control(
             DirectProvider::Gemini,
             &snapshot,
             DirectControl::Approve {
@@ -2198,8 +2242,15 @@ mod tests {
                 reason: None,
             },
         )
-        .expect_err("ACP approvals must be routed through the active connection");
-        assert!(matches!(error, DirectControlError::Json(_)));
+        .expect("ACP approvals use a typed route through the active connection");
+        assert!(
+            marker.is_empty(),
+            "the active peer owns the actual request id and frame"
+        );
+        assert_eq!(
+            snapshot.resolve(crate::runtime::AgentCapability::Steering),
+            CapabilityState::Unsupported
+        );
 
         let mut unknown = DirectProvider::Gemini.capabilities("default");
         unknown

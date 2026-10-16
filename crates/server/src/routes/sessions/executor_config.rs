@@ -178,6 +178,10 @@ mod tests {
             agent_id: Some("plan".into()),
             reasoning_id: Some("high".into()),
             permission_policy: Some(executors::model_selector::PermissionPolicy::Supervised),
+            provider_options: Some(executors::profile::ProviderRunOptions::Codex {
+                service_tier: Some("priority".into()),
+                plan_mode_reasoning_effort: Some("high".into()),
+            }),
             ..ExecutorConfig::new(BaseCodingAgent::Codex)
         };
         // Mixed SQLite/RFC3339 dates must order by time, not their separator.

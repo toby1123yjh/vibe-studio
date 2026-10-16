@@ -688,7 +688,8 @@ impl LocalAgentRunPort {
         };
         let catalog_observation =
             matches!(&mapped.payload, AgentEventPayload::ProviderExtension { provider_event, .. }
-            if provider_event == executors::executors::acp::session_config::ACP_CATALOG_EVENT)
+            if provider_event == executors::executors::acp::session_config::ACP_CATALOG_EVENT
+                || provider_event == executors::executors::oh_my_pi::catalog::CATALOG_EVENT)
             .then(|| mapped.payload.clone());
         if let AgentEventPayload::LifecycleChanged { status } = &mapped.payload {
             // A failed snapshot read must not drop the audited canonical
@@ -717,6 +718,10 @@ impl LocalAgentRunPort {
 
         if let Some(payload) = catalog_observation {
             executors::executors::acp::session_config::cache_catalog_extension(
+                &attempt.provider_id,
+                &payload,
+            );
+            executors::executors::oh_my_pi::catalog::cache_catalog_extension(
                 &attempt.provider_id,
                 &payload,
             );
@@ -3867,6 +3872,7 @@ mod tests {
                 agent_id: None,
                 reasoning_id: None,
                 permission_policy: None,
+                provider_options: None,
             },
             selected_skills: None,
             reset_to_message_id: None,
@@ -3902,7 +3908,11 @@ mod tests {
 
     #[tokio::test]
     async fn acp_catalog_host_observation_reaches_picker_discovery() {
-        for executor in [BaseCodingAgent::Opencode, BaseCodingAgent::DeepseekHarness] {
+        for executor in [
+            BaseCodingAgent::Opencode,
+            BaseCodingAgent::DeepseekHarness,
+            BaseCodingAgent::OhMyPi,
+        ] {
             let directory = tempfile::tempdir().unwrap();
             let cwd = directory.path();
             let provider = DirectProvider::from_base_agent(executor).unwrap();
@@ -3946,13 +3956,39 @@ mod tests {
             // Construct directly: observe_catalog would seed the server-side
             // cache before the serialized independent-host boundary is tested.
             let observation = AcpCatalogObservation {
-                working_dir: cwd.to_path_buf(),
-                scope_id: catalog_identity(&launched_cmd),
+                working_dir: if executor == BaseCodingAgent::OhMyPi {
+                    std::fs::canonicalize(cwd).unwrap()
+                } else {
+                    cwd.to_path_buf()
+                },
+                scope_id: if executor == BaseCodingAgent::OhMyPi {
+                    let identity = executors::executors::oh_my_pi::catalog::catalog_identity(
+                        cwd,
+                        &launched_cmd,
+                    );
+                    assert_eq!(
+                        identity,
+                        executors::executors::oh_my_pi::catalog::catalog_identity(cwd, &cmd)
+                    );
+                    identity
+                } else {
+                    let dialect = if executor == BaseCodingAgent::Opencode {
+                        executors::executors::acp::session_config::AcpDialect::Opencode
+                    } else {
+                        executors::executors::acp::session_config::AcpDialect::DeepseekHarness
+                    };
+                    executors::executors::acp::session_config::scoped_catalog_identity(
+                        dialect,
+                        cwd,
+                        &launched_cmd,
+                    )
+                },
                 model_selector: ModelSelectorConfig {
                     models: vec![
                         ModelInfo {
                             id: model.into(),
                             name: "Native model".into(),
+                            capabilities: None,
                             provider_id: None,
                             reasoning_options: vec![ReasoningOption {
                                 id: "".into(),
@@ -3963,6 +3999,7 @@ mod tests {
                         ModelInfo {
                             id: model.to_lowercase(),
                             name: "Other model".into(),
+                            capabilities: None,
                             provider_id: None,
                             reasoning_options: Vec::new(),
                         },
@@ -3991,6 +4028,14 @@ mod tests {
                 },
             )
             .unwrap();
+            let catalog_frame = if executor == BaseCodingAgent::OhMyPi {
+                let mut frame = serde_json::to_value(&observation).unwrap();
+                frame["type"] =
+                    serde_json::json!(executors::executors::oh_my_pi::catalog::CATALOG_EVENT);
+                frame.to_string()
+            } else {
+                AcpEvent::CatalogObserved(observation.clone()).to_string()
+            };
             let frame = NativeAuditFrame::from_bytes(
                 1,
                 Utc::now(),
@@ -3998,9 +4043,7 @@ mod tests {
                 NativeAuditChannel::Stdout,
                 "application/json",
                 request.correlation_id,
-                AcpEvent::CatalogObserved(observation.clone())
-                    .to_string()
-                    .as_bytes(),
+                catalog_frame.as_bytes(),
                 None,
             );
             let native_ref = writer.append(frame.clone()).unwrap();
@@ -4419,6 +4462,7 @@ mod tests {
             agent_id: None,
             reasoning_id: None,
             permission_policy: None,
+            provider_options: None,
         };
         attempt.reset_to_message_id = Some("message-17".to_string());
         attempt.provider_session = Some(executors::runtime::ProviderSessionReference {

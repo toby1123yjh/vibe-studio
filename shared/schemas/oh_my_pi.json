@@ -17,6 +17,24 @@
         "null"
       ]
     },
+    "thinking_level": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "auto_compaction": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "auto_retry": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "base_command_override": {
       "title": "Base Command Override",
       "description": "Override the base command with a custom command",

@@ -12,16 +12,14 @@ use std::{
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::AsyncWriteExt,
-    process::{ChildStdin, Command},
-    sync::Mutex,
-};
+use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 use workspace_utils::command_ext::GroupSpawnNoWindowExt;
 
+pub mod catalog;
 pub mod command_adapter;
+pub(crate) mod rpc;
 
 /// Returns the active Oh My Pi agent directory, including environment,
 /// profile, tilde, and migrated XDG layout resolution.
@@ -150,30 +148,12 @@ use crate::{
     command::{CmdOverrides, CommandBuildError, CommandBuilder},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorControl, ExecutorError,
-        SpawnedChild, StandardCodingAgentExecutor,
-        provider_adapter::{DirectControl, DirectIntent, DirectProvider, encode_stdio_rpc},
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
+        StandardCodingAgentExecutor,
+        provider_adapter::{DirectIntent, DirectProvider},
     },
-    profile::ExecutorConfig,
+    profile::{ExecutorConfig, ProviderRunOptions},
 };
-
-#[derive(Debug)]
-struct OhMyPiControl {
-    stdin: Mutex<ChildStdin>,
-    // Keep execution-local config until the supervised process/control dies.
-    _workflow_plugin: Option<tempfile::TempDir>,
-}
-
-#[async_trait]
-impl ExecutorControl for OhMyPiControl {
-    async fn send(&self, control: DirectControl) -> Result<Vec<u8>, ExecutorError> {
-        let bytes = command_adapter::encode_control(control)?;
-        let mut stdin = self.stdin.lock().await;
-        stdin.write_all(&bytes).await?;
-        stdin.flush().await?;
-        Ok(bytes)
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, JsonSchema, Default)]
 pub struct OhMyPi {
@@ -181,6 +161,12 @@ pub struct OhMyPi {
     pub append_prompt: AppendPrompt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_compaction: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_retry: Option<bool>,
     #[serde(flatten)]
     pub cmd: CmdOverrides,
 }
@@ -211,10 +197,48 @@ impl OhMyPi {
         self.provider().mapper()
     }
 
-    pub(crate) fn apply_direct_overrides(&mut self, executor_config: &ExecutorConfig) {
+    pub(crate) fn apply_direct_overrides(
+        &mut self,
+        executor_config: &ExecutorConfig,
+    ) -> Result<(), ExecutorError> {
+        executor_config
+            .validate_provider_options()
+            .map_err(ExecutorError::InvalidConfiguration)?;
+        if executor_config.agent_id.is_some() {
+            return Err(ExecutorError::InvalidConfiguration(
+                "Oh My Pi does not expose an agent selector".into(),
+            ));
+        }
+        // Supervised is the existing native-policy marker, not a host-side
+        // policy setter. OMP itself retains authority over its permissions.
+        if executor_config
+            .permission_policy
+            .as_ref()
+            .is_some_and(|policy| *policy != crate::model_selector::PermissionPolicy::Supervised)
+        {
+            return Err(ExecutorError::InvalidConfiguration(
+                "Oh My Pi does not expose automatic or plan permission overrides; use its native policy".into(),
+            ));
+        }
         if let Some(model_id) = &executor_config.model_id {
             self.model = Some(model_id.clone());
         }
+        if let Some(reasoning_id) = &executor_config.reasoning_id {
+            self.thinking_level = Some(reasoning_id.clone());
+        }
+        if let Some(ProviderRunOptions::OhMyPi {
+            auto_compaction,
+            auto_retry,
+        }) = &executor_config.provider_options
+        {
+            if auto_compaction.is_some() {
+                self.auto_compaction = *auto_compaction;
+            }
+            if auto_retry.is_some() {
+                self.auto_retry = *auto_retry;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn launch_direct(
@@ -243,9 +267,9 @@ impl OhMyPi {
         }
     }
 
-    /// Launch `omp --mode rpc`, write one initialize/start request, and return
-    /// the live process to the supervisor.  The process remains responsible
-    /// for all tool execution and MCP ownership.
+    /// Launch `omp --mode rpc` and hand its audited protocol peer to the
+    /// supervisor. The peer confirms execution-local settings before prompting;
+    /// the native process owns tool execution and MCP.
     pub async fn spawn(
         &self,
         current_dir: &Path,
@@ -315,43 +339,33 @@ impl OhMyPi {
 
         let mut child = command.group_spawn_no_window()?;
         let cancel = CancellationToken::new();
-        if let Some(readiness) = readiness {
-            let result = tokio::select! {
-                biased;
-                _ = child.wait() => Err(ExecutorError::Io(std::io::Error::other("Oh My Pi exited before workflow MCP tool discovery"))),
-                result = readiness.wait(&cancel) => result,
-            };
-            if let Err(error) = result {
-                // No prompt was written. This spawn has not been handed to the
-                // supervisor yet, so it owns process-group cleanup itself.
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), child.kill()).await;
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
-                return Err(error);
-            }
-        }
-        let request = command_adapter::session_request(
-            &self.append_prompt.combine_prompt(prompt),
-            session_id,
-        );
-        if let Some(stdin) = child.inner().stdin.as_mut() {
-            stdin.write_all(&encode_stdio_rpc(&request)?).await?;
-            stdin.flush().await?;
-        }
-
         let stdin = child.inner().stdin.take().ok_or_else(|| {
             ExecutorError::Io(std::io::Error::other("Oh My Pi missing stdin control pipe"))
         })?;
+        let stdout = child.inner().stdout.take().ok_or_else(|| {
+            ExecutorError::Io(std::io::Error::other("Oh My Pi missing stdout pipe"))
+        })?;
+        let output = crate::stdout_dup::create_stdout_pipe_writer(&mut child)?;
+        let (peer, exit_signal) = rpc::RpcPeer::start(
+            stdin,
+            stdout,
+            output,
+            self.clone(),
+            catalog::scope(current_dir, &self.cmd),
+            self.append_prompt.combine_prompt(prompt),
+            session_id.map(str::to_owned),
+            readiness,
+            cancel.clone(),
+            workflow_plugin,
+        );
 
         // The supervisor owns cancellation and process-tree cleanup.  Keeping
         // a token on the returned child makes the control boundary explicit.
         Ok(SpawnedChild {
             child,
-            exit_signal: None,
+            exit_signal: Some(exit_signal),
             cancel: Some(cancel),
-            control: Some(Arc::new(OhMyPiControl {
-                stdin: Mutex::new(stdin),
-                _workflow_plugin: workflow_plugin,
-            })),
+            control: Some(Arc::new(peer)),
         })
     }
 
@@ -380,16 +394,61 @@ impl OhMyPi {
             variant: None,
             model_id: self.model.clone(),
             agent_id: None,
-            reasoning_id: None,
+            reasoning_id: self.thinking_level.clone(),
             permission_policy: Some(crate::model_selector::PermissionPolicy::Supervised),
+            provider_options: (self.auto_compaction.is_some() || self.auto_retry.is_some())
+                .then_some(ProviderRunOptions::OhMyPi {
+                    auto_compaction: self.auto_compaction,
+                    auto_retry: self.auto_retry,
+                }),
         }
     }
 }
 
 #[async_trait]
 impl StandardCodingAgentExecutor for OhMyPi {
-    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) {
-        self.apply_direct_overrides(executor_config);
+    async fn discover_options(
+        &self,
+        workdir: Option<&Path>,
+        repo_path: Option<&Path>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ExecutorError> {
+        use crate::{
+            executor_discovery::ExecutorDiscoveredOptions,
+            model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy},
+        };
+        let cwd = workdir
+            .or(repo_path)
+            .map(Path::to_path_buf)
+            .unwrap_or(std::env::current_dir()?);
+        let observed = catalog::observed_catalog(&cwd, &self.cmd);
+        let error = observed.is_none().then(||
+            "Oh My Pi capabilities are unconfirmed; the next agent run will report its native model catalog".to_string());
+        let model_selector = observed.unwrap_or_else(|| ModelSelectorConfig {
+            models: self
+                .model
+                .iter()
+                .map(|model| ModelInfo {
+                    id: model.clone(),
+                    name: model.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            default_model: self.model.clone(),
+            permissions: vec![PermissionPolicy::Supervised],
+            ..Default::default()
+        });
+        let options = ExecutorDiscoveredOptions {
+            model_selector,
+            error,
+            ..Default::default()
+        };
+        Ok(Box::pin(futures::stream::once(async move {
+            crate::logs::utils::patch::executor_discovered_options(options)
+        })))
+    }
+
+    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        self.apply_direct_overrides(executor_config)
     }
 
     async fn spawn(
@@ -436,14 +495,7 @@ impl StandardCodingAgentExecutor for OhMyPi {
     }
 
     fn get_preset_options(&self) -> ExecutorConfig {
-        ExecutorConfig {
-            executor: BaseCodingAgent::OhMyPi,
-            variant: None,
-            model_id: self.model.clone(),
-            agent_id: None,
-            reasoning_id: None,
-            permission_policy: Some(crate::model_selector::PermissionPolicy::Supervised),
-        }
+        OhMyPi::get_preset_options(self)
     }
 }
 
@@ -476,6 +528,27 @@ mod tests {
 
         assert_eq!(preset.executor, BaseCodingAgent::OhMyPi);
         assert_eq!(preset.variant, None);
+    }
+
+    #[test]
+    fn unsupported_omp_overrides_fail_instead_of_disappearing() {
+        use crate::model_selector::PermissionPolicy;
+        let mut agent = OhMyPi::default();
+        let mut config = agent.get_preset_options();
+        assert!(agent.apply_direct_overrides(&config).is_ok());
+        for policy in [PermissionPolicy::Auto, PermissionPolicy::Plan] {
+            config.permission_policy = Some(policy);
+            assert!(matches!(
+                agent.apply_direct_overrides(&config),
+                Err(ExecutorError::InvalidConfiguration(_))
+            ));
+        }
+        config.permission_policy = None;
+        config.agent_id = Some("unavailable-agent".into());
+        assert!(matches!(
+            agent.apply_direct_overrides(&config),
+            Err(ExecutorError::InvalidConfiguration(_))
+        ));
     }
 
     #[test]

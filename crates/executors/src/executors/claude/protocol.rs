@@ -1,6 +1,10 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use tokio::{
@@ -28,6 +32,7 @@ pub struct ProtocolPeer {
     stdin: Arc<Mutex<ChildStdin>>,
     interrupt_sent: Arc<AtomicBool>,
     startup_failure: Option<StartupFailureSignal>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, String>>>>>,
 }
 
 /// A failure-only signal retained by the real peer/control lifetime. Successful
@@ -102,6 +107,7 @@ impl ProtocolPeer {
             stdin: Arc::new(Mutex::new(stdin)),
             interrupt_sent: Arc::new(AtomicBool::new(false)),
             startup_failure,
+            pending: Arc::new(Mutex::new(HashMap::new())),
         };
 
         let reader_peer = peer.clone();
@@ -151,9 +157,25 @@ impl ProtocolPeer {
                                 continue;
                             }
                             client.log_message(line).await?;
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                                if let Some(observation) = runtime_configuration_observation(&value) {
+                                    client.log_message(&observation.to_string()).await?;
+                                }
+                            }
 
                             // Parse and handle control messages
                             match serde_json::from_str::<CLIMessage>(line) {
+                                Ok(CLIMessage::ControlResponse { response }) => {
+                                    let (id, result) = match response {
+                                        ControlResponseType::Success { request_id, response } =>
+                                            (request_id, Ok(response.unwrap_or(serde_json::Value::Null))),
+                                        ControlResponseType::Error { request_id, error } =>
+                                            (request_id, Err(error.unwrap_or_else(|| "Claude rejected control request".into()))),
+                                    };
+                                    if let Some(sender) = self.pending.lock().await.remove(&id) {
+                                        let _ = sender.send(result);
+                                    }
+                                }
                                 Ok(CLIMessage::ControlRequest {
                                     request_id,
                                     request,
@@ -175,6 +197,9 @@ impl ProtocolPeer {
                 }
             }
         }
+        // Wake setup requests immediately on EOF; do not send a prompt after a
+        // failed initialize/resume or leave it waiting for a timeout.
+        self.pending.lock().await.clear();
         Ok(())
     }
 
@@ -304,27 +329,117 @@ impl ProtocolPeer {
         self.send_json_bytes(&message).await
     }
 
-    pub async fn initialize(&self, hooks: Option<serde_json::Value>) -> Result<(), ExecutorError> {
-        self.send_json(&SDKControlRequest::new(SDKControlRequestType::Initialize {
-            hooks,
-        }))
-        .await
+    async fn request(
+        &self,
+        request: SDKControlRequestType,
+    ) -> Result<serde_json::Value, ExecutorError> {
+        let request = SDKControlRequest::new(request);
+        let (sender, receiver) = oneshot::channel();
+        self.pending
+            .lock()
+            .await
+            .insert(request.request_id.clone(), sender);
+        let result = async {
+            self.send_json(&request).await?;
+            tokio::time::timeout(Duration::from_secs(60), receiver)
+                .await
+                .map_err(|_| {
+                    ExecutorError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Claude control request timed out",
+                    ))
+                })?
+                .map_err(|_| {
+                    ExecutorError::Io(std::io::Error::other(
+                        "Claude exited before confirming configuration",
+                    ))
+                })?
+                .map_err(|error| ExecutorError::Io(std::io::Error::other(error)))
+        }
+        .await;
+        self.pending.lock().await.remove(&request.request_id);
+        result
+    }
+
+    pub async fn initialize(
+        &self,
+        hooks: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, ExecutorError> {
+        self.request(SDKControlRequestType::Initialize { hooks })
+            .await
+    }
+
+    pub async fn apply_flag_settings(
+        &self,
+        settings: serde_json::Value,
+    ) -> Result<(), ExecutorError> {
+        self.request(SDKControlRequestType::ApplyFlagSettings { settings })
+            .await
+            .map(|_| ())
     }
     pub async fn interrupt(&self) -> Result<(), ExecutorError> {
         self.send_interrupt_once().await.map(|_| ())
     }
 
     pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<(), ExecutorError> {
-        self.send_json(&SDKControlRequest::new(
-            SDKControlRequestType::SetPermissionMode { mode },
-        ))
-        .await
+        self.request(SDKControlRequestType::SetPermissionMode { mode })
+            .await
+            .map(|_| ())
     }
+}
+
+fn runtime_configuration_observation(value: &serde_json::Value) -> Option<serde_json::Value> {
+    // Exclude subagent traffic and multi-model usage totals: neither identifies
+    // the main conversation's actual model.
+    if value
+        .get("parent_tool_use_id")
+        .is_some_and(|id| !id.is_null())
+    {
+        return None;
+    }
+    let (model, source) = match value["type"].as_str()? {
+        "system" if value["subtype"] == "init" => (value["model"].as_str()?, "claude.system/init"),
+        "assistant" => (value["message"]["model"].as_str()?, "claude.assistant"),
+        _ => return None,
+    };
+    Some(serde_json::json!({"type":"runtime_configuration", "model_id":model, "source":source}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observations_only_report_main_model_and_never_guess_effort() {
+        let observed = runtime_configuration_observation(&serde_json::json!({"type":"system", "subtype":"init", "model":"resolved-model", "effort":"high"})).unwrap();
+        assert_eq!(observed["model_id"], "resolved-model");
+        assert!(observed.get("reasoning_id").is_none());
+        assert!(runtime_configuration_observation(&serde_json::json!({"type":"assistant", "parent_tool_use_id":"task-1", "message":{"model":"subagent-model"}})).is_none());
+        assert!(
+            runtime_configuration_observation(
+                &serde_json::json!({"type":"result", "modelUsage":{"model-a":{},"model-b":{}}})
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn native_control_fixtures_preserve_request_id_and_flag_settings() {
+        let request = SDKControlRequest::new(SDKControlRequestType::ApplyFlagSettings {
+            settings: serde_json::json!({"fastMode":false,"ultracode":true}),
+        });
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["request"]["subtype"], "apply_flag_settings");
+        assert_eq!(value["request"]["settings"]["ultracode"], true);
+        assert!(value["request"]["settings"].get("effortLevel").is_none());
+        let response: CLIMessage = serde_json::from_value(serde_json::json!({"type":"control_response","response":{"subtype":"error","request_id":request.request_id,"error":"Unsupported setting"}})).unwrap();
+        assert!(matches!(
+            response,
+            CLIMessage::ControlResponse {
+                response: ControlResponseType::Error { .. }
+            }
+        ));
+    }
 
     #[tokio::test]
     async fn workflow_claude_successful_startup_keeps_exit_signal_pending_for_peer_lifetime() {

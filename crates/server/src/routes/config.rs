@@ -664,6 +664,8 @@ async fn get_agent_preset_options(
 pub struct ExecutorDiscoveredOptionsStreamQuery {
     executor: BaseCodingAgent,
     #[serde(default)]
+    refresh: bool,
+    #[serde(default)]
     variant: Option<String>,
     #[serde(default)]
     session_id: Option<Uuid>,
@@ -690,13 +692,8 @@ impl ExecutorDiscoveredOptionsStreamQuery {
         profiles: &ExecutorConfigs,
     ) -> Result<ExecutorProfileId, &'static str> {
         let profile_id = self.profile_id();
-        if matches!(
-            self.executor,
-            BaseCodingAgent::Opencode | BaseCodingAgent::DeepseekHarness
-        ) && profiles.get_coding_agent(&profile_id).is_none()
-        {
-            // Do not label DEFAULT's native authority as a missing ACP profile.
-            // Other providers retain their existing fallback behavior.
+        if profiles.get_coding_agent(&profile_id).is_none() {
+            // Never label DEFAULT's native authority as a missing profile.
             return Err(
                 "The requested agent profile is unavailable; choose an existing configuration",
             );
@@ -749,6 +746,7 @@ async fn handle_executor_discovered_options_ws(
             query.session_id,
             query.workspace_id,
             query.repo_id,
+            query.refresh,
         )
         .await
     {
@@ -791,6 +789,16 @@ async fn handle_executor_discovered_options_ws(
         }
         Err(e) => {
             tracing::warn!("Failed to start discovered options stream: {}", e);
+            let patch = executors::logs::utils::patch::executor_discovered_options(
+                executors::executor_discovery::ExecutorDiscoveredOptions {
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                },
+            );
+            let _ = socket
+                .send(LogMsg::JsonPatch(patch).to_ws_message_unchecked())
+                .await;
+            let _ = socket.send(LogMsg::Ready.to_ws_message_unchecked()).await;
         }
     }
 
@@ -808,8 +816,15 @@ mod discovered_options_tests {
     };
 
     #[test]
-    fn acp_discovery_query_preserves_selected_profile_variant() {
-        for executor in [BaseCodingAgent::Opencode, BaseCodingAgent::DeepseekHarness] {
+    fn discovery_query_preserves_selected_profile_variant_for_all_six_providers() {
+        for executor in [
+            BaseCodingAgent::Codex,
+            BaseCodingAgent::ClaudeCode,
+            BaseCodingAgent::Gemini,
+            BaseCodingAgent::OhMyPi,
+            BaseCodingAgent::Opencode,
+            BaseCodingAgent::DeepseekHarness,
+        ] {
             let mut profiles = ExecutorConfigs::from_defaults();
             let custom = profiles
                 .get_coding_agent(&ExecutorProfileId::new(executor))
@@ -845,9 +860,16 @@ mod discovered_options_tests {
     }
 
     #[test]
-    fn acp_discovery_blank_variant_is_default_and_missing_variant_fails_closed() {
+    fn discovery_blank_variant_is_default_and_missing_variant_fails_closed() {
         let profiles = ExecutorConfigs::from_defaults();
-        for executor in [BaseCodingAgent::Opencode, BaseCodingAgent::DeepseekHarness] {
+        for executor in [
+            BaseCodingAgent::Codex,
+            BaseCodingAgent::ClaudeCode,
+            BaseCodingAgent::Gemini,
+            BaseCodingAgent::OhMyPi,
+            BaseCodingAgent::Opencode,
+            BaseCodingAgent::DeepseekHarness,
+        ] {
             for value in ["", "%20%20"] {
                 let uri = format!(
                     "/api/agents/discovered-options/ws?executor={executor}&variant={value}"
@@ -883,11 +905,26 @@ mod discovered_options_tests {
             .unwrap();
             let Query(query) =
                 Query::<ExecutorDiscoveredOptionsStreamQuery>::try_from_uri(&uri).unwrap();
-            assert_eq!(
-                query.resolve_profile(&profiles).unwrap(),
-                query.profile_id()
-            );
+            assert!(query.resolve_profile(&profiles).is_err());
         }
+    }
+
+    #[test]
+    fn explicit_refresh_query_is_forwarded_without_changing_profile() {
+        let uri = "/api/agents/discovered-options/ws?executor=CLAUDE_CODE&variant=CUSTOM&refresh=true&nonce=2".parse().unwrap();
+        let Query(query) =
+            Query::<ExecutorDiscoveredOptionsStreamQuery>::try_from_uri(&uri).unwrap();
+        assert!(query.refresh);
+        assert_eq!(
+            query.profile_id(),
+            ExecutorProfileId::with_variant(BaseCodingAgent::ClaudeCode, "CUSTOM".into())
+        );
+        let uri = "/api/agents/discovered-options/ws?executor=CODEX"
+            .parse()
+            .unwrap();
+        let Query(query) =
+            Query::<ExecutorDiscoveredOptionsStreamQuery>::try_from_uri(&uri).unwrap();
+        assert!(!query.refresh);
     }
 }
 

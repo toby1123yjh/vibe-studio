@@ -4,7 +4,9 @@ use std::{path::Path, sync::Arc};
 
 use super::{
     AcpAgentHarness,
-    session_config::{AcpDialect, catalog_identity, is_catalog_context_env, observed_catalog},
+    session_config::{
+        AcpDialect, is_catalog_context_env, observed_catalog, scoped_catalog_identity,
+    },
 };
 use crate::{
     approvals::ExecutorApprovalService,
@@ -110,7 +112,11 @@ impl AcpProviderLaunch<'_> {
         let mut harness = AcpAgentHarness::with_session_namespace(self.namespace)
             .with_dialect(self.dialect)
             .with_mcp_servers(workflow_mcp_servers(&env)?)
-            .with_catalog_identity(catalog_identity(&identity_cmd))
+            .with_catalog_identity(scoped_catalog_identity(
+                self.dialect,
+                current_dir,
+                &identity_cmd,
+            ))
             .with_workflow_readiness(readiness);
         if let Some(model) = self.model {
             harness = harness.with_model(model);
@@ -168,7 +174,6 @@ pub(crate) fn discover_options(
     cmd: &CmdOverrides,
     model: Option<&str>,
 ) -> ExecutorDiscoveredOptions {
-    let identity = catalog_identity(cmd);
     let mut configured_model = model.map(str::to_owned);
     // The native manager follows this host's file authority. A command/env
     // override may point the child elsewhere, so do not present host defaults
@@ -181,6 +186,8 @@ pub(crate) fn discover_options(
         || cmd.env.as_ref().is_some_and(|env| {
             env.keys().any(|key| {
                 key.starts_with("OPENCODE_")
+                    || key.starts_with("GEMINI_")
+                    || key.starts_with("GOOGLE_")
                     || key.starts_with("DSH_")
                     || key.starts_with("XDG_")
                     || matches!(key.as_str(), "HOME" | "USERPROFILE")
@@ -203,8 +210,11 @@ pub(crate) fn discover_options(
             }
         }
     }
+    let fallback_cwd = std::env::current_dir().ok();
     let selector = workdir
-        .and_then(|cwd| observed_catalog(dialect, cwd, &identity))
+        .or(project)
+        .or(fallback_cwd.as_deref())
+        .and_then(|cwd| observed_catalog(dialect, cwd, &scoped_catalog_identity(dialect, cwd, cmd)))
         .unwrap_or_else(|| {
             let mut selector = ModelSelectorConfig {
                 permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
@@ -217,6 +227,7 @@ pub(crate) fn discover_options(
                     name: model.clone(),
                     provider_id: None,
                     reasoning_options: Vec::new(),
+                    ..Default::default()
                 });
                 selector.default_model = Some(model);
             }

@@ -43,7 +43,7 @@ test('ACP model discovery carries the selected profile and workspace scope', () 
   }
 });
 
-test('older providers keep their existing default discovery profile', () => {
+test('all providers discover the actual selected profile', () => {
   for (const agent of [
     BaseCodingAgent.GEMINI,
     BaseCodingAgent.CODEX,
@@ -51,10 +51,26 @@ test('older providers keep their existing default discovery profile', () => {
     BaseCodingAgent.OH_MY_PI,
   ]) {
     const variant = resolveModelDiscoveryVariant(agent, 'CUSTOM_ROUTE');
-    assert.equal(variant, undefined);
+    assert.equal(variant, 'CUSTOM_ROUTE');
     assert.equal(
       buildExecutorDiscoveryStreamUrl(agent, { variant }),
-      `/api/agents/discovered-options/ws?executor=${agent}`
+      `/api/agents/discovered-options/ws?executor=${agent}&variant=CUSTOM_ROUTE`
     );
   }
+});
+
+test('explicit rescan retains profile and workspace scope', () => {
+  const url = new URL(
+    buildExecutorDiscoveryStreamUrl(BaseCodingAgent.CODEX, {
+      workspaceId: 'workspace',
+      sessionId: 'session',
+      variant: 'CUSTOM',
+      refresh: true,
+    }),
+    'http://localhost'
+  );
+  assert.equal(url.searchParams.get('refresh'), 'true');
+  assert.equal(url.searchParams.get('variant'), 'CUSTOM');
+  assert.equal(url.searchParams.get('workspace_id'), 'workspace');
+  assert.equal(url.searchParams.get('session_id'), 'session');
 });

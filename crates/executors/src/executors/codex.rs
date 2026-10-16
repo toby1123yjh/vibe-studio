@@ -33,13 +33,6 @@ fn configured_codex_home() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-pub(crate) fn resolve_model(model: Option<&str>) -> (Option<&str>, bool) {
-    match model.and_then(|m| m.strip_suffix("-fast")) {
-        Some(base) => (Some(base), true),
-        None => (model, false),
-    }
-}
-
 pub(crate) fn resume_params_from(
     thread_id: String,
     params: ThreadStartParams,
@@ -68,13 +61,10 @@ const MODELS_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 use async_trait::async_trait;
 use codex_app_server_protocol::{
-    AskForApproval as V2AskForApproval, ModelListResponse, ReviewTarget,
-    SandboxMode as V2SandboxMode, SkillScope, SkillsListResponse, ThreadResumeParams,
-    ThreadStartParams, UserInput,
+    AskForApproval as V2AskForApproval, ReviewTarget, SandboxMode as V2SandboxMode, SkillScope,
+    SkillsListResponse, ThreadResumeParams, ThreadStartParams, UserInput,
 };
-use codex_protocol::{
-    config_types::ServiceTier, openai_models::ReasoningEffort as ProtocolReasoningEffort,
-};
+use codex_protocol::openai_models::ReasoningEffort as ProtocolReasoningEffort;
 use derivative::Derivative;
 use futures::StreamExt;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -104,7 +94,7 @@ use crate::{
     },
     logs::utils::patch,
     model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy, ReasoningOption},
-    profile::ExecutorConfig,
+    profile::{ExecutorConfig, ProviderRunOptions},
     stdout_dup::create_stdout_pipe_writer,
     workflow_mcp::{WorkflowMcpReadiness, WorkflowPromptGate},
 };
@@ -278,6 +268,10 @@ pub struct Codex {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasoning_effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasoning_summary: Option<ReasoningSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasoning_summary_format: Option<ReasoningSummaryFormat>,
@@ -306,8 +300,8 @@ pub struct Codex {
 
 #[async_trait]
 impl StandardCodingAgentExecutor for Codex {
-    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) {
-        self.apply_direct_overrides(executor_config);
+    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        self.apply_direct_overrides(executor_config)
     }
 
     fn use_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
@@ -432,6 +426,13 @@ impl StandardCodingAgentExecutor for Codex {
                 .as_ref()
                 .map(|e| e.as_str().to_string()),
             permission_policy: Some(permission_policy),
+            provider_options: Some(ProviderRunOptions::Codex {
+                service_tier: self.service_tier.clone(),
+                plan_mode_reasoning_effort: self
+                    .plan_mode_reasoning_effort
+                    .as_ref()
+                    .map(ToString::to_string),
+            }),
         }
     }
 
@@ -483,12 +484,15 @@ impl StandardCodingAgentExecutor for Codex {
                 }
                 Ok(Ok(_)) => {
                     tracing::warn!("Codex model/list returned no models; keeping fallback list");
+                    yield patch::discovery_error("Codex returned no models; capabilities are unconfirmed".into());
                 }
                 Ok(Err(err)) => {
                     tracing::warn!("Failed to discover Codex models: {err}; keeping fallback list");
+                    yield patch::discovery_error(format!("Codex model discovery failed: {err}"));
                 }
                 Err(_) => {
                     tracing::warn!("Timed out discovering Codex models; keeping fallback list");
+                    yield patch::discovery_error("Codex model discovery timed out; capabilities are unconfirmed".into());
                 }
             }
             yield patch::models_loaded();
@@ -573,14 +577,19 @@ impl Codex {
         Self::DIRECT_PROVIDER.mapper()
     }
 
-    pub(crate) fn apply_direct_overrides(&mut self, executor_config: &ExecutorConfig) {
+    pub(crate) fn apply_direct_overrides(
+        &mut self,
+        executor_config: &ExecutorConfig,
+    ) -> Result<(), ExecutorError> {
         if let Some(model_id) = &executor_config.model_id {
             self.model = Some(model_id.clone());
         }
-        if let Some(reasoning_id) = &executor_config.reasoning_id
-            && let Ok(reasoning_effort) = reasoning_id.parse()
-        {
-            self.model_reasoning_effort = Some(reasoning_effort)
+        if let Some(reasoning_id) = &executor_config.reasoning_id {
+            self.model_reasoning_effort = Some(
+                reasoning_id
+                    .parse()
+                    .map_err(ExecutorError::InvalidConfiguration)?,
+            );
         }
         if let Some(permission_policy) = &executor_config.permission_policy {
             match permission_policy {
@@ -590,7 +599,7 @@ impl Codex {
                 }
                 crate::model_selector::PermissionPolicy::Supervised => {
                     if matches!(self.ask_for_approval, None | Some(AskForApproval::Never)) {
-                        self.ask_for_approval = Some(AskForApproval::UnlessTrusted);
+                        self.ask_for_approval = Some(AskForApproval::OnRequest);
                     }
                     self.plan = false;
                 }
@@ -599,6 +608,28 @@ impl Codex {
                 }
             }
         }
+        if let Some(ProviderRunOptions::Codex {
+            service_tier,
+            plan_mode_reasoning_effort,
+        }) = &executor_config.provider_options
+        {
+            if let Some(tier) = service_tier {
+                if !matches!(tier.as_str(), "default" | "priority" | "flex") {
+                    return Err(ExecutorError::InvalidConfiguration(format!(
+                        "Unsupported Codex service tier: {tier}"
+                    )));
+                }
+                self.service_tier = Some(tier.clone());
+            }
+            if let Some(effort) = plan_mode_reasoning_effort {
+                self.plan_mode_reasoning_effort = Some(
+                    effort
+                        .parse()
+                        .map_err(ExecutorError::InvalidConfiguration)?,
+                );
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn use_direct_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
@@ -862,12 +893,8 @@ impl Codex {
                 .get_or_insert_with(HashMap::new)
                 .insert("compact_prompt".to_string(), Value::String(compact.clone()));
         }
-        let (model, is_fast) = resolve_model(self.model.as_deref());
-        let service_tier = if is_fast {
-            Some(Some(ServiceTier::Fast.request_value().to_string()))
-        } else {
-            None
-        };
+        let model = self.model.as_deref();
+        let service_tier = self.service_tier.clone().map(Some);
 
         ThreadStartParams {
             model: model.map(|m| m.to_string()),
@@ -885,6 +912,12 @@ impl Codex {
 
     fn build_config_overrides(&self) -> Option<HashMap<String, Value>> {
         let mut overrides = HashMap::new();
+        if let Some(effort) = &self.plan_mode_reasoning_effort {
+            overrides.insert(
+                "plan_mode_reasoning_effort".into(),
+                Value::String(effort.to_string()),
+            );
+        }
 
         if let Some(effort) = &self.model_reasoning_effort {
             overrides.insert(
@@ -924,6 +957,9 @@ impl Codex {
         resume_session: Option<&str>,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
+        if matches!(self.ask_for_approval, Some(AskForApproval::UnlessTrusted)) {
+            return Err(ExecutorError::InvalidConfiguration("Codex no longer supports the untrusted approval policy; select on-request explicitly".into()));
+        }
         let params = self.build_thread_start_params(current_dir);
         let resume_session = resume_session.map(|s| s.to_string());
 
@@ -1086,10 +1122,12 @@ impl Codex {
             (Some(SandboxMode::DangerFullAccess), None)
         );
         let plan_mode = self.plan;
-        let reasoning_effort = self
-            .model_reasoning_effort
-            .as_ref()
-            .map(ReasoningEffort::to_protocol);
+        let reasoning_effort = (if self.plan {
+            self.plan_mode_reasoning_effort.as_ref()
+        } else {
+            self.model_reasoning_effort.as_ref()
+        })
+        .map(ReasoningEffort::to_protocol);
         let approvals = self.approvals.clone();
         let repo_context = env.repo_context.clone();
         let commit_reminder = env.commit_reminder;
@@ -1249,25 +1287,42 @@ fn skill_scope_to_string(scope: SkillScope) -> &'static str {
 
 /// Convert a live `model/list` response into the UI model-selector shape,
 /// dropping models hidden from the default picker.
-fn model_list_response_to_model_infos(response: ModelListResponse) -> Vec<ModelInfo> {
+fn model_list_response_to_model_infos(response: client::ModelCatalogResponse) -> Vec<ModelInfo> {
     response
         .data
         .into_iter()
         .filter(|model| !model.hidden)
         .map(|model| {
-            let default_reasoning_effort = model.default_reasoning_effort.to_string();
             let reasoning_options = ReasoningOption::from_names_with_default(
                 model
                     .supported_reasoning_efforts
                     .iter()
-                    .map(|option| option.reasoning_effort.to_string()),
-                Some(&default_reasoning_effort),
+                    // Use the same boundary as execution. The native protocol
+                    // preserves future effort IDs as Custom(String).
+                    .filter(|option| option.reasoning_effort.parse::<ReasoningEffort>().is_ok())
+                    .map(|option| option.reasoning_effort.clone()),
+                model.default_reasoning_effort.as_deref(),
             );
+            let reasoning = if model.supported_reasoning_efforts.is_empty() {
+                crate::model_selector::CapabilitySupport::Unsupported
+            } else if reasoning_options.is_empty() {
+                crate::model_selector::CapabilitySupport::Unknown
+            } else {
+                crate::model_selector::CapabilitySupport::Supported
+            };
             ModelInfo {
                 id: model.id,
                 name: model.display_name,
                 provider_id: None,
                 reasoning_options,
+                capabilities: Some(crate::model_selector::ModelCapabilities {
+                    reasoning,
+                    input_modalities: model.input_modalities,
+                    service_tiers: model.service_tiers,
+                    default_service_tier: model.default_service_tier,
+                    is_default: model.is_default,
+                    ..Default::default()
+                }),
             }
         })
         .collect()
@@ -1285,9 +1340,7 @@ fn fallback_models() -> Vec<ModelInfo> {
 
     let mut models = [
         ("gpt-5.5", "GPT-5.5"),
-        ("gpt-5.5-fast", "GPT-5.5 Fast"),
         ("gpt-5.4", "GPT-5.4"),
-        ("gpt-5.4-fast", "GPT-5.4 Fast"),
         ("gpt-5.4-mini", "GPT-5.4 Mini"),
         ("gpt-5.3-codex", "GPT-5.3 Codex"),
         ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),
@@ -1299,6 +1352,7 @@ fn fallback_models() -> Vec<ModelInfo> {
         name: name.to_string(),
         provider_id: None,
         reasoning_options: xhigh_reasoning_options.clone(),
+        ..Default::default()
     })
     .collect::<Vec<_>>();
     models.splice(
@@ -1309,21 +1363,28 @@ fn fallback_models() -> Vec<ModelInfo> {
                 name: "GPT-5.6-Sol".to_string(),
                 provider_id: None,
                 reasoning_options: ultra_reasoning_options.clone(),
+                ..Default::default()
             },
             ModelInfo {
                 id: "gpt-5.6-terra".to_string(),
                 name: "GPT-5.6-Terra".to_string(),
                 provider_id: None,
                 reasoning_options: ultra_reasoning_options,
+                ..Default::default()
             },
             ModelInfo {
                 id: "gpt-5.6-luna".to_string(),
                 name: "GPT-5.6-Luna".to_string(),
                 provider_id: None,
                 reasoning_options: max_reasoning_options,
+                ..Default::default()
             },
         ],
     );
+    // Static names are only display hints, not current native capabilities.
+    for model in &mut models {
+        model.reasoning_options.clear();
+    }
     models
 }
 
@@ -1337,7 +1398,7 @@ mod tests {
 
     use super::{
         AskForApproval, Codex, ReasoningEffort, build_chat_input, fallback_models,
-        model_list_response_to_model_infos, resolve_model, resume_params_from,
+        model_list_response_to_model_infos, resume_params_from,
     };
     use crate::{
         actions::SelectedSkill,
@@ -1357,6 +1418,7 @@ mod tests {
             agent_id: None,
             reasoning_id: Some(reasoning_id.to_string()),
             permission_policy: None,
+            provider_options: None,
         }
     }
 
@@ -1423,25 +1485,32 @@ mod tests {
     }
 
     #[test]
-    fn resolve_model_detects_fast_suffix() {
-        assert_eq!(resolve_model(Some("gpt-5.5-fast")), (Some("gpt-5.5"), true));
-        assert_eq!(resolve_model(Some("gpt-5.4-fast")), (Some("gpt-5.4"), true));
+    fn service_tier_is_independent_of_model_identity() {
+        let executor: Codex =
+            serde_json::from_value(json!({"model":"custom-fast","service_tier":"priority"}))
+                .unwrap();
+        let params = executor.build_thread_start_params(Path::new("."));
+        assert_eq!(params.model.as_deref(), Some("custom-fast"));
+        assert_eq!(params.service_tier, Some(Some("priority".into())));
     }
 
     #[test]
-    fn resolve_model_leaves_non_fast_models_unchanged() {
-        assert_eq!(resolve_model(Some("gpt-5.5")), (Some("gpt-5.5"), false));
-        assert_eq!(
-            resolve_model(Some("gpt-5.4-mini")),
-            (Some("gpt-5.4-mini"), false)
-        );
-        assert_eq!(resolve_model(None), (None, false));
+    fn plan_effort_does_not_replace_regular_effort() {
+        let executor: Codex = serde_json::from_value(
+            json!({"model_reasoning_effort":"high","plan_mode_reasoning_effort":"low"}),
+        )
+        .unwrap();
+        let params = executor.build_config_overrides().unwrap();
+        assert_eq!(params["model_reasoning_effort"], "high");
+        assert_eq!(params["plan_mode_reasoning_effort"], "low");
     }
 
     #[test]
     fn apply_overrides_preserves_codex_protocol_reasoning_values() {
         let mut executor = test_executor();
-        executor.apply_overrides(&config_with_reasoning("minimal"));
+        executor
+            .apply_overrides(&config_with_reasoning("minimal"))
+            .unwrap();
 
         let overrides = executor
             .build_config_overrides()
@@ -1464,7 +1533,9 @@ mod tests {
     #[test]
     fn apply_overrides_preserves_custom_reasoning_values() {
         let mut executor = test_executor();
-        executor.apply_overrides(&config_with_reasoning("max"));
+        executor
+            .apply_overrides(&config_with_reasoning("max"))
+            .unwrap();
 
         let overrides = executor
             .build_config_overrides()
@@ -1554,16 +1625,29 @@ mod tests {
                 input_modalities: vec![],
                 supports_personality: false,
                 additional_speed_tiers: vec![],
-                service_tiers: vec![],
-                default_service_tier: None,
+                service_tiers: vec![codex_app_server_protocol::ModelServiceTier {
+                    id: "priority".into(),
+                    name: "Fast".into(),
+                    description: "Priority processing".into(),
+                }],
+                default_service_tier: Some("priority".into()),
                 is_default: false,
             }],
             next_cursor: None,
         };
 
-        let models = model_list_response_to_model_infos(response);
+        let models = model_list_response_to_model_infos(
+            serde_json::from_value(serde_json::to_value(response).unwrap()).unwrap(),
+        );
 
         assert_eq!(models.len(), 1);
+        let capabilities = models[0].capabilities.as_ref().unwrap();
+        assert_eq!(capabilities.service_tiers[0].id, "priority");
+        assert_eq!(capabilities.service_tiers[0].name, "Fast");
+        assert_eq!(
+            capabilities.default_service_tier.as_deref(),
+            Some("priority")
+        );
         let reasoning_options = &models[0].reasoning_options;
         assert_eq!(
             reasoning_options
@@ -1607,7 +1691,9 @@ mod tests {
             next_cursor: None,
         };
 
-        let models = model_list_response_to_model_infos(response);
+        let models = model_list_response_to_model_infos(
+            serde_json::from_value(serde_json::to_value(response).unwrap()).unwrap(),
+        );
         let ids = models[0]
             .reasoning_options
             .iter()
@@ -1616,6 +1702,57 @@ mod tests {
 
         assert_eq!(ids, vec!["max", "ultra"]);
         assert!(models[0].reasoning_options[0].is_default);
+    }
+
+    #[test]
+    fn model_list_preserves_future_efforts_through_execution_without_inventing_defaults() {
+        let response = serde_json::from_value(json!({"data":[{
+            "id":"model-new", "model":"model-new", "displayName":"New Model",
+            "supportedReasoningEfforts":[{"reasoningEffort":"future-depth"},{"reasoningEffort":"high"},{"reasoningEffort":""}],
+            "defaultReasoningEffort":"future-depth", "inputModalities":["text","future-input"]
+        }]})).unwrap();
+        let models = model_list_response_to_model_infos(response);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].reasoning_options.len(), 2);
+        let native_default = models[0]
+            .reasoning_options
+            .iter()
+            .find(|option| option.is_default)
+            .unwrap();
+        assert_eq!(native_default.id, "future-depth");
+        assert!(
+            !models[0]
+                .reasoning_options
+                .iter()
+                .find(|option| option.id == "high")
+                .unwrap()
+                .is_default
+        );
+        let mut executor = test_executor();
+        executor
+            .apply_overrides(&config_with_reasoning(&native_default.id))
+            .unwrap();
+        assert_eq!(
+            executor.build_config_overrides().unwrap()["model_reasoning_effort"],
+            "future-depth"
+        );
+        let protocol_effort = executor
+            .model_reasoning_effort
+            .as_ref()
+            .unwrap()
+            .to_protocol();
+        assert_eq!(
+            protocol_effort,
+            ProtocolReasoningEffort::Custom("future-depth".into())
+        );
+        assert_eq!(
+            serde_json::to_value(protocol_effort).unwrap(),
+            "future-depth"
+        );
+        assert_eq!(
+            models[0].capabilities.as_ref().unwrap().input_modalities,
+            ["text", "future-input"]
+        );
     }
 
     #[test]
@@ -1631,16 +1768,8 @@ mod tests {
             vec!["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
         );
         let sol = &models[0];
-        assert!(
-            sol.reasoning_options
-                .iter()
-                .any(|option| option.id == "max")
-        );
-        assert!(
-            sol.reasoning_options
-                .iter()
-                .any(|option| option.id == "ultra")
-        );
+        assert!(sol.reasoning_options.is_empty());
+        assert!(sol.capabilities.is_none());
     }
 
     #[test]

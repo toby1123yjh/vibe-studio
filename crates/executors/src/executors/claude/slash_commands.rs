@@ -8,12 +8,12 @@ use std::{
 use convert_case::{Case, Casing};
 use tokio::{
     fs,
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
 };
 use workspace_utils::command_ext::GroupSpawnNoWindowExt;
 
-use super::{ClaudeCode, ClaudeJson, ClaudePlugin};
+use super::{ClaudeCode, ClaudePlugin};
 use crate::{
     command::{CommandBuildError, CommandBuilder},
     env::{ExecutionEnv, RepoContext},
@@ -237,7 +237,16 @@ impl ClaudeCode {
     async fn discover_available_command_and_plugins(
         &self,
         current_dir: &Path,
-    ) -> Result<(Vec<String>, Vec<ClaudePlugin>, Vec<String>, Vec<String>), ExecutorError> {
+    ) -> Result<
+        (
+            Vec<String>,
+            Vec<ClaudePlugin>,
+            Vec<String>,
+            Vec<String>,
+            Vec<crate::model_selector::ModelInfo>,
+        ),
+        ExecutorError,
+    > {
         let command_builder = self
             .build_slash_commands_discovery_command_builder()
             .await?;
@@ -247,7 +256,7 @@ impl ClaudeCode {
         let mut command = Command::new(program_path);
         command
             .kill_on_drop(true)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .current_dir(current_dir)
@@ -262,34 +271,68 @@ impl ClaudeCode {
         }
 
         let mut child = command.group_spawn_no_window()?;
+        let mut stdin =
+            child.inner().stdin.take().ok_or_else(|| {
+                ExecutorError::Io(std::io::Error::other("Claude Code missing stdin"))
+            })?;
+        let request =
+            super::types::SDKControlRequest::new(super::types::SDKControlRequestType::Initialize {
+                hooks: None,
+            });
+        let mut bytes = serde_json::to_vec(&request)
+            .map_err(|e| ExecutorError::Io(std::io::Error::other(e)))?;
+        bytes.push(b'\n');
+        stdin.write_all(&bytes).await?;
+        stdin.flush().await?;
         let stdout = child.inner().stdout.take().ok_or_else(|| {
             ExecutorError::Io(std::io::Error::other("Claude Code missing stdout"))
         })?;
 
         let mut lines = BufReader::new(stdout).lines();
 
-        let mut discovered: Option<(Vec<String>, Vec<ClaudePlugin>, Vec<String>, Vec<String>)> =
-            None;
+        let mut discovered = None;
         let discovery = async {
             while let Some(line) = lines.next_line().await.map_err(ExecutorError::Io)? {
-                if let Ok(json) = serde_json::from_str::<ClaudeJson>(&line)
-                    && let ClaudeJson::System {
-                        subtype,
-                        slash_commands,
-                        plugins,
-                        agents,
-                        skills,
-                        ..
-                    } = &json
-                    && matches!(subtype.as_deref(), Some("init"))
+                if let Ok(super::types::CLIMessage::ControlResponse { response }) =
+                    serde_json::from_str(&line)
                 {
-                    discovered = Some((
-                        slash_commands.clone(),
-                        plugins.clone(),
-                        agents.clone(),
-                        skills.clone(),
-                    ));
-                    break;
+                    match response {
+                        super::types::ControlResponseType::Success {
+                            request_id,
+                            response,
+                        } if request_id == request.request_id => {
+                            let value = response.unwrap_or_default();
+                            let names = |key: &str| {
+                                value[key]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|item| {
+                                        item.as_str().or_else(|| item["name"].as_str())
+                                    })
+                                    .map(str::to_owned)
+                                    .collect::<Vec<_>>()
+                            };
+                            discovered = Some((
+                                names("commands"),
+                                vec![],
+                                names("agents"),
+                                names("skills"),
+                                super::models_from_initialize(&value),
+                            ));
+                            break;
+                        }
+                        super::types::ControlResponseType::Error { request_id, error }
+                            if request_id == request.request_id =>
+                        {
+                            return Err(ExecutorError::Io(std::io::Error::other(
+                                error.unwrap_or_else(|| {
+                                    "Claude discovery initialization failed".into()
+                                }),
+                            )));
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -300,7 +343,11 @@ impl ClaudeCode {
         let _ = child.kill().await;
 
         let result = match res {
-            Ok(Ok(())) => discovered.unwrap_or_else(|| (vec![], vec![], vec![], vec![])),
+            Ok(Ok(())) => discovered.ok_or_else(|| {
+                ExecutorError::Io(std::io::Error::other(
+                    "Claude exited before discovery initialization",
+                ))
+            })?,
             Ok(Err(e)) => return Err(e),
             Err(_) => {
                 return Err(ExecutorError::Io(std::io::Error::other(
@@ -321,10 +368,11 @@ impl ClaudeCode {
             Vec<SlashCommandDescription>,
             Vec<ClaudePlugin>,
             Vec<CodexSkillDescription>,
+            Vec<crate::model_selector::ModelInfo>,
         ),
         ExecutorError,
     > {
-        let (names, plugins, agents, skills) = self
+        let (names, plugins, agents, skills, models) = self
             .discover_available_command_and_plugins(current_dir)
             .await?;
 
@@ -375,7 +423,13 @@ impl ClaudeCode {
             ));
         }
 
-        Ok((agent_options, slash_commands, plugins, discovered_skills))
+        Ok((
+            agent_options,
+            slash_commands,
+            plugins,
+            discovered_skills,
+            models,
+        ))
     }
 
     pub async fn fill_slash_command_descriptions(

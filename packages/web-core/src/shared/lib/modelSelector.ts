@@ -2,7 +2,27 @@ import type {
   ModelInfo,
   ModelSelectorConfig,
   ReasoningOption,
+  RunState,
 } from 'shared/types';
+
+export function getCurrentObservedConfiguration(
+  state:
+    | Pick<
+        RunState,
+        'session_id' | 'last_run_attempt_id' | 'observed_configuration'
+      >
+    | null
+    | undefined,
+  sessionId: string | undefined
+) {
+  const observed = state?.observed_configuration;
+  return sessionId &&
+    state?.session_id === sessionId &&
+    observed &&
+    observed.run_attempt_id === state.last_run_attempt_id
+    ? observed
+    : null;
+}
 
 function toPrettyCase(value: string): string {
   return value
@@ -68,18 +88,15 @@ export function getReasoningDisplayLabel(
   hasConfiguredReasoning: boolean,
   followCliLabel: string
 ): string | null {
-  if (options.length === 0) return null;
   const { selectedReasoningId } = resolveReasoningOverrideState(
     options,
     configuredReasoningId,
     hasConfiguredReasoning
   );
   const explicitLabel = getReasoningLabel(options, selectedReasoningId);
-  if (explicitLabel) return explicitLabel;
-
-  // With no per-session override, show the effective provider default. This
-  // is display-only; the outgoing executor config remains unset/null.
-  return options.find((option) => option.is_default)?.label ?? followCliLabel;
+  if (explicitLabel != null) return explicitLabel;
+  // A catalog default is not a confirmation of this session's actual effort.
+  return options.length ? followCliLabel : null;
 }
 
 export function escapeAttributeValue(value: string): string {
@@ -199,26 +216,11 @@ export function resolveReasoningIdForOptions(
 }
 
 export function resolveConfiguredReasoningIdForOptions(
-  options: ReasoningOption[],
+  _options: ReasoningOption[],
   configuredReasoningId: string | null | undefined,
   hasConfiguredReasoning: boolean
 ): string | null {
-  if (options.length === 0 || !hasConfiguredReasoning) return null;
-  if (configuredReasoningId == null) return null;
-  return resolveReasoningIdForOptions(options, configuredReasoningId);
-}
-
-export function getReasoningOverrideRepair(
-  options: ReasoningOption[],
-  configuredReasoningId: string | null | undefined,
-  hasConfiguredReasoning: boolean
-): { reasoning_id: null } | null {
-  if (!hasConfiguredReasoning || configuredReasoningId == null) return null;
-  if (options.length === 0) return { reasoning_id: null };
-  return resolveReasoningIdForOptions(options, configuredReasoningId) ===
-    configuredReasoningId
-    ? null
-    : { reasoning_id: null };
+  return hasConfiguredReasoning ? (configuredReasoningId ?? null) : null;
 }
 
 export function resolveReasoningOverrideState(
@@ -227,7 +229,7 @@ export function resolveReasoningOverrideState(
   hasConfiguredReasoning: boolean
 ): {
   selectedReasoningId: string | null;
-  repair: { reasoning_id: null } | null;
+  unavailable: boolean;
 } {
   return {
     selectedReasoningId: resolveConfiguredReasoningIdForOptions(
@@ -235,11 +237,10 @@ export function resolveReasoningOverrideState(
       configuredReasoningId,
       hasConfiguredReasoning
     ),
-    repair: getReasoningOverrideRepair(
-      options,
-      configuredReasoningId,
-      hasConfiguredReasoning
-    ),
+    unavailable:
+      hasConfiguredReasoning &&
+      configuredReasoningId != null &&
+      !isReasoningOptionAvailable(options, configuredReasoningId),
   };
 }
 

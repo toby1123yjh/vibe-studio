@@ -96,6 +96,7 @@ pub fn reduce_agent_event(
     if is_new_attempt {
         state.terminal_output = None;
         state.last_error = None;
+        state.observed_configuration = None;
     }
 
     let apply = match &event.payload {
@@ -132,6 +133,34 @@ pub fn reduce_agent_event(
             state.unknown_event_count += 1;
             state.projection_status = ProjectionStatus::ProjectionDegraded;
             ReducerApply::AppliedDegraded
+        }
+        AgentEventPayload::ProviderExtension {
+            provider_event,
+            payload,
+            ..
+        } if provider_event == "runtime_configuration" => {
+            // Only the provider boundary emits this allowlisted observation.
+            // Missing values remain unconfirmed; never backfill from a request.
+            let model_id = payload
+                .get("model_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let reasoning_id = payload
+                .get("reasoning_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if (model_id.is_some() || reasoning_id.is_some())
+                && let Some(source) = payload.get("source").and_then(serde_json::Value::as_str)
+            {
+                state.observed_configuration = Some(super::ObservedRuntimeConfiguration {
+                    model_id,
+                    reasoning_id,
+                    source: source.to_owned(),
+                    event_id: event.event_id,
+                    run_attempt_id: event.run_attempt_id,
+                });
+            }
+            ReducerApply::Applied
         }
         AgentEventPayload::Thinking { .. }
         | AgentEventPayload::FileChanges { .. }
@@ -237,6 +266,134 @@ mod tests {
             timestamp: Utc::now(),
             native_refs: Vec::new(),
             payload,
+        }
+    }
+
+    fn configuration_event(
+        request: &AgentRunRequestEnvelope,
+        attempt_id: Uuid,
+        sequence: u64,
+        payload: serde_json::Value,
+    ) -> AgentEventEnvelope {
+        event(
+            request,
+            attempt_id,
+            1,
+            sequence,
+            AgentEventPayload::ProviderExtension {
+                provider_namespace: "codex".into(),
+                provider_event: "runtime_configuration".into(),
+                payload,
+            },
+        )
+    }
+
+    #[test]
+    fn actual_configuration_replays_from_persisted_event_and_keeps_native_empty_reasoning() {
+        let request = request();
+        let attempt_id = Uuid::new_v4();
+        let observed = configuration_event(
+            &request,
+            attempt_id,
+            1,
+            serde_json::json!({
+                "model_id":"resolved/model", "reasoning_id":"", "source":"acp_config_options",
+                "ignored_native_secret":"not-in-projection"
+            }),
+        );
+        // The projection must work after serializing the canonical event, not
+        // only while a provider process keeps an in-memory catalog alive.
+        let restored: AgentEventEnvelope =
+            serde_json::from_str(&serde_json::to_string(&observed).unwrap()).unwrap();
+        let mut state = RunState::pending(&request);
+        assert_eq!(
+            reduce_agent_event(&mut state, &restored).unwrap(),
+            ReducerApply::Applied
+        );
+        let configuration = state.observed_configuration.as_ref().unwrap();
+        assert_eq!(configuration.model_id.as_deref(), Some("resolved/model"));
+        assert_eq!(configuration.reasoning_id.as_deref(), Some(""));
+        assert_eq!(configuration.event_id, observed.event_id);
+        assert_eq!(configuration.run_attempt_id, attempt_id);
+        assert!(
+            !serde_json::to_string(&state)
+                .unwrap()
+                .contains("not-in-projection")
+        );
+        assert_eq!(
+            reduce_agent_event(&mut state, &restored).unwrap(),
+            ReducerApply::Duplicate
+        );
+    }
+
+    #[test]
+    fn changed_model_does_not_inherit_previous_effort_and_new_attempt_resets_actual_configuration()
+    {
+        let request = request();
+        let attempt_id = Uuid::new_v4();
+        let mut state = RunState::pending(&request);
+        reduce_agent_event(
+            &mut state,
+            &configuration_event(
+                &request,
+                attempt_id,
+                1,
+                serde_json::json!({
+                    "model_id":"first/model", "reasoning_id":"high", "source":"native"
+                }),
+            ),
+        )
+        .unwrap();
+        reduce_agent_event(
+            &mut state,
+            &configuration_event(
+                &request,
+                attempt_id,
+                2,
+                serde_json::json!({
+                    "model_id":"second/model", "source":"native"
+                }),
+            ),
+        )
+        .unwrap();
+        let actual = state.observed_configuration.as_ref().unwrap();
+        assert_eq!(actual.model_id.as_deref(), Some("second/model"));
+        assert!(actual.reasoning_id.is_none());
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                Uuid::new_v4(),
+                2,
+                1,
+                AgentEventPayload::LifecycleChanged {
+                    status: AgentRunStatus::Running,
+                },
+            ),
+        )
+        .unwrap();
+        assert!(state.observed_configuration.is_none());
+    }
+
+    #[test]
+    fn absent_or_malformed_native_observation_does_not_claim_requested_settings() {
+        let request = request();
+        let attempt_id = Uuid::new_v4();
+        let mut state = RunState::pending(&request);
+        for (sequence, payload) in [
+            serde_json::json!({"source":"empty_setter_reply"}),
+            serde_json::json!({"model_id":"requested-but-no-source"}),
+            serde_json::json!({"model_id":123,"reasoning_id":false,"source":"invalid"}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            reduce_agent_event(
+                &mut state,
+                &configuration_event(&request, attempt_id, sequence as u64 + 1, payload),
+            )
+            .unwrap();
+            assert!(state.observed_configuration.is_none());
         }
     }
 

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { expect, test as it } from '@playwright/test';
+const describe = it.describe;
 import { BaseCodingAgent } from 'shared/types';
 import type { WorkflowNode } from './workflowGraph';
 import {
@@ -7,6 +8,25 @@ import {
 } from './workflowAgentNodeDraft';
 
 describe('workflow agent node draft sessions', () => {
+  it('preserves provider options including explicit false through graph loading', () => {
+    const provider_options = {
+      provider: 'oh_my_pi',
+      auto_compaction: false,
+      auto_retry: true,
+    };
+    expect(
+      coerceWorkflowNodeExecutorConfig({
+        executor: 'OH_MY_PI',
+        provider_options,
+      })?.provider_options
+    ).toEqual(provider_options);
+    expect(
+      coerceWorkflowNodeExecutorConfig({
+        executor: 'OH_MY_PI',
+        provider_options: { provider: 'oh_my_pi', auto_retry: 'yes' },
+      })
+    ).toBeNull();
+  });
   it('treats agent nodes as editable session drafts before a run exists', () => {
     const node: WorkflowNode = {
       id: 'agent-1',

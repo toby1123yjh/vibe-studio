@@ -1,4 +1,5 @@
 import { BaseCodingAgent, type ExecutorConfig } from 'shared/types';
+import { parseProviderRunOptions } from '@/shared/lib/providerRunOptions';
 import type { WorkflowNode } from './workflowGraph';
 
 const BASE_CODING_AGENT_VALUES = new Set<BaseCodingAgent>(
@@ -50,5 +51,11 @@ export function coerceWorkflowNodeExecutorConfig(
     }
   }
 
+  if (candidate.provider_options === null) config.provider_options = null;
+  else if (candidate.provider_options !== undefined) {
+    const options = parseProviderRunOptions(candidate.provider_options);
+    if (!options || options.provider.toUpperCase() !== executor) return null;
+    config.provider_options = options;
+  }
   return config;
 }

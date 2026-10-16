@@ -222,3 +222,8 @@ export function useAgentRunSession(): AgentRunSessionContextValue {
   }
   return context;
 }
+
+/** Shared selectors also render outside a running conversation. */
+export function useOptionalAgentRunSession(): AgentRunSessionContextValue | null {
+  return useContext(AgentRunSessionContext);
+}

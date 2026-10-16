@@ -13,13 +13,12 @@ use crate::{
     approvals::ExecutorApprovalService,
     command::{CmdOverrides, CommandBuildError, CommandBuilder},
     env::ExecutionEnv,
-    executor_discovery::ExecutorDiscoveredOptions,
     executors::{
         AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
         StandardCodingAgentExecutor,
     },
     logs::utils::patch,
-    model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy},
+    model_selector::PermissionPolicy,
     profile::ExecutorConfig,
 };
 
@@ -36,6 +35,8 @@ pub struct Gemini {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub yolo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     #[serde(flatten)]
     pub cmd: CmdOverrides,
     #[serde(skip)]
@@ -72,16 +73,67 @@ impl Gemini {
         Self::DIRECT_PROVIDER.mapper()
     }
 
-    pub(crate) fn apply_direct_overrides(&mut self, executor_config: &ExecutorConfig) {
+    pub(crate) fn apply_direct_overrides(
+        &mut self,
+        executor_config: &ExecutorConfig,
+    ) -> Result<(), ExecutorError> {
+        if executor_config.reasoning_id.is_some() {
+            return Err(super::acp::session_config::config_error(
+                "Gemini thinking budgets are native model settings, not per-attempt reasoning options",
+            ));
+        }
+        let mode = executor_config.agent_id.as_ref().or(self.mode.as_ref());
+        if let (Some(mode), Some(policy)) = (mode, executor_config.permission_policy.as_ref()) {
+            let compatible = match policy {
+                PermissionPolicy::Auto => mode == "yolo",
+                PermissionPolicy::Supervised => mode != "yolo" && mode != "plan",
+                PermissionPolicy::Plan => mode == "plan",
+            };
+            if !compatible {
+                return Err(super::acp::session_config::config_error(
+                    "Gemini native mode conflicts with the selected permission policy",
+                ));
+            }
+        }
         if let Some(model_id) = &executor_config.model_id {
             self.model = Some(model_id.clone());
         }
-        if let Some(permission_policy) = executor_config.permission_policy.clone() {
-            self.yolo = Some(matches!(
-                permission_policy,
-                crate::model_selector::PermissionPolicy::Auto
-            ));
+        if let Some(mode) = &executor_config.agent_id {
+            self.mode = Some(mode.clone());
+            self.yolo = Some(mode == "yolo");
         }
+        if let Some(permission_policy) = executor_config.permission_policy.clone() {
+            self.yolo = Some(permission_policy == PermissionPolicy::Auto);
+            if executor_config.agent_id.is_none() && self.mode.is_none() {
+                self.mode = Some(
+                    match permission_policy {
+                        PermissionPolicy::Auto => "yolo",
+                        PermissionPolicy::Supervised => "default",
+                        PermissionPolicy::Plan => "plan",
+                    }
+                    .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn configure_harness(&self, harness: AcpAgentHarness, cwd: &Path) -> AcpAgentHarness {
+        let mut harness =
+            harness.with_catalog_identity(super::acp::session_config::scoped_catalog_identity(
+                super::acp::session_config::AcpDialect::Gemini,
+                cwd,
+                &self.cmd,
+            ));
+        if let Some(model) = &self.model {
+            harness = harness.with_model(model);
+        }
+        if let Some(mode) = &self.mode {
+            harness = harness.with_mode(mode);
+        } else if let Some(yolo) = self.yolo {
+            harness = harness.with_mode(if yolo { "yolo" } else { "default" });
+        }
+        harness
     }
 
     pub(crate) fn use_direct_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
@@ -128,7 +180,8 @@ impl Gemini {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let (env, readiness) = command_adapter::prepare_workflow_launch(env, &self.cmd).await?;
-        let harness = AcpAgentHarness::new()
+        let harness = self
+            .configure_harness(AcpAgentHarness::new(), current_dir)
             .with_mcp_servers(command_adapter::workflow_mcp_servers(&env)?)
             .with_workflow_readiness(readiness);
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
@@ -158,7 +211,8 @@ impl Gemini {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let (env, readiness) = command_adapter::prepare_workflow_launch(env, &self.cmd).await?;
-        let harness = AcpAgentHarness::new()
+        let harness = self
+            .configure_harness(AcpAgentHarness::new(), current_dir)
             .with_mcp_servers(command_adapter::workflow_mcp_servers(&env)?)
             .with_workflow_readiness(readiness);
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
@@ -169,7 +223,7 @@ impl Gemini {
             self.approvals.clone()
         };
         harness
-            .spawn_follow_up_with_command(
+            .spawn_native_resume_with_command(
                 current_dir,
                 combined_prompt,
                 session_id,
@@ -189,7 +243,8 @@ impl Gemini {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let (env, readiness) = command_adapter::prepare_workflow_launch(env, &self.cmd).await?;
-        let harness = AcpAgentHarness::new()
+        let harness = self
+            .configure_harness(AcpAgentHarness::new(), current_dir)
             .with_mcp_servers(command_adapter::workflow_mcp_servers(&env)?)
             .with_workflow_readiness(readiness);
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
@@ -219,8 +274,8 @@ impl Gemini {
 
 #[async_trait]
 impl StandardCodingAgentExecutor for Gemini {
-    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) {
-        self.apply_direct_overrides(executor_config);
+    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        self.apply_direct_overrides(executor_config)
     }
 
     fn use_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
@@ -304,51 +359,65 @@ impl StandardCodingAgentExecutor for Gemini {
             executor: BaseCodingAgent::Gemini,
             variant: None,
             model_id: self.model.clone(),
-            agent_id: None,
+            agent_id: self.mode.clone(),
             reasoning_id: None,
-            permission_policy: Some(if self.yolo.unwrap_or(false) {
-                PermissionPolicy::Auto
-            } else {
-                PermissionPolicy::Supervised
-            }),
+            provider_options: None,
+            permission_policy: self
+                .mode
+                .is_none()
+                .then_some(if self.yolo.unwrap_or(false) {
+                    PermissionPolicy::Auto
+                } else {
+                    PermissionPolicy::Supervised
+                }),
         }
     }
 
     async fn discover_options(
         &self,
-        _workdir: Option<&std::path::Path>,
-        _repo_path: Option<&std::path::Path>,
+        workdir: Option<&std::path::Path>,
+        repo_path: Option<&std::path::Path>,
     ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ExecutorError> {
-        let options = ExecutorDiscoveredOptions {
-            model_selector: ModelSelectorConfig {
-                models: vec![
-                    ModelInfo {
-                        id: "gemini-3.1-pro-preview".to_string(),
-                        name: "Gemini 3.1 Pro Preview".to_string(),
-                        provider_id: None,
-                        reasoning_options: vec![],
-                    },
-                    ModelInfo {
-                        id: "gemini-3-pro-preview".to_string(),
-                        name: "Gemini 3 Pro".to_string(),
-                        provider_id: None,
-                        reasoning_options: vec![],
-                    },
-                    ModelInfo {
-                        id: "gemini-3-flash-preview".to_string(),
-                        name: "Gemini 3 Flash".to_string(),
-                        provider_id: None,
-                        reasoning_options: vec![],
-                    },
-                ],
-                default_model: Some("gemini-3-pro-preview".to_string()),
-                permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let options = super::acp::provider::discover_options(
+            Self::DIRECT_PROVIDER,
+            super::acp::session_config::AcpDialect::Gemini,
+            workdir,
+            repo_path,
+            &self.cmd,
+            self.model.as_deref(),
+        );
         Ok(Box::pin(futures::stream::once(async move {
             patch::executor_discovered_options(options)
         })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_mode_and_permissions_reject_conflicts_before_mutation() {
+        let mut gemini: Gemini =
+            serde_json::from_value(serde_json::json!({"model":"original"})).unwrap();
+        let mut config = ExecutorConfig::new(BaseCodingAgent::Gemini);
+        config.model_id = Some("different".into());
+        config.agent_id = Some("yolo".into());
+        config.permission_policy = Some(PermissionPolicy::Supervised);
+        assert!(gemini.apply_direct_overrides(&config).is_err());
+        assert_eq!(gemini.model.as_deref(), Some("original"));
+        config.permission_policy = Some(PermissionPolicy::Auto);
+        gemini.apply_direct_overrides(&config).unwrap();
+        assert_eq!(gemini.mode.as_deref(), Some("yolo"));
+        assert_eq!(gemini.yolo, Some(true));
+        assert!(gemini.get_preset_options().permission_policy.is_none());
+    }
+
+    #[test]
+    fn explicit_thinking_is_not_silently_ignored() {
+        let mut gemini: Gemini = serde_json::from_value(serde_json::json!({})).unwrap();
+        let mut config = ExecutorConfig::new(BaseCodingAgent::Gemini);
+        config.reasoning_id = Some("high".into());
+        assert!(gemini.apply_direct_overrides(&config).is_err());
     }
 }

@@ -5,20 +5,15 @@ export type ExecutorDiscoveryContext = {
   sessionId?: string;
   repoId?: string;
   variant?: string;
+  refresh?: boolean;
 };
 
-// ACP catalogs belong to the selected profile's native authority. Keep the
-// older providers' discovery behavior unchanged until they opt into variants.
+// Every catalog belongs to the selected profile's native command/environment.
 export function resolveModelDiscoveryVariant(
   agent: BaseCodingAgent | null | undefined,
   selectedPreset: string | null
 ): string | undefined {
-  return agent === BaseCodingAgent.OPENCODE ||
-    agent === BaseCodingAgent.DEEPSEEK_HARNESS
-    ? selectedPreset?.trim()
-      ? selectedPreset
-      : undefined
-    : undefined;
+  return agent && selectedPreset?.trim() ? selectedPreset : undefined;
 }
 
 export function buildExecutorDiscoveryStreamUrl(
@@ -31,5 +26,6 @@ export function buildExecutorDiscoveryStreamUrl(
   if (opts?.sessionId) params.set('session_id', opts.sessionId);
   if (opts?.repoId) params.set('repo_id', opts.repoId);
   if (opts?.variant) params.set('variant', opts.variant);
+  if (opts?.refresh) params.set('refresh', 'true');
   return `/api/agents/discovered-options/ws?${params.toString()}`;
 }

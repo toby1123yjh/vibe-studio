@@ -71,7 +71,7 @@ impl SessionManager {
         match event {
             // Picker observations are transport metadata, not conversation
             // history or transcript-fork resume context.
-            AcpEvent::CatalogObserved(..) => return None,
+            AcpEvent::CatalogObserved(..) | AcpEvent::ConfigurationObserved(..) => return None,
             AcpEvent::SessionStart(..)
             | AcpEvent::Error(..)
             | AcpEvent::Done(..)
@@ -180,6 +180,14 @@ mod tests {
         });
 
         assert!(SessionManager::normalize_session_event(&event.to_string()).is_none());
+        let settings = AcpEvent::ConfigurationObserved(
+            super::super::session_config::AcpRuntimeConfiguration {
+                model_id: Some("model".into()),
+                reasoning_id: Some("high".into()),
+                source: "acp_config_options".into(),
+            },
+        );
+        assert!(SessionManager::normalize_session_event(&settings.to_string()).is_none());
         assert_eq!(
             SessionManager::normalize_session_event(&AcpEvent::User("prompt".into()).to_string()),
             Some(r#"{"user":"prompt"}"#.into())

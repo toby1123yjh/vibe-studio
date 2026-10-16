@@ -35,6 +35,24 @@ impl<'a> CodexCommandAdapter<'a> {
     }
 
     pub fn build(&self) -> Result<CommandBuilder, CommandBuildError> {
+        if matches!(
+            self.agent.ask_for_approval,
+            Some(super::AskForApproval::UnlessTrusted)
+        ) {
+            return Err(CommandBuildError::InvalidBase(
+                "Codex no longer supports untrusted approval; select on-request explicitly".into(),
+            ));
+        }
+        if self
+            .agent
+            .service_tier
+            .as_deref()
+            .is_some_and(|tier| !matches!(tier, "default" | "priority" | "flex"))
+        {
+            return Err(CommandBuildError::InvalidBase(
+                "Unsupported Codex service tier".into(),
+            ));
+        }
         let mut builder = CommandBuilder::new(Codex::base_command())
             .extend_params(["app-server"])
             .extend_params(Codex::DISABLE_NATIVE_MEMORY_ARGS);
@@ -84,6 +102,14 @@ mod tests {
         assert_eq!(builder.base, "codex");
         assert_eq!(params.first().map(String::as_str), Some("app-server"));
         assert_eq!(params.last().map(String::as_str), Some("--oss"));
+    }
+
+    #[test]
+    fn unsupported_saved_policy_does_not_silently_expand_permissions() {
+        let agent: Codex =
+            serde_json::from_value(serde_json::json!({"ask_for_approval":"unless-trusted"}))
+                .unwrap();
+        assert!(CodexCommandAdapter::new(&agent).build().is_err());
     }
 
     #[test]

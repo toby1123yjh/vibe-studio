@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
 use agent_client_protocol::{self as acp};
@@ -10,7 +13,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use workspace_utils::approvals::ApprovalStatus;
 
-use super::control::{APPROVAL_META_KEY, AcpControl};
+use super::{
+    control::{APPROVAL_META_KEY, AcpControl},
+    session_config::{AcpDialect, observe_catalog, observed_configuration},
+};
 use crate::{
     approvals::{ExecutorApprovalError, ExecutorApprovalService},
     executors::acp::{AcpEvent, ApprovalResponse},
@@ -26,6 +32,7 @@ pub struct AcpClient {
     events_enabled: Arc<AtomicBool>,
     suppressed_events: Arc<AtomicU64>,
     native_control: Option<Arc<AcpControl>>,
+    catalog_scope: Arc<std::sync::Mutex<Option<(AcpDialect, PathBuf, String)>>>,
 }
 
 impl AcpClient {
@@ -43,12 +50,26 @@ impl AcpClient {
             events_enabled: Arc::new(AtomicBool::new(true)),
             suppressed_events: Arc::new(AtomicU64::new(0)),
             native_control: None,
+            catalog_scope: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
     pub(super) fn with_native_control(mut self, control: Arc<AcpControl>) -> Self {
         self.native_control = Some(control);
         self
+    }
+
+    /// Setup responses are authoritative until all requested options have
+    /// settled. Only then accept runtime option updates from this session.
+    pub(super) fn enable_configuration_observations(
+        &self,
+        dialect: AcpDialect,
+        cwd: PathBuf,
+        identity: String,
+    ) {
+        if let Ok(mut scope) = self.catalog_scope.lock() {
+            *scope = Some((dialect, cwd, identity));
+        }
     }
 
     pub fn record_user_prompt_event(&self, prompt: &str) {
@@ -119,6 +140,38 @@ mod tests {
         assert!(
             matches!(event_rx.recv().await, Some(AcpEvent::User(prompt)) if prompt == "adoption prompt")
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_option_update_replaces_catalog_and_reports_native_actual_values() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let client = AcpClient::new(tx, None, CancellationToken::new());
+        let cwd = tempfile::tempdir().unwrap();
+        client.enable_configuration_observations(
+            AcpDialect::DeepseekHarness,
+            cwd.path().to_owned(),
+            "a".repeat(64),
+        );
+        let notification = serde_json::from_value(serde_json::json!({
+            "sessionId":"native-session", "update":{
+                "sessionUpdate":"config_option_update", "configOptions":[
+                    {"id":"model", "name":"Model", "type":"select", "currentValue":"native/model", "options":[{"value":"native/model", "name":"Model"}]},
+                    {"id":"reasoning_effort", "name":"Effort", "type":"select", "currentValue":"", "options":[{"value":"", "name":"None"}]},
+                    {"id":"private_api_key", "name":"Private", "type":"select", "currentValue":"native-private-value", "options":[{"value":"native-private-value", "name":"Private"}]}
+                ]
+            }
+        })).unwrap();
+        acp::Client::session_notification(&client, notification)
+            .await
+            .unwrap();
+        let catalog = rx.recv().await.unwrap();
+        assert!(matches!(catalog, AcpEvent::CatalogObserved(_)));
+        assert!(!catalog.to_string().contains("native-private-value"));
+        let actual = rx.recv().await.unwrap();
+        assert!(
+            matches!(&actual, AcpEvent::ConfigurationObserved(observed) if observed.reasoning_id.as_deref() == Some(""))
+        );
+        assert!(!actual.to_string().contains("native-private-value"));
     }
 
     #[tokio::test]
@@ -318,9 +371,28 @@ impl acp::Client for AcpClient {
             acp::SessionUpdate::CurrentModeUpdate(update) => {
                 Some(AcpEvent::CurrentMode(update.current_mode_id))
             }
-            // Model/effort configuration is validated from setup responses.
-            // Never dump unknown native configuration selectors to audit.
-            acp::SessionUpdate::ConfigOptionUpdate(_) => None,
+            acp::SessionUpdate::ConfigOptionUpdate(update) => {
+                let scope = self
+                    .catalog_scope
+                    .lock()
+                    .ok()
+                    .and_then(|scope| scope.clone());
+                if let Some((dialect, cwd, identity)) = scope {
+                    // Project only allowlisted picker/settings fields. A
+                    // provider may change model/effort during a turn; do not
+                    // leave the original request masquerading as actual state.
+                    if let Some(observation) =
+                        observe_catalog(dialect, cwd, identity, &update.config_options)
+                    {
+                        self.send_event(AcpEvent::CatalogObserved(observation));
+                    }
+                    self.send_event(AcpEvent::ConfigurationObserved(observed_configuration(
+                        dialect,
+                        &update.config_options,
+                    )));
+                }
+                None
+            }
             _ => Some(AcpEvent::Other(args)),
         };
 

@@ -25,7 +25,11 @@ use workspace_utils::{
 use super::{
     AcpClient, SessionManager,
     control::AcpControl,
-    session_config::{AcpDialect, NativeRestoreMethod, apply_config_options, observe_catalog},
+    session_config::{
+        AcpDialect, AcpRuntimeConfiguration, LegacySessionConfiguration, NativeRestoreMethod,
+        apply_config_options, apply_legacy_configuration, observe_catalog, observe_legacy_catalog,
+        observed_configuration,
+    },
 };
 use crate::{
     approvals::ExecutorApprovalService,
@@ -321,7 +325,7 @@ impl AcpAgentHarness {
             self.mode.clone(),
             approvals,
             cancel.clone(),
-            false,
+            true,
             self.mcp_servers.clone(),
             self.workflow_readiness,
         )
@@ -546,7 +550,7 @@ impl AcpAgentHarness {
                         // Create ACP client with approvals support
                         let mut client =
                             AcpClient::new(event_tx.clone(), approvals.clone(), cancel.clone());
-                        if dialect != AcpDialect::Gemini && approvals.is_some() {
+                        if approvals.is_some() {
                             client = client.with_native_control(control_for_session.clone());
                         }
                         let client_feedback_handle = client.clone();
@@ -594,7 +598,7 @@ impl AcpAgentHarness {
                         // Handle provider-native loading, VK-owned forking, or
                         // creation. Native loading deliberately never reads or
                         // writes VK's prior transcript.
-                        let (acp_session_id, display_session_id, prompt_to_send, config_options) = if native_resume
+                        let (acp_session_id, display_session_id, prompt_to_send, config_options, legacy_configuration) = if native_resume
                         {
                             let Some(existing) = existing_session else {
                                 error!("Native ACP resume requires a provider session id");
@@ -610,15 +614,15 @@ impl AcpAgentHarness {
                                 let options = match method {
                                     NativeRestoreMethod::Resume => conn.resume_session(
                                         proto::ResumeSessionRequest::new(native_id.clone(), cwd.clone()).mcp_servers(mcp_servers.clone()),
-                                    ).await.map(|response| response.config_options),
+                                    ).await.map(|response| (response.config_options, LegacySessionConfiguration {models: response.models, modes: response.modes})),
                                     NativeRestoreMethod::Load => conn.load_session(
                                         proto::LoadSessionRequest::new(native_id.clone(), cwd.clone()).mcp_servers(mcp_servers.clone()),
-                                    ).await.map(|response| response.config_options),
+                                    ).await.map(|response| (response.config_options, LegacySessionConfiguration {models: response.models, modes: response.modes})),
                                 }.map_err(|_| ExecutorError::FollowUpNotSupported("The agent could not restore its native session".to_string()))?;
-                                Ok::<_, ExecutorError>((options.unwrap_or_default(), method))
+                                Ok::<_, ExecutorError>((options.0.unwrap_or_default(), method, options.1))
                             };
                             match bound_acp_startup(startup_deadline, &cancel, restoration).await {
-                                Ok((options, method)) => {
+                                Ok((options, method, legacy)) => {
                                     // ACP session/load is allowed to return
                                     // before the provider finishes streaming
                                     // history. Keep the event gate closed and
@@ -641,7 +645,7 @@ impl AcpAgentHarness {
                                         let _ = shutdown_tx.send(true);
                                         return;
                                     }
-                                    (native_id.clone(), native_id, prompt.clone(), options)
+                                    (native_id.clone(), native_id, prompt.clone(), options, legacy)
                                 }
                                 Err(_) => {
                                     error!("Failed to restore native ACP session; no fresh session will be created");
@@ -690,7 +694,7 @@ impl AcpAgentHarness {
                                     let resume_prompt = session_manager
                                         .generate_resume_prompt(&new_ui_id, &prompt)
                                         .unwrap_or_else(|_| prompt.clone());
-                                    (resp.session_id.0.to_string(), new_ui_id, resume_prompt, resp.config_options.unwrap_or_default())
+                                    (resp.session_id.0.to_string(), new_ui_id, resume_prompt, resp.config_options.unwrap_or_default(), LegacySessionConfiguration {models: resp.models, modes: resp.modes})
                                 }
                                 Err(_) => {
                                     error!("Failed to create ACP session");
@@ -719,7 +723,7 @@ impl AcpAgentHarness {
                             {
                                 Ok(resp) => {
                                     let sid = resp.session_id.0.to_string();
-                                    (sid.clone(), sid, prompt.clone(), resp.config_options.unwrap_or_default())
+                                    (sid.clone(), sid, prompt.clone(), resp.config_options.unwrap_or_default(), LegacySessionConfiguration {models: resp.models, modes: resp.modes})
                                 }
                                 Err(_) => {
                                     error!("Failed to create ACP session");
@@ -762,10 +766,13 @@ impl AcpAgentHarness {
                                 model.as_deref(), reasoning_effort.as_deref(), mode.as_deref(),
                             )).await;
                             match result {
-                                Ok(options) => if let Some(identity) = catalog_identity
-                                    && let Some(observation) = observe_catalog(dialect, cwd.clone(), identity, &options)
-                                {
-                                    let _ = log_tx.send(AcpEvent::CatalogObserved(observation).to_string());
+                                Ok(options) => {
+                                    let _ = log_tx.send(AcpEvent::ConfigurationObserved(observed_configuration(dialect, &options)).to_string());
+                                    if let Some(identity) = &catalog_identity
+                                        && let Some(observation) = observe_catalog(dialect, cwd.clone(), identity.clone(), &options)
+                                    {
+                                        let _ = log_tx.send(AcpEvent::CatalogObserved(observation).to_string());
+                                    }
                                 },
                                 Err(_) => {
                                     let _ = log_tx.send(AcpEvent::Error("The agent rejected the requested model, reasoning effort or mode; no prompt was sent".to_string()).to_string());
@@ -779,36 +786,34 @@ impl AcpAgentHarness {
                                     return;
                                 }
                             }
-                        } else if let Some(model) = model.clone() {
-                            match bound_acp_startup(
-                                startup_deadline,
-                                &cancel,
-                                conn.set_session_model(proto::SetSessionModelRequest::new(
-                                    proto::SessionId::new(acp_session_id.clone()),
-                                    model,
-                                )),
-                            )
-                            .await
-                            {
-                                Ok(_) => {}
-                                Err(_) => error!("Failed to set ACP session model"),
+                        } else {
+                            match bound_acp_startup(startup_deadline, &cancel, apply_legacy_configuration(
+                                &conn, &acp_session_id, legacy_configuration, model.as_deref(), mode.as_deref(),
+                            )).await {
+                                Ok(state) => {
+                                    let model_id = state.models.as_ref().map(|models| models.current_model_id.0.to_string()).filter(|model| !model.is_empty());
+                                    let _ = log_tx.send(AcpEvent::ConfigurationObserved(AcpRuntimeConfiguration {
+                                        model_id, reasoning_id: None, source: "acp_session_state".into(),
+                                    }).to_string());
+                                    if let Some(identity) = &catalog_identity && let Some(observation) = observe_legacy_catalog(cwd.clone(), identity.clone(), &state) {
+                                        let _ = log_tx.send(AcpEvent::CatalogObserved(observation).to_string());
+                                    }
+                                }
+                                Err(_) => {
+                                    let _ = log_tx.send(AcpEvent::Error("Gemini could not apply the requested model or mode; no prompt was sent".to_string()).to_string());
+                                    let closed = finish_native_session(&conn, &acp_session_id, supports_close, cancel.is_cancelled()).await;
+                                    let _ = shutdown_tx.send(true);
+                                    io_handle.abort();
+                                    drop(log_tx);
+                                    let _ = log_writer.await;
+                                    control_for_session.mark_closed(closed);
+                                    if let Some(tx) = exit_signal_tx.take() { let _ = tx.send(ExecutorExitResult::Failure); }
+                                    return;
+                                }
                             }
                         }
-
-                        if dialect == AcpDialect::Gemini && let Some(mode) = mode.clone() {
-                            match bound_acp_startup(
-                                startup_deadline,
-                                &cancel,
-                                conn.set_session_mode(proto::SetSessionModeRequest::new(
-                                    proto::SessionId::new(acp_session_id.clone()),
-                                    mode,
-                                )),
-                            )
-                            .await
-                            {
-                                Ok(_) => {}
-                                Err(_) => error!("Failed to set ACP session mode"),
-                            }
+                        if let Some(identity) = catalog_identity {
+                            client_feedback_handle.enable_configuration_observations(dialect, cwd.clone(), identity);
                         }
 
                         // Option-setting requests share the startup deadline;
@@ -930,11 +935,7 @@ impl AcpAgentHarness {
                                         completion_reason = Some(stop_reason);
                                         break;
                                     }
-                                    if dialect == AcpDialect::Gemini {
-                                        let _ = log_tx.send(AcpEvent::Done(stop_reason).to_string());
-                                    } else {
-                                        completion_reason = Some(stop_reason);
-                                    }
+                                    completion_reason = Some(stop_reason);
                                 }
                                 Err(_) => {
                                     if cancel.is_cancelled() {
@@ -972,7 +973,7 @@ impl AcpAgentHarness {
                         // Close/drain before reporting completion. DSH's
                         // session/close flushes its durable semantic history.
                         let cancelled = matches!(prompt_outcome, AcpPromptLoopOutcome::Cancelled) || cancel.is_cancelled();
-                        let closed = finish_native_session(&conn, &acp_session_id, supports_close, cancelled || dialect == AcpDialect::Gemini).await;
+                        let closed = finish_native_session(&conn, &acp_session_id, supports_close, cancelled).await;
                         if !closed {
                             let _ = log_tx.send(AcpEvent::Error("ACP session shutdown was not acknowledged".to_string()).to_string());
                         }
@@ -984,7 +985,7 @@ impl AcpAgentHarness {
                         if event_flush_tx.send(flush_tx).is_ok() {
                             let _ = tokio::time::timeout(Duration::from_secs(5), flush_rx).await;
                         }
-                        if dialect != AcpDialect::Gemini {
+                        {
                             if cancelled {
                                 let _ = log_tx.send(AcpEvent::Done(serde_json::to_string("cancelled").unwrap_or_default()).to_string());
                             } else if matches!(prompt_outcome, AcpPromptLoopOutcome::Completed) && let Some(reason) = completion_reason {
@@ -1008,7 +1009,7 @@ impl AcpAgentHarness {
             });
         });
 
-        Ok((dialect != AcpDialect::Gemini).then_some(control as Arc<dyn ExecutorControl>))
+        Ok(Some(control as Arc<dyn ExecutorControl>))
     }
 }
 
@@ -1022,7 +1023,7 @@ mod tests {
 
     use tokio::io::AsyncBufReadExt;
 
-    use super::{AcpAgentHarness, AcpDialect, AcpPromptLoopOutcome, ExecutorExitResult};
+    use super::{AcpAgentHarness, AcpDialect, AcpEvent, AcpPromptLoopOutcome, ExecutorExitResult};
     use crate::{
         command::{CmdOverrides, CommandParts},
         env::{ExecutionEnv, RepoContext},
@@ -1141,6 +1142,9 @@ mod tests {
         }
         if let Some(effort) = effort {
             harness = harness.with_reasoning_effort(effort);
+        }
+        if scenario == "gemini-mode-reject" {
+            harness = harness.with_mode("plan");
         }
         if workflow {
             let workflow_env = crate::workflow_mcp::test_env(&fixture);
@@ -1349,6 +1353,89 @@ mod tests {
         assert!(!trace.iter().any(|event| event["method"] == "session/new"));
         assert!(logs.contains("fresh-agent-output"));
         assert!(!logs.contains("old-native-history"));
+    }
+
+    #[tokio::test]
+    async fn gemini_continuation_loads_native_session_and_does_not_fork_or_replay_history() {
+        let (result, trace, logs) = fake_run("load", AcpDialect::Gemini, true, None, None, false)
+            .await
+            .finish()
+            .await;
+        assert!(matches!(result, ExecutorExitResult::Success));
+        assert!(trace.iter().any(|event| event["method"] == "session/load"));
+        assert!(!trace.iter().any(|event| event["method"] == "session/new"));
+        assert!(!logs.contains("old-native-history"));
+        assert!(logs.contains("ConfigurationObserved"));
+        assert!(logs.contains("CatalogObserved"));
+        assert!(logs.find("fresh-agent-output").unwrap() < logs.find("end_turn").unwrap());
+    }
+
+    #[tokio::test]
+    async fn gemini_failed_selection_never_sends_business_prompt() {
+        for (scenario, model) in [
+            ("gemini-model-reject", Some(SELECTED_MODEL)),
+            ("gemini-mode-reject", None),
+            ("complete", Some("unadvertised-model")),
+        ] {
+            let (result, trace, logs) =
+                fake_run(scenario, AcpDialect::Gemini, false, model, None, false)
+                    .await
+                    .finish()
+                    .await;
+            assert!(matches!(result, ExecutorExitResult::Failure));
+            assert!(
+                !trace
+                    .iter()
+                    .any(|event| event["method"] == "session/prompt")
+            );
+            assert!(trace.iter().any(|event| event["method"] == "close_flushed"));
+            assert!(!logs.contains("native-private-value"));
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_empty_model_setter_reply_does_not_fabricate_actual_model() {
+        let (result, _, logs) = fake_run(
+            "complete",
+            AcpDialect::Gemini,
+            false,
+            Some(SELECTED_MODEL),
+            None,
+            false,
+        )
+        .await
+        .finish()
+        .await;
+        assert!(matches!(result, ExecutorExitResult::Success));
+        let observed = logs
+            .lines()
+            .find_map(|line| match serde_json::from_str::<AcpEvent>(line).ok()? {
+                AcpEvent::ConfigurationObserved(observed) => Some(observed),
+                _ => None,
+            })
+            .unwrap();
+        assert!(observed.model_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn gemini_cancel_uses_native_session_id_and_waits_for_close() {
+        let run = fake_run("cancel", AcpDialect::Gemini, false, None, None, false).await;
+        run.wait_for_prompt().await;
+        let bytes = run
+            .child
+            .control
+            .as_ref()
+            .unwrap()
+            .send(DirectControl::Cancel)
+            .await
+            .unwrap();
+        let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(wire["params"]["sessionId"], "fixture-native-session");
+        let (result, trace, logs) = run.finish().await;
+        assert!(matches!(result, ExecutorExitResult::Failure));
+        assert!(trace.iter().any(|event| event["method"] == "close_flushed"));
+        assert!(logs.contains("cancelled"));
+        assert!(!logs.contains("end_turn"));
     }
 
     #[tokio::test]

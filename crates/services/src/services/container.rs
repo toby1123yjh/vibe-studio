@@ -100,6 +100,7 @@ pub trait ContainerService {
         session_id: Option<Uuid>,
         workspace_id: Option<Uuid>,
         repo_id: Option<Uuid>,
+        refresh: bool,
     ) -> Result<Option<BoxStream<'static, Patch>>, ContainerError> {
         let (workdir, repo_path) = if let Some(session_id) = session_id {
             let session = Session::find_by_id(&self.db().pool, session_id)
@@ -188,16 +189,26 @@ pub trait ContainerService {
             let _ = executor_profile_id;
             let _ = workdir;
             let _ = repo_path;
+            let _ = refresh;
             return Ok(None);
         }
         #[cfg(not(feature = "qa-mode"))]
         {
-            let executor =
-                ExecutorConfigs::get_cached().get_coding_agent_or_default(&executor_profile_id);
+            let executor = ExecutorConfigs::get_cached()
+                .get_coding_agent(&executor_profile_id)
+                .ok_or_else(|| {
+                    ContainerError::Other(anyhow!("The requested agent profile is unavailable"))
+                })?;
 
-            // Spawn background task to refresh global cache for this executor
-            let base_agent = executors::executors::BaseCodingAgent::from(&executor);
-            executors::executors::utils::spawn_global_cache_refresh_for_agent(base_agent);
+            if refresh && let executors::executors::CodingAgent::ClaudeCode(agent) = &executor {
+                agent
+                    .invalidate_discovery_cache(workdir.as_deref(), repo_path.as_deref())
+                    .await?;
+            }
+            // Codex discovers directly. ACP/OMP re-read native files and the
+            // latest scoped runtime observations; never erase their only
+            // catalog or create an extra native session merely to refresh.
+            // Do not warm DEFAULT in the background for another profile.
 
             let stream = executor
                 .discover_options(workdir.as_deref(), repo_path.as_deref())

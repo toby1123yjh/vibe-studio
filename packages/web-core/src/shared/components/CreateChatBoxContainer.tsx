@@ -29,6 +29,7 @@ import type { LinkedTask } from '@/shared/types/createMode';
 import { useSettingsNavigation } from '@/shared/hooks/useSettingsNavigation';
 import { WorkspaceTargetDialog } from '@/shared/dialogs/shared/WorkspaceTargetDialog';
 import { ModelSelectorContainer } from '@/shared/components/ModelSelectorContainer';
+import { useModelAttachmentGuard } from '@/shared/hooks/useModelAttachmentGuard';
 import {
   AgentSessionResumeChip,
   AgentSessionResumePicker,
@@ -133,22 +134,6 @@ export function CreateChatBoxContainer({
       setDraftAttachments
     );
 
-  const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
-      if (acceptedFiles.length > 0) {
-        uploadFiles(acceptedFiles);
-      }
-    },
-    [uploadFiles]
-  );
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    disabled: createWorkspace.isPending,
-    noClick: true,
-    noKeyboard: true,
-  });
-
   const scratchConfig = useMemo(() => {
     if (!hasInitialValue) return undefined; // still loading
     return draftConfig ?? null;
@@ -169,6 +154,21 @@ export function CreateChatBoxContainer({
     configExecutorProfile: config?.executor_profile,
     hiddenAgents: config?.hidden_agents,
     onPersist: (cfg) => setDraftConfig(cfg),
+  });
+  const attachmentGuard = useModelAttachmentGuard(
+    JSON.stringify([
+      scopeIdentity,
+      effectiveExecutor,
+      selectedVariant,
+      executorConfig?.model_id,
+    ]),
+    uploadFiles
+  );
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: attachmentGuard.uploadFiles,
+    disabled: createWorkspace.isPending,
+    noClick: true,
+    noKeyboard: true,
   });
 
   useEffect(() => {
@@ -280,7 +280,13 @@ export function CreateChatBoxContainer({
             onOverrideChange={setExecutorOverrides}
             executorConfig={executorConfig}
             presetOptions={presetOptions}
+            onInputModalitiesChange={attachmentGuard.onInputModalitiesChange}
           />
+        )}
+        {attachmentGuard.notice && (
+          <span role="status" className="text-sm text-low">
+            {attachmentGuard.notice}
+          </span>
         )}
         {stagedResumeSession && (
           <AgentSessionResumeChip
@@ -573,7 +579,7 @@ export function CreateChatBoxContainer({
                 }
                 repoId={workspaceMode === 'worktree' ? repoId : undefined}
                 modelSelector={modelSelectorNode}
-                onPasteFiles={uploadFiles}
+                onPasteFiles={attachmentGuard.uploadFiles}
                 localAttachments={localAttachments}
                 dropzone={{ getRootProps, getInputProps, isDragActive }}
                 projectSelector={projectSelector}

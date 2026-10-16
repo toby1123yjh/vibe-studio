@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { expect, test as it } from '@playwright/test';
+const describe = it.describe;
 import type { ModelInfo } from 'shared/types';
 import {
   buildModelSelectionOverride,
-  getReasoningOverrideRepair,
   parseModelId,
   resolveConfiguredReasoningIdForOptions,
   resolveDefaultReasoningId,
@@ -52,9 +52,8 @@ describe('model selector model ID semantics', () => {
     });
   });
 
-  it.each(['custom:lfm2.5:8b', 'model/family:latest'])(
-    'round-trips provider-scoped model ID %s without rewriting it',
-    (modelId) => {
+  for (const modelId of ['custom:lfm2.5:8b', 'model/family:latest']) {
+    it(`round-trips provider-scoped model ID ${modelId} without rewriting it`, () => {
       const { model_id: value } = buildModelSelectionOverride(
         models,
         modelId,
@@ -66,8 +65,8 @@ describe('model selector model ID semantics', () => {
         providerId: 'custom',
         modelId,
       });
-    }
-  );
+    });
+  }
 
   it('treats the entire value as a model ID when providers are absent', () => {
     const value = 'custom/model/family:latest';
@@ -146,7 +145,7 @@ describe('model selector reasoning overrides', () => {
         'low',
         true
       )
-    ).toBeNull();
+    ).toBe('low');
     expect(
       resolveConfiguredReasoningIdForOptions(
         models[0].reasoning_options,
@@ -156,25 +155,15 @@ describe('model selector reasoning overrides', () => {
     ).toBeNull();
   });
 
-  it('repairs invalid or stale configured reasoning without auto-applying defaults', () => {
-    expect(
-      getReasoningOverrideRepair(models[0].reasoning_options, 'xhigh', true)
-    ).toBeNull();
-    expect(
-      getReasoningOverrideRepair(models[0].reasoning_options, 'low', true)
-    ).toEqual({ reasoning_id: null });
-    expect(
-      getReasoningOverrideRepair(models[0].reasoning_options, '', true)
-    ).toEqual({ reasoning_id: null });
-    expect(
-      getReasoningOverrideRepair(models[2].reasoning_options, 'high', true)
-    ).toEqual({ reasoning_id: null });
-    expect(
-      getReasoningOverrideRepair(models[0].reasoning_options, undefined, false)
-    ).toBeNull();
-    expect(
-      getReasoningOverrideRepair(models[0].reasoning_options, null, true)
-    ).toBeNull();
+  it('retains unavailable explicit values, including an opaque empty string', () => {
+    for (const options of [models[0].reasoning_options, []]) {
+      for (const value of ['low', 'Vendor/Exact:Effort', '']) {
+        expect(resolveReasoningOverrideState(options, value, true)).toEqual({
+          selectedReasoningId: value,
+          unavailable: true,
+        });
+      }
+    }
   });
 
   it('keeps the container state on CLI config when no override exists', () => {
@@ -186,11 +175,11 @@ describe('model selector reasoning overrides', () => {
       )
     ).toEqual({
       selectedReasoningId: null,
-      repair: null,
+      unavailable: false,
     });
   });
 
-  it('clears stale container state instead of applying discovery defaults', () => {
+  it('preserves stale container state for explicit correction or runtime validation', () => {
     expect(
       resolveReasoningOverrideState(
         models[0].reasoning_options,
@@ -198,8 +187,8 @@ describe('model selector reasoning overrides', () => {
         true
       )
     ).toEqual({
-      selectedReasoningId: null,
-      repair: { reasoning_id: null },
+      selectedReasoningId: 'unsupported',
+      unavailable: true,
     });
   });
 });

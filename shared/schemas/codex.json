@@ -58,6 +58,20 @@
       ],
       "minLength": 1
     },
+    "service_tier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plan_mode_reasoning_effort": {
+      "description": "A non-empty reasoning effort value advertised by Codex model discovery or supplied by the user.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
     "model_reasoning_summary": {
       "description": "Model reasoning summary style",
       "type": [

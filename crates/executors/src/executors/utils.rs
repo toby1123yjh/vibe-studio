@@ -109,6 +109,15 @@ where
             },
         );
     }
+
+    /// Remove one authority-scoped result without invalidating other hosts,
+    /// profiles or directories.
+    pub fn invalidate(&self, key: &K) {
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop(key);
+    }
 }
 
 pub const EXECUTOR_OPTIONS_CACHE_CAPACITY: usize = 64;
@@ -150,5 +159,22 @@ pub async fn preload_global_executor_options_cache() {
 
     for base_agent in executors {
         spawn_global_cache_refresh_for_agent_with_configs(base_agent, configs.clone());
+    }
+}
+
+#[cfg(test)]
+mod cache_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_refresh_invalidates_only_selected_authority() {
+        let cache = TtlCache::new(4, DEFAULT_CACHE_TTL);
+        cache.put("profile-a/project-a", "models-a");
+        cache.put("profile-b/project-a", "models-b");
+        cache.put("profile-a/project-b", "models-c");
+        cache.invalidate(&"profile-a/project-a");
+        assert!(cache.get(&"profile-a/project-a").is_none());
+        assert_eq!(*cache.get(&"profile-b/project-a").unwrap(), "models-b");
+        assert_eq!(*cache.get(&"profile-a/project-b").unwrap(), "models-c");
     }
 }

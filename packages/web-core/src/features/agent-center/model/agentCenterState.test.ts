@@ -36,17 +36,17 @@ test('reasoning display uses explicit effort or follows CLI without adopting def
   expect(
     getReasoningDisplayLabel(options, 'xhigh', true, 'Follow CLI config')
   ).toBe('Extra High');
-  for (const effort of [null, undefined, 'invalid']) {
+  for (const effort of [null, undefined]) {
     expect(
       getReasoningDisplayLabel(options, effort, true, '遵循 CLI 配置')
-    ).toBe('Extra High');
+    ).toBe('遵循 CLI 配置');
   }
   expect(
     getReasoningDisplayLabel(options, 'high', false, 'Follow CLI config')
-  ).toBe('Extra High');
-  expect(
-    getReasoningDisplayLabel([], 'high', true, 'Follow CLI config')
-  ).toBeNull();
+  ).toBe('Follow CLI config');
+  expect(getReasoningDisplayLabel([], 'high', true, 'Follow CLI config')).toBe(
+    'High'
+  );
   expect(
     getReasoningDisplayLabel([], null, true, 'Follow CLI config')
   ).toBeNull();

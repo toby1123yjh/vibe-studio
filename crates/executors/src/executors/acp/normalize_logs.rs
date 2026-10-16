@@ -322,7 +322,8 @@ pub fn normalize_logs_with_suppressed_stderr_patterns(
                     AcpEvent::User(_)
                     | AcpEvent::Usage(_)
                     | AcpEvent::Other(_)
-                    | AcpEvent::CatalogObserved(_) => (),
+                    | AcpEvent::CatalogObserved(_)
+                    | AcpEvent::ConfigurationObserved(_) => (),
                 }
             }
         }

@@ -601,6 +601,18 @@ pub enum ProjectionStatus {
     Rebuilding,
 }
 
+/// Values reported by the native runtime, distinct from the frozen request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct ObservedRuntimeConfiguration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_id: Option<String>,
+    pub source: String,
+    pub event_id: Uuid,
+    pub run_attempt_id: Uuid,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct RunState {
     pub state_schema_version: u16,
@@ -622,6 +634,8 @@ pub struct RunState {
     pub terminal_output: Option<CanonicalMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<AgentRuntimeError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_configuration: Option<ObservedRuntimeConfiguration>,
     pub unknown_event_count: u64,
     pub updated_at: DateTime<Utc>,
 }
@@ -643,6 +657,7 @@ impl RunState {
             provider_session: None,
             terminal_output: None,
             last_error: None,
+            observed_configuration: None,
             unknown_event_count: 0,
             updated_at: request.created_at,
         }
@@ -724,6 +739,7 @@ mod tests {
             agent_id: None,
             reasoning_id: Some("high".to_string()),
             permission_policy: None,
+            provider_options: None,
         };
         let runtime_profile_id = executor_config.profile_id().cache_key();
         let request = AgentRunRequestEnvelope {

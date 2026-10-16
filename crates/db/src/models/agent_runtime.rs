@@ -1733,6 +1733,7 @@ mod tests {
                 agent_id: None,
                 reasoning_id: None,
                 permission_policy: None,
+                provider_options: None,
             },
             selected_skills: None,
             reset_to_message_id: None,

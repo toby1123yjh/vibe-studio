@@ -27,6 +27,7 @@ test('canonical omitted overrides are full-snapshot nulls, not preset fallbacks'
     agent_id: null,
     reasoning_id: null,
     permission_policy: null,
+    provider_options: null,
   });
 });
 
@@ -62,7 +63,7 @@ test('default aliases match but foreign provider and named profiles do not', () 
   ).toBe(false);
 });
 
-test('foreign profiles and model-specific reasoning cannot leak through fallback', () => {
+test('foreign profiles stay isolated and saved explicit effort is retained after a model change', () => {
   const resolved = resolveExecutorOverrides(
     executor,
     'PLAN',
@@ -73,5 +74,26 @@ test('foreign profiles and model-specific reasoning cannot leak through fallback
   );
   expect(resolved?.model_id).toBe('selected-model');
   expect(resolved?.agent_id).toBe('preset-agent');
-  expect(resolved?.reasoning_id).toBeUndefined();
+  expect(resolved?.reasoning_id).toBe('high');
+});
+
+test('provider options survive drafts, restoration and explicit clearing', () => {
+  const saved = restoreExecutorConfig({
+    ...preset,
+    provider_options: { provider: 'codex', service_tier: 'priority' },
+  });
+  expect(
+    resolveExecutorOverrides(executor, 'PLAN', {}, undefined, saved, preset)
+      ?.provider_options
+  ).toEqual(saved.provider_options);
+  expect(
+    resolveExecutorOverrides(
+      executor,
+      'PLAN',
+      { provider_options: null },
+      undefined,
+      saved,
+      preset
+    )?.provider_options
+  ).toBeNull();
 });

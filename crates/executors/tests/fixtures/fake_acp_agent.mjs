@@ -39,6 +39,13 @@ function options() {
       options: ['', 'high', 'low', 'medium'].map(value => ({ value, name: value || 'None' })) },
   ];
 }
+function sessionState() {
+  return {
+    configOptions: options(),
+    models: { currentModelId: currentModel, availableModels: [baseModel, selectedModel].map(modelId => ({ modelId, name: modelId })) },
+    modes: { currentModeId: 'default', availableModes: ['default', 'auto_edit', 'yolo', 'plan'].map(id => ({ id, name: id })) },
+  };
+}
 
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
@@ -64,16 +71,24 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       break;
     }
     case 'session/new':
-      reply(id, { sessionId, configOptions: options() });
+      reply(id, { sessionId, ...sessionState() });
       break;
     case 'session/resume':
       if (scenario === 'restore-fail') reject(id);
-      else reply(id, { configOptions: options() });
+      else reply(id, sessionState());
       break;
     case 'session/load':
       message('old-native-history');
-      reply(id, { configOptions: options() });
+      reply(id, sessionState());
       setTimeout(() => message('old-native-history-tail'), 30);
+      break;
+    case 'session/set_model':
+      if (scenario === 'gemini-model-reject') reject(id);
+      else { currentModel = params.modelId; reply(id, {}); }
+      break;
+    case 'session/set_mode':
+      if (scenario === 'gemini-mode-reject') reject(id);
+      else reply(id, {});
       break;
     case 'session/set_config_option':
       if (scenario === 'config-reject') { reject(id); break; }

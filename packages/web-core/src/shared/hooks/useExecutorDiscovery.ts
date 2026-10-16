@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 import type { BaseCodingAgent, ExecutorDiscoveredOptions } from 'shared/types';
 import { useJsonPatchWsStream } from '@/shared/hooks/useJsonPatchWsStream';
 import { agentsApi } from '@/shared/lib/api';
@@ -31,15 +32,40 @@ function useExecutorDiscovery(
   opts?: ExecutorDiscoveryContext
 ) {
   const { workspaceId, sessionId, repoId, variant } = opts ?? {};
+  const hostId = useHostId();
+  const [refreshRequest, setRefreshRequest] = useState<{
+    scope: string;
+    nonce: number;
+  } | null>(null);
+  const scope = JSON.stringify([
+    agent,
+    hostId,
+    workspaceId,
+    sessionId,
+    repoId,
+    variant,
+  ]);
+  const refreshNonce =
+    refreshRequest?.scope === scope ? refreshRequest.nonce : 0;
+  const refresh = useCallback(
+    () =>
+      setRefreshRequest((previous) => ({
+        scope,
+        nonce: (previous?.scope === scope ? previous.nonce : 0) + 1,
+      })),
+    [scope]
+  );
   const endpoint = useMemo(() => {
     if (!agent) return undefined;
-    return agentsApi.getDiscoveredOptionsStreamUrl(agent, {
+    const url = agentsApi.getDiscoveredOptionsStreamUrl(agent, {
       workspaceId,
       sessionId,
       repoId,
       variant,
+      refresh: refreshNonce > 0,
     });
-  }, [agent, workspaceId, sessionId, repoId, variant]);
+    return refreshNonce ? `${url}&refresh_nonce=${refreshNonce}` : url;
+  }, [agent, workspaceId, sessionId, repoId, variant, refreshNonce]);
 
   const initialData = useCallback(
     (): ExecutorDiscoveryStreamState => ({
@@ -52,7 +78,8 @@ function useExecutorDiscovery(
     useJsonPatchWsStream<ExecutorDiscoveryStreamState>(
       endpoint,
       !!endpoint,
-      initialData
+      initialData,
+      { transport: { hostScope: 'explicit', hostId } }
     );
 
   // Prefer the backend-reported error from the data payload. Only fall back
@@ -76,6 +103,7 @@ function useExecutorDiscovery(
     error: combinedError,
     isConnected,
     isInitialized,
+    refresh,
   };
 }
 
@@ -83,15 +111,14 @@ export function useModelSelectorConfig(
   agent: BaseCodingAgent | null | undefined,
   opts?: ExecutorDiscoveryContext
 ) {
-  const { options, error, isConnected, isInitialized } = useExecutorDiscovery(
-    agent,
-    opts
-  );
+  const { options, error, isConnected, isInitialized, refresh } =
+    useExecutorDiscovery(agent, opts);
 
   return {
     config: options?.model_selector ?? null,
     loadingModels: options?.loading_models ?? false,
     loadingAgents: options?.loading_agents ?? false,
+    refresh,
     error,
     isConnected,
     isInitialized,

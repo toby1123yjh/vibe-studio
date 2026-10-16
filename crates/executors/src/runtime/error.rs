@@ -75,6 +75,7 @@ pub fn classify_executor_error(error: &ExecutorError) -> AgentRuntimeErrorKind {
             classify_approval_error(approval_error)
         }
         ExecutorError::UnknownExecutorType(_)
+        | ExecutorError::InvalidConfiguration(_)
         | ExecutorError::SetupHelperNotSupported
         | ExecutorError::FollowUpNotSupported(_)
         | ExecutorError::ResetToMessageNotSupported(_)
@@ -174,6 +175,7 @@ mod tests {
     fn maps_startup_failures() {
         let cases = [
             ExecutorError::UnknownExecutorType("unknown".to_string()),
+            ExecutorError::InvalidConfiguration("unsupported model effort".to_string()),
             ExecutorError::SetupHelperNotSupported,
             ExecutorError::FollowUpNotSupported("provider".to_string()),
             ExecutorError::ResetToMessageNotSupported("provider".to_string()),

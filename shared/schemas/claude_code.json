@@ -49,6 +49,24 @@
         null
       ]
     },
+    "fast_mode": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ultracode": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "native_permission_mode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "agent": {
       "type": [
         "string",

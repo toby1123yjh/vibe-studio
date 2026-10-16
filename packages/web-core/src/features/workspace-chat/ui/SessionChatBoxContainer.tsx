@@ -60,6 +60,7 @@ import {
   type SessionChatBoxEditorRenderProps,
 } from '@vibe/ui/components/SessionChatBox';
 import { ModelSelectorContainer } from '@/shared/components/ModelSelectorContainer';
+import { useModelAttachmentGuard } from '@/shared/hooks/useModelAttachmentGuard';
 import {
   AgentSessionResumeChip,
   AgentSessionResumePicker,
@@ -586,6 +587,17 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     if (sessionId && latestRunAttemptId) void refetchConfig();
   }, [sessionId, latestRunAttemptId, refetchConfig]);
   const providerPolicy = useAgentProviderPolicy(effectiveExecutor);
+  const attachmentGuard = useModelAttachmentGuard(
+    JSON.stringify([
+      hostId,
+      workspaceId,
+      sessionId,
+      effectiveExecutor,
+      selectedVariant,
+      executorConfig?.model_id,
+    ]),
+    uploadFiles
+  );
   const [stagedResumeSession, setStagedResumeSession] =
     useState<ResumableAgentSession | null>(null);
 
@@ -874,17 +886,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     isDenying ||
     isAnswering;
 
-  const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
-      if (acceptedFiles.length > 0) {
-        uploadFiles(acceptedFiles);
-      }
-    },
-    [uploadFiles]
-  );
-
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
+    onDrop: attachmentGuard.uploadFiles,
     disabled: areAttachmentInputsDisabled,
     noClick: true,
     noKeyboard: true,
@@ -1288,7 +1291,13 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
           executorConfig={executorConfig}
           presetOptions={presetOptions}
           readOnly={configurationLocked}
+          onInputModalitiesChange={attachmentGuard.onInputModalitiesChange}
         />
+      )}
+      {attachmentGuard.notice && (
+        <span role="status" className="text-sm text-low">
+          {attachmentGuard.notice}
+        </span>
       )}
       {stagedResumeSession && (
         <AgentSessionResumeChip
@@ -1387,7 +1396,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         onQueue: handleQueueMessage,
         onCancelQueue: handleCancelQueue,
         onStop: handleStop,
-        onPasteFiles: uploadFiles,
+        onPasteFiles: attachmentGuard.uploadFiles,
       }}
       actionPolicy={runtimeActionPolicy}
       session={{

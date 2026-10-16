@@ -33,7 +33,11 @@ pub struct QaMockExecutor;
 
 #[async_trait]
 impl StandardCodingAgentExecutor for QaMockExecutor {
-    fn apply_overrides(&mut self, _executor_config: &ExecutorConfig) {}
+    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        executor_config
+            .validate_provider_options()
+            .map_err(ExecutorError::InvalidConfiguration)
+    }
 
     async fn spawn(
         &self,
@@ -117,6 +121,7 @@ impl StandardCodingAgentExecutor for QaMockExecutor {
             agent_id: None,
             reasoning_id: None,
             permission_policy: Some(crate::model_selector::PermissionPolicy::Auto),
+            provider_options: None,
         }
     }
 }

@@ -248,7 +248,9 @@ fn runtime_error(
 
 fn launch_phase_for_executor_error(error: &ExecutorError) -> AgentRuntimeLaunchPhase {
     match error {
-        ExecutorError::CommandBuild(_) => AgentRuntimeLaunchPhase::CommandBuild,
+        ExecutorError::CommandBuild(_) | ExecutorError::InvalidConfiguration(_) => {
+            AgentRuntimeLaunchPhase::CommandBuild
+        }
         ExecutorError::ExecutorApprovalError(approval_error) => {
             launch_phase_for_approval_error(approval_error)
         }
@@ -431,6 +433,18 @@ mod tests {
                 Some("codex"),
             ),
             AgentRuntimeErrorKind::CommandBuildFailed,
+            AgentRuntimeLaunchPhase::CommandBuild,
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_configuration_before_process_spawn() {
+        assert_launch_error(
+            classify_launch_executor_error(
+                &ExecutorError::InvalidConfiguration("unsupported effort".into()),
+                Some("codex"),
+            ),
+            AgentRuntimeErrorKind::StartupFailed,
             AgentRuntimeLaunchPhase::CommandBuild,
         );
     }

@@ -4,16 +4,11 @@
 //! runtime only selects the provider and passes the resulting command to the
 //! ACP transport.
 
-use uuid::Uuid;
-
 use super::Gemini;
 use crate::{
     command::{CmdOverrides, CommandBuildError, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
-    executors::{
-        ExecutorError,
-        provider_adapter::{DirectControl, encode_stdio_rpc},
-    },
+    executors::{ExecutorError, provider_adapter::DirectControl},
     workflow_mcp::{
         FORWARDED_ENV_KEYS, ScopedWorkflowMcp, WorkflowMcpReadiness,
         add_gemini_environment_aliases, gemini_env_alias,
@@ -75,39 +70,15 @@ impl<'a> GeminiCommandAdapter<'a> {
         }
 
         if self.agent.yolo.unwrap_or(false) {
-            builder = builder
-                .extend_params(["--yolo"])
-                .extend_params(["--allowed-tools", "run_shell_command"]);
+            builder = builder.extend_params(["--yolo"]);
         }
 
-        apply_overrides(
-            builder.extend_params(["--experimental-acp"]),
-            &self.agent.cmd,
-        )
+        apply_overrides(builder.extend_params(["--acp"]), &self.agent.cmd)
     }
 }
 
 pub(crate) fn encode_control(control: DirectControl) -> Result<Vec<u8>, serde_json::Error> {
-    let request = match control {
-        DirectControl::Cancel => serde_json::json!({
-            "jsonrpc":"2.0",
-            "method":"session/cancel",
-            "params":{"sessionId":"<active-session>"}
-        }),
-        DirectControl::Steer { text } => serde_json::json!({
-            "jsonrpc":"2.0",
-            "id":Uuid::new_v4().to_string(),
-            "method":"session/prompt",
-            "params":{"sessionId":"<active-session>","prompt":[{"type":"text","text":text}]}
-        }),
-        DirectControl::Approve { .. } | DirectControl::Input { .. } => {
-            return Err(serde_json::Error::io(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "ACP permission/input responses require the active connection request id",
-            )));
-        }
-    };
-    encode_stdio_rpc(&request)
+    super::super::acp::provider::encode_control(control)
 }
 
 #[cfg(test)]
@@ -131,25 +102,20 @@ mod tests {
                 "--model".to_string(),
                 "gemini-test".to_string(),
                 "--yolo".to_string(),
-                "--allowed-tools".to_string(),
-                "run_shell_command".to_string(),
-                "--experimental-acp".to_string(),
+                "--acp".to_string(),
             ]
         );
     }
 
     #[test]
     fn owns_gemini_control_encoding() {
-        let value: serde_json::Value = serde_json::from_slice(
-            &encode_control(DirectControl::Steer {
+        assert!(encode_control(DirectControl::Cancel).unwrap().is_empty());
+        assert!(
+            encode_control(DirectControl::Steer {
                 text: "continue".to_string(),
             })
-            .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!(value["method"], "session/prompt");
-        assert_eq!(value["params"]["prompt"][0]["text"], "continue");
+            .is_err()
+        );
     }
 
     #[test]

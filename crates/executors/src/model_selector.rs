@@ -12,7 +12,7 @@ pub struct ModelProvider {
 }
 
 /// Basic model information
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 pub struct ModelInfo {
     /// Model identifier
     pub id: String,
@@ -24,6 +24,46 @@ pub struct ModelInfo {
     /// Configurable reasoning options if supported
     #[serde(default)]
     pub reasoning_options: Vec<ReasoningOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ModelCapabilities>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilitySupport {
+    Supported,
+    Unsupported,
+    #[default]
+    Unknown,
+}
+
+/// Advertised capabilities, not confirmation of a running attempt's settings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+pub struct ModelCapabilities {
+    #[serde(default)]
+    pub reasoning: CapabilitySupport,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+    #[serde(default)]
+    pub fast_mode: CapabilitySupport,
+    #[serde(default)]
+    pub auto_mode: CapabilitySupport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_model: Option<String>,
+    #[serde(default)]
+    pub is_default: bool,
+    /// Native request IDs, never inferred from a model name or price tier.
+    #[serde(default)]
+    pub service_tiers: Vec<ModelServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_service_tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ModelServiceTier {
+    pub id: String,
+    pub name: String,
+    pub description: String,
 }
 
 /// Reasoning option (simple selectable choice).

@@ -52,7 +52,15 @@ pub struct DeepseekHarness {
 
 impl DeepseekHarness {
     pub const DIRECT_PROVIDER: DirectProvider = DirectProvider::DeepseekHarness;
-    pub(crate) fn apply_direct_overrides(&mut self, config: &ExecutorConfig) {
+    pub(crate) fn apply_direct_overrides(
+        &mut self,
+        config: &ExecutorConfig,
+    ) -> Result<(), ExecutorError> {
+        if config.agent_id.is_some() || config.permission_policy == Some(PermissionPolicy::Plan) {
+            return Err(super::acp::session_config::config_error(
+                "DeepSeek Harness ACP does not support session modes or plan permission policy",
+            ));
+        }
         if let Some(model) = &config.model_id {
             self.model = Some(model.clone());
         }
@@ -62,6 +70,7 @@ impl DeepseekHarness {
         if let Some(policy) = &config.permission_policy {
             self.yolo = Some(matches!(policy, PermissionPolicy::Auto));
         }
+        Ok(())
     }
     pub(crate) fn use_direct_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
         self.approvals = Some(approvals);
@@ -98,8 +107,8 @@ impl DeepseekHarness {
 
 #[async_trait]
 impl StandardCodingAgentExecutor for DeepseekHarness {
-    fn apply_overrides(&mut self, config: &ExecutorConfig) {
-        self.apply_direct_overrides(config);
+    fn apply_overrides(&mut self, config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        self.apply_direct_overrides(config)
     }
     fn use_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
         self.use_direct_approvals(approvals);
@@ -160,6 +169,7 @@ impl StandardCodingAgentExecutor for DeepseekHarness {
             model_id: self.model.clone(),
             reasoning_id: self.reasoning_effort.clone(),
             agent_id: None,
+            provider_options: None,
             permission_policy: Some(if self.yolo.unwrap_or(false) {
                 PermissionPolicy::Auto
             } else {

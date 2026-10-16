@@ -53,7 +53,7 @@ use crate::{
         },
     },
     model_selector::PermissionPolicy,
-    profile::ExecutorConfig,
+    profile::{ExecutorConfig, ProviderRunOptions},
     stdout_dup::create_stdout_pipe_writer,
 };
 
@@ -132,6 +132,12 @@ pub struct ClaudeCode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<ClaudeEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultracode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_permission_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dangerously_skip_permissions: Option<bool>,
@@ -172,7 +178,10 @@ impl ClaudeCode {
         Self::DIRECT_PROVIDER.mapper()
     }
 
-    pub(crate) fn apply_direct_overrides(&mut self, executor_config: &ExecutorConfig) {
+    pub(crate) fn apply_direct_overrides(
+        &mut self,
+        executor_config: &ExecutorConfig,
+    ) -> Result<(), ExecutorError> {
         if let Some(model_id) = &executor_config.model_id {
             self.model = Some(model_id.clone());
         }
@@ -180,7 +189,41 @@ impl ClaudeCode {
             self.agent = Some(agent.clone());
         }
         if let Some(reasoning_id) = &executor_config.reasoning_id {
-            self.effort = reasoning_id.parse().ok();
+            self.effort = Some(reasoning_id.parse().map_err(|_| {
+                ExecutorError::Io(std::io::Error::other(format!(
+                    "Unsupported Claude effort: {reasoning_id}"
+                )))
+            })?);
+        }
+        if let Some(ProviderRunOptions::ClaudeCode {
+            fast_mode,
+            permission_mode,
+            ultracode,
+        }) = &executor_config.provider_options
+        {
+            if let Some(mode) = permission_mode {
+                let native = parse_permission_mode(mode)?;
+                let compatible = match &executor_config.permission_policy {
+                    Some(PermissionPolicy::Plan) => native == PermissionMode::Plan,
+                    Some(PermissionPolicy::Supervised) => native == PermissionMode::Default,
+                    Some(PermissionPolicy::Auto) => native == PermissionMode::BypassPermissions,
+                    None => true,
+                };
+                if !compatible {
+                    return Err(ExecutorError::Io(std::io::Error::other(
+                        "Conflicting Claude permission policy and native permission mode",
+                    )));
+                }
+                self.native_permission_mode = Some(mode.clone());
+                self.plan = Some(native == PermissionMode::Plan);
+                self.approvals = Some(native == PermissionMode::Default);
+            }
+            if fast_mode.is_some() {
+                self.fast_mode = *fast_mode;
+            }
+            if ultracode.is_some() {
+                self.ultracode = *ultracode;
+            }
         }
         if let Some(permission_policy) = executor_config.permission_policy.clone() {
             match permission_policy {
@@ -198,6 +241,7 @@ impl ClaudeCode {
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn use_direct_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
@@ -214,7 +258,7 @@ impl ClaudeCode {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let supports_effort = if self.effort.is_some() {
-            self.supports_effort_flag_or_false().await
+            self.supports_effort_flag_at(Some(current_dir)).await?
         } else {
             false
         };
@@ -235,9 +279,17 @@ impl ClaudeCode {
         command_adapter::ClaudeCodeCommandAdapter::new(self).build_runtime(supports_effort)
     }
 
+    #[cfg(test)]
     async fn build_command_builder(&self) -> Result<CommandBuilder, ExecutorError> {
+        self.build_command_builder_at(None).await
+    }
+
+    async fn build_command_builder_at(
+        &self,
+        cwd: Option<&Path>,
+    ) -> Result<CommandBuilder, ExecutorError> {
         let supports_effort = if self.effort.is_some() {
-            self.supports_effort_flag_or_false().await
+            self.supports_effort_flag_at(cwd).await?
         } else {
             false
         };
@@ -245,7 +297,7 @@ impl ClaudeCode {
         Ok(self.build_command_builder_with_effort_support(supports_effort)?)
     }
 
-    async fn supports_effort_flag(&self) -> Result<bool, ExecutorError> {
+    async fn supports_effort_flag_at(&self, cwd: Option<&Path>) -> Result<bool, ExecutorError> {
         let builder = command_adapter::ClaudeCodeCommandAdapter::new(self).build_effort_probe()?;
 
         let command_parts = builder.build_initial()?;
@@ -259,6 +311,9 @@ impl ClaudeCode {
             .stderr(Stdio::piped())
             .env("NPM_CONFIG_LOGLEVEL", "error")
             .args(&args);
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
 
         ExecutionEnv::new(crate::env::RepoContext::default(), false, String::new())
             .with_profile(&self.cmd)
@@ -279,21 +334,22 @@ impl ClaudeCode {
             .map_err(ExecutorError::Io)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            return Err(ExecutorError::Io(std::io::Error::other(format!(
+                "Claude capability probe failed ({})",
+                output.status
+            ))));
+        }
 
         Ok(stdout.contains("--effort") || stderr.contains("--effort"))
     }
 
-    async fn supports_effort_flag_or_false(&self) -> bool {
-        match self.supports_effort_flag().await {
-            Ok(supports_effort) => supports_effort,
-            Err(error) => {
-                tracing::warn!("Failed to detect Claude Code --effort support: {}", error);
-                false
+    pub fn permission_mode(&self) -> PermissionMode {
+        if let Some(mode) = &self.native_permission_mode {
+            if let Ok(mode) = parse_permission_mode(mode) {
+                return mode;
             }
         }
-    }
-
-    pub fn permission_mode(&self) -> PermissionMode {
         if self.plan.unwrap_or(false) {
             PermissionMode::Plan
         } else if self.approvals.unwrap_or(false) {
@@ -355,22 +411,94 @@ impl ClaudeCode {
         Some(serde_json::Value::Object(hooks))
     }
 
-    fn compute_cmd_key(&self) -> String {
-        serde_json::to_string(&self.cmd).unwrap_or_default()
+    async fn compute_cmd_key(&self, cwd: &Path) -> Result<String, ExecutorError> {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(serde_json::to_vec(self).unwrap_or_default());
+        hash.update(cwd.to_string_lossy().as_bytes());
+        for name in [
+            "PATH",
+            "CLAUDE_CONFIG_DIR",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_MODEL",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+        ] {
+            hash.update(name.as_bytes());
+            hash.update(std::env::var(name).unwrap_or_default().as_bytes());
+        }
+        let (executable, _) = command_adapter::ClaudeCodeCommandAdapter::new(self)
+            .build_effort_probe()?
+            .build_initial()?
+            .into_resolved()
+            .await?;
+        hash.update(executable.to_string_lossy().as_bytes());
+        if let Ok(meta) = std::fs::metadata(executable) {
+            hash.update(format!("{}:{:?}", meta.len(), meta.modified().ok()).as_bytes());
+        }
+        let configured_root = self
+            .cmd
+            .env
+            .as_ref()
+            .and_then(|vars| vars.get("CLAUDE_CONFIG_DIR"))
+            .cloned()
+            .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
+            .map(PathBuf::from);
+        let root = configured_root.or_else(|| dirs::home_dir().map(|home| home.join(".claude")));
+        let mut paths = vec![
+            cwd.join(".claude/settings.json"),
+            cwd.join(".claude/settings.local.json"),
+        ];
+        if let Some(root) = root {
+            paths.push(root.join("settings.json"));
+            paths.push(root.join(".credentials.json"));
+        }
+        if let Some(home) = dirs::home_dir() {
+            paths.push(home.join(".claude.json"));
+        }
+        for path in paths {
+            hash.update(path.to_string_lossy().as_bytes());
+            if let Ok(bytes) = tokio::fs::read(path).await {
+                hash.update(bytes);
+            }
+        }
+        Ok(format!("{:x}", hash.finalize()))
+    }
+
+    pub async fn invalidate_discovery_cache(
+        &self,
+        workdir: Option<&Path>,
+        repo_path: Option<&Path>,
+    ) -> Result<(), ExecutorError> {
+        use crate::executor_discovery::ExecutorConfigCacheKey;
+        let cwd = workdir
+            .or(repo_path)
+            .map(Path::to_path_buf)
+            .unwrap_or(std::env::current_dir()?);
+        let authority = self.compute_cmd_key(&cwd).await?;
+        let cache = crate::executors::utils::executor_options_cache();
+        // Provisional/global rows use this same cwd-inclusive authority hash;
+        // invalidate only aliases of the selected authority, never all rows.
+        for path in [workdir, repo_path, None] {
+            let path = path.map(Path::to_path_buf);
+            cache.invalidate(&ExecutorConfigCacheKey::new(
+                path.as_ref(),
+                authority.clone(),
+                BaseCodingAgent::ClaudeCode,
+            ));
+        }
+        Ok(())
     }
 }
 
-fn claude_model_options(supports_effort: bool) -> Vec<crate::model_selector::ModelInfo> {
-    use crate::model_selector::{ModelInfo, ReasoningOption};
-
-    let effort_options =
-        ReasoningOption::from_names(["low", "medium", "high", "xhigh", "max"].map(String::from));
-
-    let model_supports_effort = |id: &str| -> bool { id.contains("opus") || id.contains("sonnet") };
+fn claude_model_options(_supports_effort: bool) -> Vec<crate::model_selector::ModelInfo> {
+    use crate::model_selector::ModelInfo;
 
     [
+        ("default", "Native default"),
         ("opus", "Opus"),
-        ("opus[1m]", "Opus (1M context)"),
         ("sonnet", "Sonnet"),
         ("haiku", "Haiku"),
     ]
@@ -379,11 +507,8 @@ fn claude_model_options(supports_effort: bool) -> Vec<crate::model_selector::Mod
         id: id.to_string(),
         name: name.to_string(),
         provider_id: None,
-        reasoning_options: if supports_effort && model_supports_effort(id) {
-            effort_options.clone()
-        } else {
-            vec![]
-        },
+        reasoning_options: vec![],
+        ..Default::default()
     })
     .collect()
 }
@@ -392,7 +517,120 @@ fn apply_claude_effort_support(
     options: &mut crate::executor_discovery::ExecutorDiscoveredOptions,
     supports_effort: bool,
 ) {
-    options.model_selector.models = claude_model_options(supports_effort);
+    if !supports_effort {
+        for model in &mut options.model_selector.models {
+            model.reasoning_options.clear();
+        }
+    }
+}
+
+fn parse_permission_mode(mode: &str) -> Result<PermissionMode, ExecutorError> {
+    serde_json::from_value(serde_json::Value::String(mode.into())).map_err(|_| {
+        ExecutorError::Io(std::io::Error::other(format!(
+            "Unsupported Claude permission mode: {mode}"
+        )))
+    })
+}
+
+/// Only exact native catalog entries define model capabilities. Alias names
+/// alone cannot establish effort support (or an account's fast/auto access).
+pub(crate) fn models_from_initialize(
+    value: &serde_json::Value,
+) -> Vec<crate::model_selector::ModelInfo> {
+    use crate::model_selector::{CapabilitySupport, ModelCapabilities, ModelInfo, ReasoningOption};
+    let support = |key: &str, model: &serde_json::Value| match model[key].as_bool() {
+        Some(true) => CapabilitySupport::Supported,
+        Some(false) => CapabilitySupport::Unsupported,
+        None => CapabilitySupport::Unknown,
+    };
+    value["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|model| {
+            let id = model["value"].as_str()?;
+            let reasoning = support("supportsEffort", model);
+            let efforts = model["supportedEffortLevels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            Some(ModelInfo {
+                id: id.into(),
+                name: model["displayName"].as_str().unwrap_or(id).into(),
+                reasoning_options: if reasoning == CapabilitySupport::Unsupported {
+                    vec![]
+                } else {
+                    ReasoningOption::from_names(efforts)
+                },
+                capabilities: Some(ModelCapabilities {
+                    reasoning,
+                    fast_mode: support("supportsFastMode", model),
+                    auto_mode: support("supportsAutoMode", model),
+                    resolved_model: model["resolvedModel"].as_str().map(str::to_owned),
+                    is_default: id == "default",
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+fn validate_requested_capabilities(
+    agent: &ClaudeCode,
+    initialization: &serde_json::Value,
+) -> Result<(), ExecutorError> {
+    use crate::model_selector::CapabilitySupport;
+    let models = models_from_initialize(initialization);
+    let selected = Some(agent.model.as_deref().unwrap_or("default")).and_then(|id| {
+        models.iter().find(|m| {
+            m.id == id
+                || m.capabilities
+                    .as_ref()
+                    .and_then(|c| c.resolved_model.as_deref())
+                    == Some(id)
+        })
+    });
+    if let Some(effort) = &agent.effort {
+        let model = selected.ok_or_else(|| ExecutorError::Io(std::io::Error::other("Claude did not advertise capabilities for the requested model; cannot validate explicit effort")))?;
+        if !model
+            .reasoning_options
+            .iter()
+            .any(|option| option.id == effort.as_ref())
+        {
+            return Err(ExecutorError::Io(std::io::Error::other(format!(
+                "Claude model {} does not advertise effort {}",
+                model.id,
+                effort.as_ref()
+            ))));
+        }
+    }
+    for (requested, supported, name) in [
+        (
+            agent.fast_mode == Some(true),
+            selected
+                .and_then(|m| m.capabilities.as_ref())
+                .map(|c| c.fast_mode.clone()),
+            "fast mode",
+        ),
+        (
+            agent.native_permission_mode.as_deref() == Some("auto"),
+            selected
+                .and_then(|m| m.capabilities.as_ref())
+                .map(|c| c.auto_mode.clone()),
+            "auto mode",
+        ),
+    ] {
+        if requested && supported != Some(CapabilitySupport::Supported) {
+            return Err(ExecutorError::Io(std::io::Error::other(format!(
+                "Claude has not confirmed {name} support for the selected model"
+            ))));
+        }
+    }
+    Ok(())
 }
 
 fn default_discovered_options(
@@ -406,7 +644,7 @@ fn default_discovered_options(
         model_selector: ModelSelectorConfig {
             providers: vec![],
             models: claude_model_options(supports_effort),
-            default_model: Some("opus".to_string()),
+            default_model: Some("default".to_string()),
             agents: vec![],
             permissions: vec![
                 PermissionPolicy::Auto,
@@ -427,8 +665,8 @@ fn default_discovered_options(
 
 #[async_trait]
 impl StandardCodingAgentExecutor for ClaudeCode {
-    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) {
-        self.apply_direct_overrides(executor_config);
+    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        self.apply_direct_overrides(executor_config)
     }
 
     fn use_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
@@ -441,7 +679,7 @@ impl StandardCodingAgentExecutor for ClaudeCode {
         prompt: &str,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let command_builder = self.build_command_builder().await?;
+        let command_builder = self.build_command_builder_at(Some(current_dir)).await?;
         let command_parts = command_builder.build_initial()?;
         self.spawn_internal(current_dir, prompt, command_parts, env)
             .await
@@ -455,7 +693,7 @@ impl StandardCodingAgentExecutor for ClaudeCode {
         reset_to_message_id: Option<&str>,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let command_builder = self.build_command_builder().await?;
+        let command_builder = self.build_command_builder_at(Some(current_dir)).await?;
 
         let mut args = vec!["--resume".to_string(), session_id.to_string()];
 
@@ -502,9 +740,13 @@ impl StandardCodingAgentExecutor for ClaudeCode {
         };
 
         let cache = executor_options_cache();
-        let cmd_key = self.compute_cmd_key();
+        let discovery_cwd = workdir
+            .or(repo_path)
+            .map(Path::to_path_buf)
+            .unwrap_or(std::env::current_dir()?);
+        let cmd_key = self.compute_cmd_key(&discovery_cwd).await?;
         let base_executor = BaseCodingAgent::ClaudeCode;
-        let supports_effort = self.supports_effort_flag_or_false().await;
+        let supports_effort = self.supports_effort_flag_at(workdir.or(repo_path)).await?;
 
         let (target_path, initial_options) = if let Some(wd) = workdir {
             let wd_buf = wd.to_path_buf();
@@ -611,7 +853,11 @@ impl StandardCodingAgentExecutor for ClaudeCode {
             let mut final_options = default_discovered_options(supports_effort);
 
             match this.discover_agents_and_slash_commands_initial(&discovery_path).await {
-                Ok((mut agent_options, slash_commands_initial, plugins, skills)) => {
+                Ok((mut agent_options, slash_commands_initial, plugins, skills, models)) => {
+                    if !models.is_empty() {
+                        final_options.model_selector.models = models;
+                    }
+                    yield patch::executor_discovered_options(final_options.clone());
                     let default_agents = [
                         "Bash",
                         "general-purpose",
@@ -694,15 +940,15 @@ impl StandardCodingAgentExecutor for ClaudeCode {
         ExecutorConfig {
             executor: BaseCodingAgent::ClaudeCode,
             variant: None,
-            model_id: self.model.clone().or_else(|| {
-                default_discovered_options(false)
-                    .model_selector
-                    .default_model
-                    .clone()
-            }),
+            model_id: self.model.clone(),
             agent_id: None,
             reasoning_id: self.effort.as_ref().map(|e| e.as_ref().to_owned()),
             permission_policy: Some(permission_policy),
+            provider_options: Some(ProviderRunOptions::ClaudeCode {
+                fast_mode: self.fast_mode,
+                permission_mode: self.native_permission_mode.clone(),
+                ultracode: self.ultracode,
+            }),
         }
     }
 
@@ -745,6 +991,15 @@ impl ClaudeCode {
         command_parts: CommandParts,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
+        if let Some(mode) = &self.native_permission_mode {
+            parse_permission_mode(mode)?;
+            if self.dangerously_skip_permissions == Some(true) && mode != "bypassPermissions" {
+                return Err(ExecutorError::InvalidConfiguration(
+                    "Claude native permission mode conflicts with dangerously_skip_permissions"
+                        .into(),
+                ));
+            }
+        }
         let workflow_mcp = crate::workflow_mcp::ScopedWorkflowMcp::from_execution_env(env)?;
         let command_parts =
             command_adapter::append_workflow_mcp(command_parts, workflow_mcp.as_ref());
@@ -800,12 +1055,8 @@ impl ClaudeCode {
             env.commit_reminder_prompt.clone(),
             cancel.clone(),
         );
-        let (startup_failure, exit_signal) = if workflow_scoped {
-            let (signal, receiver) = StartupFailureSignal::channel();
-            (Some(signal), Some(receiver))
-        } else {
-            (None, None)
-        };
+        let (signal, receiver) = StartupFailureSignal::channel();
+        let (startup_failure, exit_signal) = (Some(signal), Some(receiver));
         let protocol_peer = ProtocolPeer::spawn(
             child_stdin,
             child_stdout,
@@ -818,20 +1069,30 @@ impl ClaudeCode {
 
         // Spawn task to initialize the SDK client and send the first message.
         let prompt_clone = combined_prompt.clone();
+        let requested = self.clone();
         tokio::spawn(async move {
             let startup_result = crate::workflow_mcp::WorkflowMcpReadiness::bound_startup(
                 startup_deadline,
                 &cancel_for_startup,
                 async {
-                    protocol_peer.initialize(hooks).await?;
+                    let initialization = protocol_peer.initialize(hooks).await?;
+                    validate_requested_capabilities(&requested, &initialization)?;
+                    let mut settings = serde_json::Map::new();
+                    if let Some(fast) = requested.fast_mode {
+                        settings.insert("fastMode".into(), fast.into());
+                    }
+                    if let Some(ultracode) = requested.ultracode {
+                        settings.insert("ultracode".into(), ultracode.into());
+                    }
+                    if !settings.is_empty() {
+                        protocol_peer.apply_flag_settings(settings.into()).await?;
+                    }
                     crate::workflow_mcp::WorkflowMcpReadiness::wait_optional(
                         readiness,
                         &cancel_for_startup,
                     )
                     .await?;
-                    if let Err(e) = protocol_peer.set_permission_mode(permission_mode).await {
-                        tracing::warn!("Failed to set permission mode to {permission_mode}: {e}");
-                    }
+                    protocol_peer.set_permission_mode(permission_mode).await?;
                     protocol_peer.send_user_message(prompt_clone).await?;
                     prompt_gate.open();
                     Ok::<(), ExecutorError>(())
@@ -842,9 +1103,7 @@ impl ClaudeCode {
 
             if let Err(error) = startup_result {
                 protocol_peer.fail_startup().await;
-                if workflow_scoped {
-                    cancel_for_startup.cancel();
-                }
+                cancel_for_startup.cancel();
                 tracing::error!("Claude startup failed: {error}");
                 let _ = log_writer.log_raw(&format!("Error: {error}")).await;
             }
@@ -873,8 +1132,6 @@ pub struct ClaudeLogProcessor {
     model_name: Option<String>,
     // Map tool_use_id -> structured info for follow-up ToolResult replacement
     tool_map: HashMap<String, ClaudeToolCallInfo>,
-    // Strategy controlling how to handle history and user messages
-    strategy: HistoryStrategy,
     streaming_messages: HashMap<String, StreamingMessageState>,
     streaming_message_id: Option<String>,
     last_assistant_message: Option<String>,
@@ -891,12 +1148,11 @@ impl ClaudeLogProcessor {
         Self::new_with_strategy(HistoryStrategy::Default)
     }
 
-    fn new_with_strategy(strategy: HistoryStrategy) -> Self {
+    fn new_with_strategy(_strategy: HistoryStrategy) -> Self {
         Self {
             model_name: None,
             main_model_name: None,
             tool_map: HashMap::new(),
-            strategy,
             streaming_messages: HashMap::new(),
             streaming_message_id: None,
             last_assistant_message: None,
@@ -1904,7 +2160,6 @@ impl ClaudeLogProcessor {
                 ClaudeStreamEvent::Unknown => {}
             },
             ClaudeJson::Result {
-                is_error,
                 model_usage,
                 subtype,
                 result,
@@ -3030,6 +3285,9 @@ mod tests {
             approvals: None,
             model: None,
             effort: None,
+            fast_mode: None,
+            ultracode: None,
+            native_permission_mode: None,
             agent: None,
             append_prompt: AppendPrompt::default(),
             dangerously_skip_permissions: None,
@@ -3066,16 +3324,15 @@ mod tests {
     }
 
     #[test]
-    fn command_builder_omits_effort_when_cli_does_not_support_it() {
+    fn command_builder_rejects_explicit_effort_when_cli_does_not_support_it() {
         let mut executor = test_executor(None);
         executor.effort = Some(ClaudeEffort::Max);
 
-        let builder = executor
-            .build_command_builder_with_effort_support(false)
-            .expect("command should build");
-        let params = builder.params.as_ref().expect("params should be present");
-
-        assert!(!params.iter().any(|param| param == "--effort"));
+        assert!(
+            executor
+                .build_command_builder_with_effort_support(false)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3112,7 +3369,52 @@ mod tests {
     }
 
     #[test]
-    fn default_options_show_effort_for_supported_models_when_cli_supports_it() {
+    fn native_catalog_overrides_family_name_assumptions() {
+        let init = serde_json::json!({"models":[
+            {"value":"haiku", "resolvedModel":"claude-sonnet-5", "supportsEffort":true, "supportedEffortLevels":["low","max"], "supportsFastMode":false},
+            {"value":"opus", "supportsEffort":false},
+            {"value":"custom-model"}
+        ]});
+        let models = models_from_initialize(&init);
+        assert_eq!(models[0].reasoning_options.len(), 2);
+        assert_eq!(
+            models[0]
+                .capabilities
+                .as_ref()
+                .unwrap()
+                .resolved_model
+                .as_deref(),
+            Some("claude-sonnet-5")
+        );
+        assert!(models[1].reasoning_options.is_empty());
+        assert_eq!(
+            models[2].capabilities.as_ref().unwrap().reasoning,
+            crate::model_selector::CapabilitySupport::Unknown
+        );
+        let mut agent = test_executor(None);
+        agent.model = Some("haiku".into());
+        agent.effort = Some(ClaudeEffort::Max);
+        assert!(validate_requested_capabilities(&agent, &init).is_ok());
+        agent.model = Some("opus".into());
+        assert!(validate_requested_capabilities(&agent, &init).is_err());
+        agent.model = Some("custom-model".into());
+        assert!(validate_requested_capabilities(&agent, &init).is_err());
+    }
+
+    #[test]
+    fn invalid_effort_and_conflicting_native_permissions_are_rejected() {
+        let mut agent = test_executor(None);
+        let invalid: ExecutorConfig = serde_json::from_value(
+            serde_json::json!({"executor":"CLAUDE_CODE","reasoning_id":"ultracode"}),
+        )
+        .unwrap();
+        assert!(agent.apply_direct_overrides(&invalid).is_err());
+        let conflict: ExecutorConfig = serde_json::from_value(serde_json::json!({"executor":"CLAUDE_CODE","permission_policy":"AUTO","provider_options":{"provider":"claude_code","permission_mode":"auto"}})).unwrap();
+        assert!(agent.apply_direct_overrides(&conflict).is_err());
+    }
+
+    #[test]
+    fn help_flag_does_not_invent_model_scoped_effort() {
         let options = default_discovered_options(true);
         let opus = options
             .model_selector
@@ -3127,11 +3429,7 @@ mod tests {
             .find(|model| model.id == "haiku")
             .expect("haiku model should exist");
 
-        assert!(
-            opus.reasoning_options
-                .iter()
-                .any(|option| option.id == "max")
-        );
+        assert!(opus.reasoning_options.is_empty());
         assert!(haiku.reasoning_options.is_empty());
     }
 
@@ -3362,6 +3660,9 @@ mod tests {
             approvals: None,
             model: None,
             effort: None,
+            fast_mode: None,
+            ultracode: None,
+            native_permission_mode: None,
             agent: None,
             append_prompt: AppendPrompt::default(),
             dangerously_skip_permissions: None,

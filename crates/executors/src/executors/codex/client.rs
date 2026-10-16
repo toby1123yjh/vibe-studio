@@ -19,9 +19,9 @@ use codex_app_server_protocol::{
     GetAccountResponse, InitializeCapabilities, InitializeParams, InitializeResponse,
     ItemCompletedNotification, JSONRPCError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse,
     ListMcpServerStatusParams, ListMcpServerStatusResponse, McpServerElicitationAction,
-    McpServerElicitationRequestResponse, McpServerStatusDetail, ModelListParams, ModelListResponse,
-    RequestId, ReviewStartParams, ReviewStartResponse, ReviewTarget, ServerRequest,
-    SkillsListParams, SkillsListResponse, ThreadCompactStartParams, ThreadCompactStartResponse,
+    McpServerElicitationRequestResponse, McpServerStatusDetail, ModelListParams, RequestId,
+    ReviewStartParams, ReviewStartResponse, ReviewTarget, ServerRequest, SkillsListParams,
+    SkillsListResponse, ThreadCompactStartParams, ThreadCompactStartResponse,
     ThreadGoalClearParams, ThreadGoalClearResponse, ThreadGoalGetParams, ThreadGoalGetResponse,
     ThreadGoalSetParams, ThreadGoalSetResponse, ThreadItem, ThreadReadParams, ThreadReadResponse,
     ThreadResumeParams, ThreadResumeResponse, ThreadSettingsUpdateParams,
@@ -35,7 +35,7 @@ use codex_protocol::{
     openai_models::ReasoningEffort as ProtocolReasoningEffort,
 };
 use futures::TryFutureExt;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{self, Value};
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt, BufWriter},
@@ -56,6 +56,89 @@ use crate::{
 
 struct PendingPlan {
     item_id: String,
+}
+
+// Discovery is a forward-compatible projection. Unknown future reasoning or
+// input-modality strings must not make the whole native catalog unreadable.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelCatalogResponse {
+    pub data: Vec<ModelCatalogEntry>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelCatalogEntry {
+    pub id: String,
+    pub model: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub supported_reasoning_efforts: Vec<CatalogReasoningEffort>,
+    pub default_reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+    #[serde(default)]
+    pub service_tiers: Vec<crate::model_selector::ModelServiceTier>,
+    pub default_service_tier: Option<String>,
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CatalogReasoningEffort {
+    pub reasoning_effort: String,
+}
+
+fn validate_model_options(
+    catalog: &ModelCatalogResponse,
+    model_id: &str,
+    effort: Option<&str>,
+    service_tier: Option<&str>,
+) -> Result<(), ExecutorError> {
+    let model = catalog.data.iter().find(|model| model.id == model_id || model.model == model_id)
+        .ok_or_else(|| ExecutorError::InvalidConfiguration(format!(
+            "Codex did not advertise capabilities for resolved model {model_id}; the explicit model options could not be confirmed"
+        )))?;
+    if let Some(effort) = effort
+        && !model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == effort)
+    {
+        return Err(ExecutorError::InvalidConfiguration(format!(
+            "Codex model {model_id} does not advertise reasoning effort {effort}"
+        )));
+    }
+    if let Some(tier) = service_tier
+        && tier != "default"
+        && !model.service_tiers.iter().any(|option| option.id == tier)
+    {
+        return Err(ExecutorError::InvalidConfiguration(format!(
+            "Codex model {model_id} does not advertise service tier {tier}"
+        )));
+    }
+    Ok(())
+}
+
+fn thread_configuration_observation(
+    model: &str,
+    effort: Option<&ProtocolReasoningEffort>,
+    plan_mode: bool,
+    source: &str,
+) -> Value {
+    // thread/start reports the ordinary thread setting, not the plan-specific
+    // effort selected by the following collaboration-mode turn. Do not label
+    // that thread value as confirmed plan execution state.
+    serde_json::json!({
+        "type": "runtime_configuration",
+        "model_id": model,
+        "reasoning_id": if plan_mode { None } else { effort },
+        "source": source,
+    })
 }
 
 pub struct AppServerClient {
@@ -165,11 +248,30 @@ impl AppServerClient {
         &self,
         params: ThreadStartParams,
     ) -> Result<ThreadStartResponse, ExecutorError> {
+        let requested_tier = params.service_tier.clone().flatten();
         let request = ClientRequest::ThreadStart {
             request_id: self.next_request_id(),
             params,
         };
-        self.send_request(request, "thread/start").await
+        let response: ThreadStartResponse = self.send_request(request, "thread/start").await?;
+        self.validate_requested_model_options(
+            &response.model,
+            self.current_reasoning_effort(),
+            requested_tier.as_deref(),
+        )
+        .await?;
+        self.log_writer
+            .log_raw(
+                &thread_configuration_observation(
+                    &response.model,
+                    response.reasoning_effort.as_ref(),
+                    self.plan_mode,
+                    "codex.thread/start",
+                )
+                .to_string(),
+            )
+            .await?;
+        Ok(response)
     }
 
     pub async fn thread_resume(
@@ -179,12 +281,30 @@ impl AppServerClient {
         // A Vibe follow-up continues the same native Codex conversation.
         // `thread/fork` would create another CLI-visible thread on every turn.
         let requested_thread_id = params.thread_id.clone();
+        let requested_tier = params.service_tier.clone().flatten();
         let request = ClientRequest::ThreadResume {
             request_id: self.next_request_id(),
             params,
         };
         let response: ThreadResumeResponse = self.send_request(request, "thread/resume").await?;
         ensure_resumed_thread_id(&requested_thread_id, &response.thread.id)?;
+        self.validate_requested_model_options(
+            &response.model,
+            self.current_reasoning_effort(),
+            requested_tier.as_deref(),
+        )
+        .await?;
+        self.log_writer
+            .log_raw(
+                &thread_configuration_observation(
+                    &response.model,
+                    response.reasoning_effort.as_ref(),
+                    self.plan_mode,
+                    "codex.thread/resume",
+                )
+                .to_string(),
+            )
+            .await?;
         Ok(response)
     }
 
@@ -378,12 +498,54 @@ impl AppServerClient {
         self.send_request(request, "skills/list").await
     }
 
-    pub async fn model_list(&self) -> Result<ModelListResponse, ExecutorError> {
-        let request = ClientRequest::ModelList {
-            request_id: self.next_request_id(),
-            params: ModelListParams::default(),
-        };
-        self.send_request(request, "model/list").await
+    async fn validate_requested_model_options(
+        &self,
+        model: &str,
+        effort: Option<ProtocolReasoningEffort>,
+        service_tier: Option<&str>,
+    ) -> Result<(), ExecutorError> {
+        let effort = effort.map(|effort| effort.to_string());
+        if effort.is_none() && service_tier.is_none_or(|tier| tier == "default") {
+            return Ok(());
+        }
+        let catalog = tokio::time::timeout(super::MODELS_DISCOVERY_TIMEOUT, self.model_list())
+            .await
+            .map_err(|_| ExecutorError::InvalidConfiguration(
+                "Codex timed out validating the requested model options before starting the turn".into(),
+            ))??;
+        validate_model_options(&catalog, model, effort.as_deref(), service_tier)
+    }
+
+    pub(crate) async fn model_list(&self) -> Result<ModelCatalogResponse, ExecutorError> {
+        let mut data = Vec::new();
+        let mut cursor = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let request = ClientRequest::ModelList {
+                request_id: self.next_request_id(),
+                params: ModelListParams {
+                    cursor,
+                    include_hidden: Some(true),
+                    ..Default::default()
+                },
+            };
+            let response: ModelCatalogResponse = self.send_request(request, "model/list").await?;
+            data.extend(response.data);
+            match response.next_cursor {
+                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+                Some(_) => {
+                    return Err(ExecutorError::InvalidConfiguration(
+                        "Codex model discovery repeated a pagination cursor".into(),
+                    ));
+                }
+                None => {
+                    return Ok(ModelCatalogResponse {
+                        data,
+                        next_cursor: None,
+                    });
+                }
+            }
+        }
     }
 
     pub async fn thread_compact_start(
@@ -449,6 +611,25 @@ impl AppServerClient {
         params: ThreadSettingsUpdateParams,
     ) -> Result<ThreadSettingsUpdateResponse, ExecutorError> {
         let reasoning_update = reasoning_update_from_thread_settings(&params);
+        let effort = match &reasoning_update {
+            ReasoningEffortUpdate::Set(effort) => effort.clone(),
+            ReasoningEffortUpdate::Unchanged => self.current_reasoning_effort(),
+        };
+        if let Some(model) = params
+            .model
+            .as_deref()
+            .or_else(|| self.resolved_model.get().map(String::as_str))
+        {
+            self.validate_requested_model_options(
+                model,
+                effort,
+                params
+                    .service_tier
+                    .as_ref()
+                    .and_then(|tier| tier.as_deref()),
+            )
+            .await?;
+        }
         let request = ClientRequest::ThreadSettingsUpdate {
             request_id: self.next_request_id(),
             params,
@@ -1424,6 +1605,51 @@ mod version_check_tests {
         parse_turn_completed_params, reasoning_update_from_thread_settings,
         turn_completion_control_flow,
     };
+
+    #[test]
+    fn thread_observation_does_not_confirm_plan_effort_from_regular_thread_defaults() {
+        let plan = super::thread_configuration_observation(
+            "model",
+            Some(&ProtocolReasoningEffort::High),
+            true,
+            "codex.thread/start",
+        );
+        assert_eq!(plan["model_id"], "model");
+        assert!(plan["reasoning_id"].is_null());
+        let regular = super::thread_configuration_observation(
+            "model",
+            Some(&ProtocolReasoningEffort::High),
+            false,
+            "codex.thread/start",
+        );
+        assert_eq!(regular["reasoning_id"], "high");
+    }
+
+    #[test]
+    fn explicit_model_options_require_exact_native_advertisement() {
+        let catalog: super::ModelCatalogResponse = serde_json::from_value(json!({"data":[{
+            "id":"picker-alias", "model":"native-model", "displayName":"Model",
+            "supportedReasoningEfforts":[{"reasoningEffort":"high"}],
+            "serviceTiers":[{"id":"priority","name":"Fast","description":"Higher usage"}]
+        }]}))
+        .unwrap();
+        assert!(
+            super::validate_model_options(&catalog, "native-model", Some("high"), Some("priority"))
+                .is_ok()
+        );
+        assert!(
+            super::validate_model_options(&catalog, "picker-alias", None, Some("default")).is_ok()
+        );
+        assert!(
+            super::validate_model_options(&catalog, "native-model", None, Some("flex")).is_err()
+        );
+        assert!(
+            super::validate_model_options(&catalog, "native-model", Some("max"), None).is_err()
+        );
+        assert!(
+            super::validate_model_options(&catalog, "other-model", Some("high"), None).is_err()
+        );
+    }
 
     #[test]
     fn turn_completion_statuses_fail_closed() {

@@ -37,8 +37,8 @@ test('ACP model IDs remain opaque when no separate provider IDs are advertised',
 test('missing discovery does not invent a default ACP model or reasoning level', () => {
   assert.equal(resolveDefaultModelId([], null, null, false), null);
   assert.deepEqual(resolveReasoningOverrideState([], 'high', true), {
-    selectedReasoningId: null,
-    repair: { reasoning_id: null },
+    selectedReasoningId: 'high',
+    unavailable: true,
   });
 });
 
@@ -50,12 +50,12 @@ test('reasoning choices are accepted only from live advertised options', () => {
     resolveReasoningOverrideState(options, 'provider-specific-effort', true),
     {
       selectedReasoningId: 'provider-specific-effort',
-      repair: null,
+      unavailable: false,
     }
   );
   assert.deepEqual(resolveReasoningOverrideState(options, undefined, false), {
     selectedReasoningId: null,
-    repair: null,
+    unavailable: false,
   });
 });
 
@@ -66,7 +66,7 @@ test('an advertised empty effort remains distinct from following CLI configurati
   ];
   assert.deepEqual(resolveReasoningOverrideState(options, '', true), {
     selectedReasoningId: '',
-    repair: null,
+    unavailable: false,
   });
   assert.equal(
     getReasoningDisplayLabel(options, '', true, 'Follow CLI'),
@@ -74,11 +74,11 @@ test('an advertised empty effort remains distinct from following CLI configurati
   );
   assert.deepEqual(resolveReasoningOverrideState(options, null, true), {
     selectedReasoningId: null,
-    repair: null,
+    unavailable: false,
   });
   assert.deepEqual(resolveReasoningOverrideState([options[1]], '', true), {
-    selectedReasoningId: null,
-    repair: { reasoning_id: null },
+    selectedReasoningId: '',
+    unavailable: true,
   });
 });
 

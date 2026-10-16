@@ -1125,7 +1125,13 @@ reasoning_id?: string | null,
 /**
  * Permission policy override
  */
-permission_policy?: PermissionPolicy | null, };
+permission_policy?: PermissionPolicy | null,
+/**
+ * Provider-owned options for this attempt; never written to native defaults.
+ */
+provider_options?: ProviderRunOptions | null, };
+
+export type ProviderRunOptions = { "provider": "codex", service_tier?: string | null, plan_mode_reasoning_effort?: string | null, } | { "provider": "claude_code", fast_mode?: boolean | null, permission_mode?: string | null, ultracode?: boolean | null, } | { "provider": "oh_my_pi", auto_compaction?: boolean | null, auto_retry?: boolean | null, };
 
 export type ScriptContext = "SetupScript" | "CleanupScript" | "ArchiveScript" | "DevServer" | "ToolInstallScript";
 
@@ -1202,17 +1208,17 @@ export enum AgentProviderReadiness { UNKNOWN = "UNKNOWN", READY = "READY", INSTA
 
 export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
-export type ClaudeCode = { append_prompt: AppendPrompt, claude_code_router?: boolean | null, plan?: boolean | null, approvals?: boolean | null, model?: string | null, effort?: ClaudeEffort | null, agent?: string | null, dangerously_skip_permissions?: boolean | null, disable_api_key?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
+export type ClaudeCode = { append_prompt: AppendPrompt, claude_code_router?: boolean | null, plan?: boolean | null, approvals?: boolean | null, model?: string | null, effort?: ClaudeEffort | null, fast_mode?: boolean | null, ultracode?: boolean | null, native_permission_mode?: string | null, agent?: string | null, dangerously_skip_permissions?: boolean | null, disable_api_key?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
-export type Gemini = { append_prompt: AppendPrompt, model?: string | null, yolo?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
+export type Gemini = { append_prompt: AppendPrompt, model?: string | null, yolo?: boolean | null, mode?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
-export type OhMyPi = { append_prompt: AppendPrompt, model?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
+export type OhMyPi = { append_prompt: AppendPrompt, model?: string | null, thinking_level?: string | null, auto_compaction?: boolean | null, auto_retry?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
 export type Opencode = { append_prompt: AppendPrompt, model?: string | null, reasoning_effort?: string | null, agent?: string | null, yolo?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
 export type DeepseekHarness = { append_prompt: AppendPrompt, model?: string | null, reasoning_effort?: string | null, yolo?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
-export type Codex = { append_prompt: AppendPrompt, sandbox?: SandboxMode | null, ask_for_approval?: AskForApproval | null, oss?: boolean | null, model?: string | null, model_reasoning_effort?: ReasoningEffort | null, model_reasoning_summary?: ReasoningSummary | null, model_reasoning_summary_format?: ReasoningSummaryFormat | null, profile?: string | null, base_instructions?: string | null, include_apply_patch_tool?: boolean | null, model_provider?: string | null, compact_prompt?: string | null, developer_instructions?: string | null, plan: boolean, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
+export type Codex = { append_prompt: AppendPrompt, sandbox?: SandboxMode | null, ask_for_approval?: AskForApproval | null, oss?: boolean | null, model?: string | null, model_reasoning_effort?: ReasoningEffort | null, service_tier?: string | null, plan_mode_reasoning_effort?: ReasoningEffort | null, model_reasoning_summary?: ReasoningSummary | null, model_reasoning_summary_format?: ReasoningSummaryFormat | null, profile?: string | null, base_instructions?: string | null, include_apply_patch_tool?: boolean | null, model_provider?: string | null, compact_prompt?: string | null, developer_instructions?: string | null, plan: boolean, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
 export type SandboxMode = "auto" | "read-only" | "workspace-write" | "danger-full-access";
 
@@ -1290,7 +1296,17 @@ provider_id?: string | null,
 /**
  * Configurable reasoning options if supported
  */
-reasoning_options: Array<ReasoningOption>, };
+reasoning_options: Array<ReasoningOption>, capabilities?: ModelCapabilities | null, };
+
+export type ModelCapabilities = { reasoning: CapabilitySupport, input_modalities: Array<string>, fast_mode: CapabilitySupport, auto_mode: CapabilitySupport, resolved_model?: string | null, is_default: boolean,
+/**
+ * Native request IDs, never inferred from a model name or price tier.
+ */
+service_tiers: Array<ModelServiceTier>, default_service_tier?: string | null, };
+
+export type ModelServiceTier = { id: string, name: string, description: string, };
+
+export type CapabilitySupport = "supported" | "unsupported" | "unknown";
 
 export type ReasoningOption = { id: string, label: string, is_default: boolean, };
 
@@ -1386,7 +1402,9 @@ export enum AgentRunStatus { pending = "pending", starting = "starting", running
 
 export enum ProjectionStatus { current = "current", projection_degraded = "projection_degraded", rebuilding = "rebuilding" }
 
-export type RunState = { state_schema_version: number, reducer_version: number, session_id: string, agent_run_id: string, turn_id: string, status: AgentRunStatus, projection_status: ProjectionStatus, last_run_attempt_id?: string | null, last_run_attempt_number: number, last_event_sequence: bigint, last_event_id?: string | null, provider_session?: ProviderSessionReference | null, terminal_output?: CanonicalMessage | null, last_error?: AgentRuntimeError | null, unknown_event_count: bigint, updated_at: string, };
+export type RunState = { state_schema_version: number, reducer_version: number, session_id: string, agent_run_id: string, turn_id: string, status: AgentRunStatus, projection_status: ProjectionStatus, last_run_attempt_id?: string | null, last_run_attempt_number: number, last_event_sequence: bigint, last_event_id?: string | null, provider_session?: ProviderSessionReference | null, terminal_output?: CanonicalMessage | null, last_error?: AgentRuntimeError | null, observed_configuration?: ObservedRuntimeConfiguration | null, unknown_event_count: bigint, updated_at: string, };
+
+export type ObservedRuntimeConfiguration = { model_id?: string | null, reasoning_id?: string | null, source: string, event_id: string, run_attempt_id: string, };
 
 export type AgentRunPortSnapshot = { agent_run_id: string, state: RunState, };
 
@@ -1520,6 +1538,6 @@ sdp: string,
  */
 session_id: string, };
 
-export const DEFAULT_PR_DESCRIPTION_PROMPT = "Update the PR that was just created with a better title and description.\nThe PR number is #{pr_number} and the URL is {pr_url}.\n\nAnalyze the changes in this branch and write:\n1. A concise, descriptive title that summarizes the changes, postfixed with \"(Vibe Kanban)\"\n2. A detailed description that explains:\n   - What changes were made\n   - Why they were made (based on the task context)\n   - Any important implementation details\n   - At the end, include a note: \"This PR was written using [Vibe Kanban](https://vibekanban.com)\"\n\nUse the appropriate CLI tool to update the PR (gh pr edit for GitHub, az repos pr update for Azure DevOps).";
+export const DEFAULT_PR_DESCRIPTION_PROMPT = "Update the PR that was just created with a better title and description.\nThe PR number is #{pr_number} and the URL is {pr_url}.\n\nAnalyze the changes in this branch and write:\n1. A concise, descriptive title that summarizes the changes, postfixed with \"(Vibe Studio)\"\n2. A detailed description that explains:\n   - What changes were made\n   - Why they were made (based on the task context)\n   - Any important implementation details\n   - At the end, include a note: \"This PR was written using [Vibe Studio](https://github.com/toby1123yjh/vibe-studio)\"\n\nUse the appropriate CLI tool to update the PR (gh pr edit for GitHub, az repos pr update for Azure DevOps).";
 
 export const DEFAULT_COMMIT_REMINDER_PROMPT = "There are uncommitted changes. Please stage and commit them now with a descriptive commit message.";

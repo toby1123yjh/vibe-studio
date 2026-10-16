@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn base_command_override_preserves_custom_base_and_params() {
-        let builder = CommandBuilder::new("gemini").extend_params(["--experimental-acp"]);
+        let builder = CommandBuilder::new("gemini").extend_params(["--acp"]);
         let overrides = CmdOverrides {
             base_command_override: Some(
                 r#""C:\Program Files\Google Gemini\gemini.cmd""#.to_string(),
@@ -332,12 +332,12 @@ mod tests {
             parts.program,
             r#"C:\Program Files\Google Gemini\gemini.cmd"#
         );
-        assert_eq!(parts.args, vec!["--experimental-acp"]);
+        assert_eq!(parts.args, vec!["--acp"]);
     }
 
     #[test]
     fn base_command_override_preserves_explicit_npm_command_and_params() {
-        let builder = CommandBuilder::new("gemini").extend_params(["--experimental-acp"]);
+        let builder = CommandBuilder::new("gemini").extend_params(["--acp"]);
         let overrides = CmdOverrides {
             base_command_override: Some("npx -y --package @google/gemini-cli gemini".to_string()),
             ..Default::default()
@@ -351,13 +351,7 @@ mod tests {
         assert_eq!(parts.program, "npx");
         assert_eq!(
             parts.args,
-            vec![
-                "-y",
-                "--package",
-                "@google/gemini-cli",
-                "gemini",
-                "--experimental-acp"
-            ]
+            vec!["-y", "--package", "@google/gemini-cli", "gemini", "--acp"]
         );
     }
 

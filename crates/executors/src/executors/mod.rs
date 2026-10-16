@@ -89,6 +89,8 @@ pub enum BaseAgentCapability {
 
 #[derive(Debug, Error)]
 pub enum ExecutorError {
+    #[error("Invalid agent configuration: {0}")]
+    InvalidConfiguration(String),
     #[error("Follow-up is not supported: {0}")]
     FollowUpNotSupported(String),
     #[error("Reset to a specific message is not supported: {0}")]
@@ -226,7 +228,11 @@ impl AvailabilityInfo {
 #[async_trait]
 #[enum_dispatch(CodingAgent)]
 pub trait StandardCodingAgentExecutor {
-    fn apply_overrides(&mut self, _executor_config: &ExecutorConfig) {}
+    fn apply_overrides(&mut self, executor_config: &ExecutorConfig) -> Result<(), ExecutorError> {
+        executor_config
+            .validate_provider_options()
+            .map_err(ExecutorError::InvalidConfiguration)
+    }
 
     fn use_approvals(&mut self, _approvals: Arc<dyn ExecutorApprovalService>) {}
 

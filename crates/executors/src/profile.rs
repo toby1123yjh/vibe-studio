@@ -144,6 +144,44 @@ pub struct ExecutorConfig {
     /// Permission policy override
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<PermissionPolicy>,
+    /// Provider-owned options for this attempt; never written to native defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_options: Option<ProviderRunOptions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProviderRunOptions {
+    Codex {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        service_tier: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan_mode_reasoning_effort: Option<String>,
+    },
+    ClaudeCode {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fast_mode: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        permission_mode: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ultracode: Option<bool>,
+    },
+    OhMyPi {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto_compaction: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto_retry: Option<bool>,
+    },
+}
+
+impl ProviderRunOptions {
+    pub fn executor(&self) -> BaseCodingAgent {
+        match self {
+            Self::Codex { .. } => BaseCodingAgent::Codex,
+            Self::ClaudeCode { .. } => BaseCodingAgent::ClaudeCode,
+            Self::OhMyPi { .. } => BaseCodingAgent::OhMyPi,
+        }
+    }
 }
 
 impl ExecutorConfig {
@@ -156,6 +194,7 @@ impl ExecutorConfig {
             agent_id: None,
             reasoning_id: None,
             permission_policy: None,
+            provider_options: None,
         }
     }
 
@@ -173,6 +212,30 @@ impl ExecutorConfig {
             || self.agent_id.is_some()
             || self.reasoning_id.is_some()
             || self.permission_policy.is_some()
+            || self.provider_options.is_some()
+    }
+
+    pub fn validate_provider_options(&self) -> Result<(), String> {
+        if self
+            .provider_options
+            .as_ref()
+            .is_some_and(|options| options.executor() != self.executor)
+        {
+            return Err("Attempt options belong to a different agent".into());
+        }
+        if self.executor == BaseCodingAgent::Gemini && self.reasoning_id.is_some() {
+            return Err("Gemini thinking budget must be configured in native model settings; per-attempt reasoning is not supported".into());
+        }
+        if let Some(ProviderRunOptions::ClaudeCode {
+            permission_mode: Some(_),
+            ..
+        }) = &self.provider_options
+        {
+            if self.permission_policy.is_some() {
+                return Err("Choose either a native Claude permission mode or a permission policy, not both".into());
+            }
+        }
+        Ok(())
     }
 }
 
@@ -185,6 +248,7 @@ impl From<ExecutorProfileId> for ExecutorConfig {
             agent_id: None,
             reasoning_id: None,
             permission_policy: None,
+            provider_options: None,
         }
     }
 }
@@ -567,6 +631,83 @@ mod provider_expansion_tests {
         agent_commands::AgentCommandProvider, agent_settings::AgentSettingsProvider,
         agent_tools::AgentToolProvider, executors::provider_adapter::DirectProvider,
     };
+
+    #[test]
+    fn attempt_provider_options_round_trip_without_losing_explicit_false() {
+        for (executor, options) in [
+            (
+                BaseCodingAgent::Codex,
+                ProviderRunOptions::Codex {
+                    service_tier: Some("priority".into()),
+                    plan_mode_reasoning_effort: Some("high".into()),
+                },
+            ),
+            (
+                BaseCodingAgent::ClaudeCode,
+                ProviderRunOptions::ClaudeCode {
+                    fast_mode: Some(false),
+                    permission_mode: Some("auto".into()),
+                    ultracode: Some(false),
+                },
+            ),
+            (
+                BaseCodingAgent::OhMyPi,
+                ProviderRunOptions::OhMyPi {
+                    auto_compaction: Some(false),
+                    auto_retry: Some(true),
+                },
+            ),
+        ] {
+            let mut config = ExecutorConfig::new(executor);
+            config.variant = Some("CUSTOM".into());
+            config.provider_options = Some(options);
+            assert!(config.has_overrides());
+            config.validate_provider_options().unwrap();
+            let restored: ExecutorConfig =
+                serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+            assert_eq!(restored, config);
+            assert_eq!(restored.profile_id().variant.as_deref(), Some("CUSTOM"));
+        }
+    }
+
+    #[test]
+    fn provider_option_validation_rejects_cross_agent_and_conflicting_permission_fields() {
+        let mut config = ExecutorConfig::new(BaseCodingAgent::Codex);
+        config.provider_options = Some(ProviderRunOptions::ClaudeCode {
+            fast_mode: None,
+            permission_mode: Some("auto".into()),
+            ultracode: None,
+        });
+        assert!(config.validate_provider_options().is_err());
+        config.executor = BaseCodingAgent::ClaudeCode;
+        config.validate_provider_options().unwrap();
+        config.permission_policy = Some(PermissionPolicy::Auto);
+        assert!(config.validate_provider_options().is_err());
+
+        let mut gemini = ExecutorConfig::new(BaseCodingAgent::Gemini);
+        gemini.reasoning_id = Some("high".into());
+        assert!(gemini.validate_provider_options().is_err());
+    }
+
+    #[test]
+    fn provider_option_wire_rejects_unmanaged_native_fields_and_preserves_inheritance() {
+        assert!(
+            serde_json::from_value::<ProviderRunOptions>(serde_json::json!({
+                "provider":"codex", "arbitrary_cli_argument":"--unsafe"
+            }))
+            .is_err()
+        );
+        let inherited: ExecutorConfig =
+            serde_json::from_value(serde_json::json!({"executor":"CODEX"})).unwrap();
+        assert!(!inherited.has_overrides());
+        assert!(inherited.provider_options.is_none());
+        assert!(
+            serde_json::to_value(inherited)
+                .unwrap()
+                .get("provider_options")
+                .is_none()
+        );
+    }
 
     #[test]
     fn six_provider_defaults_and_manager_ids_round_trip() {

@@ -2730,6 +2730,17 @@ fn codex_descriptors(connection_provider: &str) -> Vec<SettingDescriptor> {
 fn claude_descriptors() -> Vec<SettingDescriptor> {
     let mut descriptors = vec![
         descriptor(
+            "claude_code",
+            "model_settings",
+            SettingSection::General,
+            "Per-model effort",
+            "Native modelSettings keyed by canonical model name. effortLevel supports low, medium, high and xhigh; max is session-only. Unknown model settings are preserved.",
+            SettingValueType::Json,
+            SettingControl::Json,
+            &common_settings_locations(&["modelSettings"]),
+            false,
+        ),
+        descriptor(
             "common",
             "model",
             SettingSection::General,
@@ -2746,13 +2757,18 @@ fn claude_descriptors() -> Vec<SettingDescriptor> {
                 "reasoning",
                 SettingSection::General,
                 "Effort",
-                "Claude Code effort level when supported by the installed version.",
+                "Legacy native effort default. Newer models use per-model effort settings; this is not confirmation of runtime effort.",
                 SettingValueType::String,
                 SettingControl::Select,
                 &common_settings_locations(&["effortLevel"]),
                 true,
             ),
-            &[("low", "Low"), ("medium", "Medium"), ("high", "High")],
+            &[
+                ("low", "Low"),
+                ("medium", "Medium"),
+                ("high", "High"),
+                ("xhigh", "Extra high"),
+            ],
         ),
         select_options(
             descriptor(
@@ -2768,6 +2784,7 @@ fn claude_descriptors() -> Vec<SettingDescriptor> {
             ),
             &[
                 ("default", "Default"),
+                ("auto", "Auto (native classifier)"),
                 ("acceptEdits", "Accept edits"),
                 ("plan", "Plan"),
                 ("dontAsk", "Don't ask"),
@@ -2875,6 +2892,17 @@ fn claude_descriptors() -> Vec<SettingDescriptor> {
 
 fn gemini_descriptors() -> Vec<SettingDescriptor> {
     let mut descriptors = vec![
+        descriptor(
+            "gemini",
+            "model_overrides",
+            SettingSection::General,
+            "Model thinking budgets",
+            "Native modelConfigs.overrides. Thinking budget entries require an explicit match.model and integer modelConfig.generateContentConfig.thinkingConfig.thinkingBudget. Other native override rules are preserved. This changes native defaults, not one attempt; model-specific API limits still apply.",
+            SettingValueType::Json,
+            SettingControl::Json,
+            &common_settings_locations(&["modelConfigs", "overrides"]),
+            false,
+        ),
         descriptor(
             "common",
             "model",
@@ -3899,6 +3927,55 @@ fn validate_setting_value(
             descriptor.value_type
         )));
     }
+    if descriptor.key.id() == "claude_code.model_settings" {
+        let models = value.as_object().ok_or_else(|| {
+            AgentSettingError::ValidationFailed(
+                "Per-model settings must be an object keyed by canonical model name".into(),
+            )
+        })?;
+        for (model, settings) in models {
+            if model.trim().is_empty() || !settings.is_object() {
+                return Err(AgentSettingError::ValidationFailed(
+                    "Each model setting needs a model name and an object".into(),
+                ));
+            }
+            for key in ["effortLevel", "maxEffortLevel"] {
+                if let Some(effort) = settings.get(key)
+                    && !matches!(effort.as_str(), Some("low" | "medium" | "high" | "xhigh"))
+                {
+                    return Err(AgentSettingError::ValidationFailed(format!(
+                        "{model}.{key} must be low, medium, high or xhigh; max is session-only"
+                    )));
+                }
+            }
+        }
+    }
+    if descriptor.key.id() == "gemini.model_overrides" {
+        let rules = value.as_array().ok_or_else(|| {
+            AgentSettingError::ValidationFailed("Model overrides must be an array".into())
+        })?;
+        for rule in rules {
+            if !rule.is_object() {
+                return Err(AgentSettingError::ValidationFailed(
+                    "Each model override must be an object".into(),
+                ));
+            }
+            let Some(budget) =
+                rule.pointer("/modelConfig/generateContentConfig/thinkingConfig/thinkingBudget")
+            else {
+                // Native overrides also configure generation settings and
+                // aliases. A thinking-budget editor must not reject or erase
+                // those independently valid rules.
+                continue;
+            };
+            let model = rule.pointer("/match/model").and_then(Value::as_str);
+            if model.is_none_or(|model| model.trim().is_empty())
+                || budget.as_i64().is_none_or(|budget| budget < -1)
+            {
+                return Err(AgentSettingError::ValidationFailed("Each thinking budget override requires an explicit match.model and an integer thinkingBudget >= -1; model-specific limits are checked by Gemini".into()));
+            }
+        }
+    }
     if descriptor.validation.pattern.as_deref() == Some("deepseek_model_pair") {
         deepseek_model_pair(value)?;
     }
@@ -4210,6 +4287,159 @@ mod tests {
                 .collect(),
             operations,
         }
+    }
+
+    #[test]
+    fn native_model_settings_validate_scope_without_fabricating_per_attempt_support() {
+        let claude = claude_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.key.id() == "claude_code.model_settings")
+            .unwrap();
+        assert!(!claude.capabilities.run_override);
+        assert!(
+            validate_setting_value(
+                &claude,
+                &json!({"claude-model":{"effortLevel":"xhigh", "futureOption":true}})
+            )
+            .is_ok()
+        );
+        for value in [
+            json!({"claude-model":{"effortLevel":"max"}}),
+            json!({"claude-model":{"maxEffortLevel":"ultracode"}}),
+            json!({"claude-model":{"effortLevel":true}}),
+            json!({" ":{"effortLevel":"high"}}),
+        ] {
+            assert!(validate_setting_value(&claude, &value).is_err());
+        }
+
+        let gemini = gemini_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.key.id() == "gemini.model_overrides")
+            .unwrap();
+        assert!(!gemini.capabilities.run_override);
+        for budget in [json!(-1), json!(0), json!(1024)] {
+            assert!(validate_setting_value(&gemini, &json!([{
+                "match":{"model":"gemini-2.5-pro"},
+                "modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":budget}}}
+            }])).is_ok());
+        }
+        for budget in [
+            json!(-2),
+            json!(1.5),
+            json!("1024"),
+            json!(null),
+            json!(true),
+        ] {
+            assert!(validate_setting_value(&gemini, &json!([{
+                "match":{"model":"gemini-2.5-pro"},
+                "modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":budget}}}
+            }])).is_err());
+        }
+        assert!(validate_setting_value(&gemini, &json!([{
+            "match":{"model":" "},
+            "modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":1024}}}
+        }])).is_err());
+    }
+
+    #[test]
+    fn gemini_budget_edit_preserves_non_budget_overrides_aliases_and_unknown_fields() {
+        let harness = harness();
+        let native = harness.home.join(".gemini/settings.json");
+        let ordinary_rule = json!({
+            "match":{"overrideScope":"agent"},
+            "modelConfig":{"generateContentConfig":{"temperature":0.2}},
+            "futureMetadata":{"keep":true}
+        });
+        let original = json!({
+            "modelConfigs":{
+                "customAliases":{"local-alias":{"extends":"native-alias"}},
+                "overrides":[ordinary_rule.clone()]
+            },
+            "futureNativeSettings":{"keep":true}
+        });
+        write(&native, &serde_json::to_string_pretty(&original).unwrap());
+        let manager = harness.service.manager(AgentSettingsProvider::Gemini, None);
+        let before = manager.discover().unwrap();
+        let overrides = json!([
+            ordinary_rule,
+            {"match":{"model":"gemini-2.5-pro"}, "modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":1024}}}}
+        ]);
+        let patch = native_patch(
+            &before,
+            vec![SettingOperation::Replace {
+                key: SettingKey::new("gemini", "model_overrides"),
+                scope: SettingScope::User,
+                value: overrides.clone(),
+            }],
+        );
+        manager.diff(&patch).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&native).unwrap()).unwrap(),
+            original
+        );
+        manager.apply(&patch).unwrap();
+        let after: Value = serde_json::from_slice(&fs::read(&native).unwrap()).unwrap();
+        assert_eq!(after["modelConfigs"]["overrides"], overrides);
+        assert_eq!(
+            after["modelConfigs"]["customAliases"],
+            original["modelConfigs"]["customAliases"]
+        );
+        assert_eq!(
+            after["futureNativeSettings"],
+            original["futureNativeSettings"]
+        );
+        assert!(
+            !after
+                .to_string()
+                .contains("GEMINI_CLI_SYSTEM_SETTINGS_PATH")
+        );
+        let bytes = fs::read(&native).unwrap();
+        let invalid = native_patch(
+            &manager.discover().unwrap(),
+            vec![SettingOperation::Replace {
+                key: SettingKey::new("gemini", "model_overrides"),
+                scope: SettingScope::User,
+                value: json!([{"match":{"model":"gemini-2.5-pro"}, "modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":-2}}}}]),
+            }],
+        );
+        assert!(matches!(
+            manager.apply(&invalid),
+            Err(AgentSettingError::ValidationFailed(_))
+        ));
+        assert_eq!(fs::read(native).unwrap(), bytes);
+    }
+
+    #[test]
+    fn claude_per_model_effort_edit_preserves_other_models_and_unknown_native_options() {
+        let harness = harness();
+        let native = harness.home.join(".claude/settings.json");
+        let original = json!({
+            "modelSettings":{
+                "claude-model":{"effortLevel":"medium", "futureModelFlag":true},
+                "other-model":{"futureSetting":{"keep":true}}
+            },
+            "env":{"ANTHROPIC_BASE_URL":"https://example.test/v1"},
+            "futureNativeOption":{"keep":true}
+        });
+        write(&native, &serde_json::to_string_pretty(&original).unwrap());
+        let manager = harness
+            .service
+            .manager(AgentSettingsProvider::ClaudeCode, None);
+        let mut settings = original["modelSettings"].clone();
+        settings["claude-model"]["effortLevel"] = json!("xhigh");
+        let patch = native_patch(
+            &manager.discover().unwrap(),
+            vec![SettingOperation::Replace {
+                key: SettingKey::new("claude_code", "model_settings"),
+                scope: SettingScope::User,
+                value: settings.clone(),
+            }],
+        );
+        manager.apply(&patch).unwrap();
+        let after: Value = serde_json::from_slice(&fs::read(native).unwrap()).unwrap();
+        assert_eq!(after["modelSettings"], settings);
+        assert_eq!(after["env"], original["env"]);
+        assert_eq!(after["futureNativeOption"], original["futureNativeOption"]);
     }
 
     #[test]

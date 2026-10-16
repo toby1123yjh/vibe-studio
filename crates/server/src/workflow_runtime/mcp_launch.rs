@@ -86,6 +86,10 @@ mod tests {
             model_id: Some("configured-model".into()),
             reasoning_id: Some("high".into()),
             permission_policy: Some(PermissionPolicy::Supervised),
+            provider_options: Some(executors::profile::ProviderRunOptions::Codex {
+                service_tier: Some("priority".into()),
+                plan_mode_reasoning_effort: Some("high".into()),
+            }),
             ..ExecutorConfig::new(BaseCodingAgent::Codex)
         };
         sqlx::query("INSERT INTO workflow_main_session_bindings VALUES (?,?)")
@@ -121,6 +125,10 @@ mod tests {
             },
             ExecutorConfig {
                 permission_policy: None,
+                ..config.clone()
+            },
+            ExecutorConfig {
+                provider_options: None,
                 ..config.clone()
             },
             ExecutorConfig::new(BaseCodingAgent::ClaudeCode),

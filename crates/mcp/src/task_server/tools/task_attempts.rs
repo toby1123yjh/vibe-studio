@@ -193,6 +193,7 @@ impl McpServer {
                 agent_id: None,
                 reasoning_id: None,
                 permission_policy: None,
+                provider_options: None,
             },
             prompt: workspace_prompt,
             selected_skills: None,

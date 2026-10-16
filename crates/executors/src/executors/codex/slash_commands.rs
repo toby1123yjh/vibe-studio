@@ -15,7 +15,7 @@ use serde_json::json;
 use super::{
     Codex,
     client::{AppServerClient, LogWriter},
-    codex_home, resolve_model, resume_params_from,
+    codex_home, resume_params_from,
 };
 use crate::{
     actions::SelectedSkill,
@@ -615,7 +615,7 @@ impl Codex {
         )?;
         let command_parts = self.build_command_builder()?.build_initial()?;
         let session_id = session_id.map(|s| s.to_string());
-        let (_, session_fast) = resolve_model(self.model.as_deref());
+        let session_fast = self.service_tier.as_deref() == Some("priority");
         let thread_start_params = self.build_thread_start_params(current_dir);
         let current_dir_path = current_dir.to_path_buf();
 

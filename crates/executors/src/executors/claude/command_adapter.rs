@@ -74,9 +74,9 @@ impl<'a> ClaudeCodeCommandAdapter<'a> {
             if supports_effort {
                 builder = builder.extend_params(["--effort", effort.as_ref()]);
             } else {
-                tracing::warn!(
-                    "Claude Code binary does not advertise --effort; omitting configured effort"
-                );
+                return Err(CommandBuildError::InvalidBase(
+                    "Claude Code does not advertise --effort; update the CLI or clear the explicit effort selection".into(),
+                ));
             }
         }
         if let Some(agent) = &self.agent.agent {
@@ -133,10 +133,8 @@ impl<'a> ClaudeCodeCommandAdapter<'a> {
                 .extend_params([
                     "--verbose",
                     "--output-format=stream-json",
-                    "--max-turns",
-                    "1",
-                    "--",
-                    "/",
+                    "--input-format=stream-json",
+                    "--no-session-persistence",
                 ]);
         apply_overrides(builder, &self.agent.cmd)
     }
@@ -200,7 +198,13 @@ mod tests {
                 .map(String::as_str),
             Some("max")
         );
-        assert_eq!(probe.params.unwrap().last().map(String::as_str), Some("/"));
+        assert!(
+            probe
+                .params
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "--no-session-persistence")
+        );
     }
 
     #[test]

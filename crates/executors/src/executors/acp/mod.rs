@@ -28,6 +28,7 @@ pub enum AcpEvent {
     AvailableCommands(Vec<agent_client_protocol::AvailableCommand>),
     CurrentMode(agent_client_protocol::SessionModeId),
     CatalogObserved(session_config::AcpCatalogObservation),
+    ConfigurationObserved(session_config::AcpRuntimeConfiguration),
     RequestPermission(agent_client_protocol::RequestPermissionRequest),
     ApprovalRequested {
         tool_call_id: String,

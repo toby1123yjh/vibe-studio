@@ -302,7 +302,7 @@ export function useExecutorConfig({
   );
 
   // Model selector updates individual override fields (merge into existing).
-  // Changing model clears reasoning selection; other overrides are independent.
+  // Keep explicit reasoning across model changes; the new native catalog validates it.
   const setOverrides = useCallback(
     (partial: Partial<ExecutorConfig>) => {
       if (!enabled) return;
@@ -312,9 +312,6 @@ export function useExecutorConfig({
           delete next.executor;
         }
         if (lockedConfig) delete next.variant;
-        if ('model_id' in partial && !('reasoning_id' in partial)) {
-          next.reasoning_id = null;
-        }
         const persistedConfig = executor.effective
           ? {
               ...executorConfig,
