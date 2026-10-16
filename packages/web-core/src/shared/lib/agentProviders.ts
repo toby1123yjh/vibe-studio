@@ -11,6 +11,10 @@ export interface AgentProviderDefinition {
   toolProvider: AgentToolProvider;
   commandProvider: AgentCommandProvider;
   label: string;
+  brand: {
+    key: string;
+    icon: string;
+  };
   npmPackage?: string;
   developerPreview?: boolean;
 }
@@ -27,6 +31,7 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
     toolProvider: 'codex',
     commandProvider: 'codex',
     label: 'Codex',
+    brand: { key: 'codex', icon: '/agents/codex.svg' },
     npmPackage: '@openai/codex',
   },
   [BaseCodingAgent.CLAUDE_CODE]: {
@@ -35,6 +40,7 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
     toolProvider: 'claude_code',
     commandProvider: 'claude_code',
     label: 'Claude Code',
+    brand: { key: 'claude-code', icon: '/agents/claude.svg' },
   },
   [BaseCodingAgent.GEMINI]: {
     executor: BaseCodingAgent.GEMINI,
@@ -42,6 +48,7 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
     toolProvider: 'gemini',
     commandProvider: 'gemini',
     label: 'Gemini',
+    brand: { key: 'gemini', icon: '/agents/gemini.svg' },
     npmPackage: '@google/gemini-cli',
   },
   [BaseCodingAgent.OH_MY_PI]: {
@@ -50,6 +57,7 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
     toolProvider: 'oh_my_pi',
     commandProvider: 'oh_my_pi',
     label: 'Oh My Pi',
+    brand: { key: 'oh-my-pi', icon: '/agents/oh-my-pi' },
   },
   [BaseCodingAgent.OPENCODE]: {
     executor: BaseCodingAgent.OPENCODE,
@@ -57,6 +65,7 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
     toolProvider: 'opencode',
     commandProvider: 'opencode',
     label: 'OpenCode',
+    brand: { key: 'opencode', icon: '/agents/opencode' },
     npmPackage: 'opencode-ai',
   },
   [BaseCodingAgent.DEEPSEEK_HARNESS]: {
@@ -65,6 +74,7 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
     toolProvider: 'deepseek_harness',
     commandProvider: 'deepseek_harness',
     label: 'DeepSeek Harness',
+    brand: { key: 'deepseek-harness', icon: '/agents/deepseek-harness.svg' },
     npmPackage: '@deepseek-ai/dsh',
     developerPreview: true,
   },
@@ -72,6 +82,16 @@ export const AGENT_PROVIDER_BY_EXECUTOR: Record<
 
 export const AGENT_PROVIDERS: readonly AgentProviderDefinition[] =
   Object.values(AGENT_PROVIDER_BY_EXECUTOR);
+
+export function getAgentBrandAttributes(
+  agent: BaseCodingAgent | null | undefined
+) {
+  return {
+    'data-agent-brand': agent
+      ? AGENT_PROVIDER_BY_EXECUTOR[agent]?.brand.key
+      : undefined,
+  };
+}
 
 export function agentProviderForSettings(
   provider: AgentSettingsProvider

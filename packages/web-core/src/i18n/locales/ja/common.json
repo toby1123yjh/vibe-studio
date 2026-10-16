@@ -923,6 +923,14 @@
     }
   },
   "agentCenter": {
+    "providerTraits": {
+      "CODEX": "OpenAI のコーディングエージェント。",
+      "CLAUDE_CODE": "Anthropic のコーディングエージェント。",
+      "GEMINI": "Google のオープンソースのターミナルエージェント。",
+      "OH_MY_PI": "拡張可能なターミナル用コーディングエージェント。",
+      "OPENCODE": "複数のモデルプロバイダーに対応するオープンソースのコーディングエージェント。",
+      "DEEPSEEK_HARNESS": "DeepSeek のコーディングツール。現在は開発者プレビュー版です。"
+    },
     "install": {
       "registryInvalid": "Enter an HTTP(S) URL without credentials, query parameters or fragments (maximum 2048 characters).",
       "title": "Install agent",

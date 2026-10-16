@@ -52,6 +52,7 @@ import {
   FloatingPanelTitle,
 } from '@vibe/ui/components/FloatingPanel';
 import { AgentIcon } from '@/shared/components/AgentIcon';
+import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { useWorkflowRunMutations } from '@/shared/hooks/useWorkflowRun';
@@ -282,7 +283,13 @@ function RunNode({ data }: { data: RunNodeData }) {
         title={stateLabel}
       />
       <div className="flex items-start gap-3 px-3 py-3 pl-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-secondary bg-secondary/30 text-low">
+        <div
+          {...getAgentBrandAttributes(agentDisplay?.executor)}
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-secondary bg-secondary/30 text-low',
+            agentDisplay?.executor && 'vk-agent-brand-surface'
+          )}
+        >
           {agentDisplay?.executor ? (
             <AgentIcon agent={agentDisplay.executor} className="h-4 w-4" />
           ) : (
@@ -294,7 +301,10 @@ function RunNode({ data }: { data: RunNodeData }) {
             {data.display_name || getWorkflowNodeKindLabel(type, t)}
           </div>
           {agentDisplay ? (
-            <div className="mt-1 truncate text-xs text-low">
+            <div
+              {...getAgentBrandAttributes(agentDisplay.executor)}
+              className="vk-agent-brand-label mt-1 truncate text-xs"
+            >
               {agentDisplay.agentLabel}
             </div>
           ) : null}

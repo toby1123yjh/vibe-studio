@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
-import { AgentIcon } from '@/shared/components/AgentIcon';
+import { AgentIcon, getAgentName } from '@/shared/components/AgentIcon';
+import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { ModelSelectorContainer } from '@/shared/components/ModelSelectorContainer';
 import { useSettingsNavigation } from '@/shared/hooks/useSettingsNavigation';
 import { useAgentProviderOptions } from '@/shared/hooks/useAgentProviderPolicy';
 import { useExecutorConfig } from '@/shared/hooks/useExecutorConfig';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { getAgentProviderBlockedReasonLabel } from '@/shared/lib/agentProviderOptions';
-import { toPrettyCase } from '@/shared/lib/string';
 import { cn } from '@/shared/lib/utils';
 import {
   DropdownMenuItem,
@@ -101,6 +101,7 @@ export function WorkflowAgentExecutorField({
       </span>
       <div className="rounded-md border border-secondary bg-primary p-2 shadow-sm">
         <div
+          {...getAgentBrandAttributes(selectedExecutor)}
           className={cn(
             'flex flex-wrap items-center gap-2',
             readOnly && 'pointer-events-none opacity-60'
@@ -109,12 +110,13 @@ export function WorkflowAgentExecutorField({
         >
           <AgentIcon
             agent={selectedExecutor}
-            className="size-icon-xl shrink-0"
+            className="vk-agent-brand-icon size-icon-xl shrink-0"
           />
           <ToolbarDropdown
+            className="vk-agent-brand-label"
             label={
               selectedExecutor
-                ? toPrettyCase(selectedExecutor)
+                ? getAgentName(selectedExecutor)
                 : t('workflow.agentEdit.selectExecutor', {
                     defaultValue: 'Select Agent',
                   })
@@ -137,7 +139,13 @@ export function WorkflowAgentExecutorField({
                 }
                 onClick={() => handleExecutorSelect(option.executor)}
               >
-                {toPrettyCase(option.executor)}
+                <span className="flex items-center gap-2">
+                  <AgentIcon
+                    agent={option.executor}
+                    className="size-icon shrink-0"
+                  />
+                  {getAgentName(option.executor)}
+                </span>
               </DropdownMenuItem>
             ))}
           </ToolbarDropdown>

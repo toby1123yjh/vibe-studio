@@ -923,6 +923,14 @@
     }
   },
   "agentCenter": {
+    "providerTraits": {
+      "CODEX": "L’agent de programmation d’OpenAI.",
+      "CLAUDE_CODE": "L’agent de programmation d’Anthropic.",
+      "GEMINI": "L’agent de terminal open source de Google.",
+      "OH_MY_PI": "Un agent de programmation extensible pour le terminal.",
+      "OPENCODE": "Un agent de programmation open source compatible avec plusieurs fournisseurs de modèles.",
+      "DEEPSEEK_HARNESS": "L’outil de programmation de DeepSeek, actuellement en préversion développeur."
+    },
     "install": {
       "registryInvalid": "Enter an HTTP(S) URL without credentials, query parameters or fragments (maximum 2048 characters).",
       "title": "Install agent",

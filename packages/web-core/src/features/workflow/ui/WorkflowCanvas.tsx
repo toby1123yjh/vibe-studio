@@ -9,6 +9,8 @@ import {
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/shared/hooks/useTheme';
+import { AgentIcon } from '@/shared/components/AgentIcon';
+import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { useReducedMotion } from '@/shared/hooks/useReducedMotion';
 import {
   ReactFlow,
@@ -374,8 +376,18 @@ const BaseNode = ({ id, data, type, selected }: BaseNodeProps) => {
         </div>
       ) : null}
       <div className="flex items-start gap-3 px-3 py-3 pl-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-secondary bg-secondary/30 text-low">
-          <Icon className="h-4 w-4" />
+        <div
+          {...getAgentBrandAttributes(agentDisplay?.executor)}
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-secondary bg-secondary/30 text-low',
+            agentDisplay?.executor && 'vk-agent-brand-surface'
+          )}
+        >
+          {agentDisplay?.executor ? (
+            <AgentIcon agent={agentDisplay.executor} className="h-4 w-4" />
+          ) : (
+            <Icon className="h-4 w-4" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div
@@ -387,7 +399,8 @@ const BaseNode = ({ id, data, type, selected }: BaseNodeProps) => {
           {agentDisplay ? (
             <div
               data-testid={`workflow-node-agent-${id}`}
-              className="mt-1 truncate text-xs text-low"
+              {...getAgentBrandAttributes(agentDisplay.executor)}
+              className="vk-agent-brand-label mt-1 truncate text-xs"
               title={agentDisplay.agentLabel}
             >
               {agentDisplay.agentLabel}

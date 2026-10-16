@@ -1721,6 +1721,14 @@
     "remoteAuthUnavailable": "Remote authentication is temporarily unavailable. Some remote features may not work until it recovers."
   },
   "agentCenter": {
+    "providerTraits": {
+      "CODEX": "OpenAI’s coding agent.",
+      "CLAUDE_CODE": "Anthropic’s coding agent.",
+      "GEMINI": "Google’s open-source terminal agent.",
+      "OH_MY_PI": "An extensible terminal coding agent.",
+      "OPENCODE": "An open-source coding agent with multiple model providers.",
+      "DEEPSEEK_HARNESS": "DeepSeek’s coding harness, currently in developer preview."
+    },
     "install": {
       "registryInvalid": "Enter an HTTP(S) URL without credentials, query parameters or fragments (maximum 2048 characters).",
       "title": "Install agent",

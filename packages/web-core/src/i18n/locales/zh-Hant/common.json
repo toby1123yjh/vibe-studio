@@ -1775,6 +1775,14 @@
     }
   },
   "agentCenter": {
+    "providerTraits": {
+      "CODEX": "OpenAI 的程式開發智能體。",
+      "CLAUDE_CODE": "Anthropic 的程式開發智能體。",
+      "GEMINI": "Google 的開源終端智能體。",
+      "OH_MY_PI": "可擴充的終端程式開發智能體。",
+      "OPENCODE": "支援多家模型供應商的開源程式開發智能體。",
+      "DEEPSEEK_HARNESS": "DeepSeek 的程式開發工具，目前為開發者預覽版。"
+    },
     "install": {
       "registryInvalid": "請輸入不含憑據、查詢參數或片段的 HTTP(S) 位址（最多 2048 個字元）。",
       "title": "安裝 Agent",

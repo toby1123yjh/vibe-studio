@@ -923,6 +923,14 @@
     }
   },
   "agentCenter": {
+    "providerTraits": {
+      "CODEX": "OpenAI의 코딩 에이전트.",
+      "CLAUDE_CODE": "Anthropic의 코딩 에이전트.",
+      "GEMINI": "Google의 오픈 소스 터미널 에이전트.",
+      "OH_MY_PI": "확장 가능한 터미널 코딩 에이전트.",
+      "OPENCODE": "여러 모델 제공업체를 지원하는 오픈 소스 코딩 에이전트.",
+      "DEEPSEEK_HARNESS": "DeepSeek의 코딩 도구로, 현재 개발자 미리 보기 버전입니다."
+    },
     "install": {
       "registryInvalid": "Enter an HTTP(S) URL without credentials, query parameters or fragments (maximum 2048 characters).",
       "title": "Install agent",

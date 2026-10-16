@@ -1831,6 +1831,14 @@
     }
   },
   "agentCenter": {
+    "providerTraits": {
+      "CODEX": "OpenAI 的编程智能体。",
+      "CLAUDE_CODE": "Anthropic 的编程智能体。",
+      "GEMINI": "Google 的开源终端智能体。",
+      "OH_MY_PI": "支持扩展的终端编程智能体。",
+      "OPENCODE": "支持多家模型提供方的开源编程智能体。",
+      "DEEPSEEK_HARNESS": "DeepSeek 的编程工具，目前为开发者预览版。"
+    },
     "install": {
       "registryInvalid": "请输入不含凭据、查询参数或片段的 HTTP(S) 地址（最多 2048 个字符）。",
       "title": "安装 Agent",

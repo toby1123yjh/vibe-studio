@@ -49,6 +49,7 @@ import { isAgentProviderReady } from '@/shared/lib/agentProviderOptions';
 import { effectiveStringSetting } from '@/shared/lib/agentSettingsModel';
 import {
   AGENT_PROVIDERS as PROVIDERS,
+  getAgentBrandAttributes,
   type AgentProviderDefinition as ProviderDefinition,
 } from '@/shared/lib/agentProviders';
 import './agent-center.css';
@@ -857,6 +858,8 @@ export function AgentCenterPage({
                   <button
                     key={provider.executor}
                     type="button"
+                    {...getAgentBrandAttributes(provider.executor)}
+                    className="vk-agent-brand-choice"
                     data-active={provider.executor === selectedExecutor}
                     aria-pressed={provider.executor === selectedExecutor}
                     onClick={() => {
@@ -866,7 +869,10 @@ export function AgentCenterPage({
                       );
                     }}
                   >
-                    <AgentIcon agent={provider.executor} />
+                    <AgentIcon
+                      agent={provider.executor}
+                      className="vk-agent-brand-icon h-7 w-7"
+                    />
                     <span>{provider.label}</span>
                     <small data-tone={readinessTone(readiness)}>
                       {t(readinessKey(readiness))}
@@ -1088,9 +1094,18 @@ function ProviderOverview({
   return (
     <div className="vk-agent-center__overview">
       <div className="vk-agent-center__provider-heading">
-        <div>
+        <div {...getAgentBrandAttributes(provider.executor)}>
           <p>{t('agentCenter.selectedProvider')}</p>
-          <h2>{provider.label}</h2>
+          <h2 className="vk-agent-center__provider-title vk-agent-brand-label">
+            <AgentIcon
+              agent={provider.executor}
+              className="vk-agent-brand-icon h-8 w-8"
+            />
+            {provider.label}
+          </h2>
+          <p className="vk-agent-center__provider-trait">
+            {t(`agentCenter.providerTraits.${provider.executor}`)}
+          </p>
           <span
             data-tone={
               hasGarageProviderData ? readinessTone(readiness) : 'unavailable'

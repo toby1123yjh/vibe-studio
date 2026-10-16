@@ -1,12 +1,12 @@
-import { type ReactNode, useRef } from "react";
-import { CheckIcon, PaperclipIcon, XIcon } from "@phosphor-icons/react";
-import { useTranslation } from "react-i18next";
-import { Checkbox } from "./Checkbox";
-import { ChatBoxBase, VisualVariant, type DropzoneProps } from "./ChatBoxBase";
-import { DropdownMenuItem, DropdownMenuLabel } from "./Dropdown";
-import { PrimaryButton } from "./PrimaryButton";
-import type { LocalAttachmentMetadata } from "./WorkspaceContext";
-import { ToolbarDropdown, ToolbarIconButton } from "./Toolbar";
+import { type ReactNode, useRef } from 'react';
+import { CheckIcon, PaperclipIcon, XIcon } from '@phosphor-icons/react';
+import { useTranslation } from 'react-i18next';
+import { Checkbox } from './Checkbox';
+import { ChatBoxBase, VisualVariant, type DropzoneProps } from './ChatBoxBase';
+import { DropdownMenuItem, DropdownMenuLabel } from './Dropdown';
+import { PrimaryButton } from './PrimaryButton';
+import type { LocalAttachmentMetadata } from './WorkspaceContext';
+import { ToolbarDropdown, ToolbarIconButton } from './Toolbar';
 
 export interface EditorProps {
   value: string;
@@ -60,6 +60,7 @@ interface CreateChatBoxProps<TExecutor extends string = string> {
   editor: EditorProps;
   renderEditor: (props: CreateChatBoxEditorRenderProps<TExecutor>) => ReactNode;
   agentIcon?: ReactNode;
+  agentBrand?: string;
   onSend: () => void;
   isSending: boolean;
   disabled?: boolean;
@@ -85,7 +86,7 @@ interface CreateChatBoxProps<TExecutor extends string = string> {
  */
 function defaultExecutorLabel(executor: string) {
   return executor
-    .replace(/[_-]+/g, " ")
+    .replace(/[_-]+/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -94,12 +95,13 @@ export function CreateChatBox<TExecutor extends string = string>({
   editor,
   renderEditor,
   agentIcon,
+  agentBrand,
   onSend,
   isSending,
   disabled = false,
   executor,
   formatExecutorLabel = defaultExecutorLabel,
-  emptyExecutorLabel = "Select Executor",
+  emptyExecutorLabel = 'Select Executor',
   saveAsDefault,
   error,
   repoIds,
@@ -112,7 +114,7 @@ export function CreateChatBox<TExecutor extends string = string>({
   sendDisabled = false,
   linkedTask,
 }: CreateChatBoxProps<TExecutor>) {
-  const { t } = useTranslation(["common", "tasks"]);
+  const { t } = useTranslation(['common', 'tasks']);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDisabled = disabled || isSending;
   const canSend =
@@ -133,7 +135,7 @@ export function CreateChatBox<TExecutor extends string = string>({
     if (files.length > 0 && onPasteFiles) {
       onPasteFiles(files);
     }
-    e.target.value = "";
+    e.target.value = '';
   };
 
   const executorLabel = executor.selected
@@ -159,21 +161,30 @@ export function CreateChatBox<TExecutor extends string = string>({
       modelSelector={modelSelector}
       headerLeft={
         <>
-          {agentIcon}
-          <ToolbarDropdown label={executorLabel} disabled={isDisabled}>
-            <DropdownMenuLabel>
-              {t("tasks:conversation.executors")}
-            </DropdownMenuLabel>
-            {executor.options.map((exec) => (
-              <DropdownMenuItem
-                key={exec}
-                icon={executor.selected === exec ? CheckIcon : undefined}
-                onClick={() => executor.onChange(exec)}
-              >
-                {formatExecutorLabel(exec)}
-              </DropdownMenuItem>
-            ))}
-          </ToolbarDropdown>
+          <span
+            data-agent-brand={agentBrand}
+            className="flex min-w-0 items-center gap-2"
+          >
+            {agentIcon}
+            <ToolbarDropdown
+              className="vk-agent-brand-label"
+              label={executorLabel}
+              disabled={isDisabled}
+            >
+              <DropdownMenuLabel>
+                {t('tasks:conversation.executors')}
+              </DropdownMenuLabel>
+              {executor.options.map((exec) => (
+                <DropdownMenuItem
+                  key={exec}
+                  icon={executor.selected === exec ? CheckIcon : undefined}
+                  onClick={() => executor.onChange(exec)}
+                >
+                  {formatExecutorLabel(exec)}
+                </DropdownMenuItem>
+              ))}
+            </ToolbarDropdown>
+          </span>
           {executor.afterSelector}
           {saveAsDefault?.visible && (
             <label className="flex items-center gap-1.5 text-sm text-low cursor-pointer ml-2">
@@ -183,7 +194,7 @@ export function CreateChatBox<TExecutor extends string = string>({
                 className="h-3.5 w-3.5"
                 disabled={isDisabled}
               />
-              <span>{t("tasks:conversation.saveAsDefault")}</span>
+              <span>{t('tasks:conversation.saveAsDefault')}</span>
             </label>
           )}
         </>
@@ -193,8 +204,8 @@ export function CreateChatBox<TExecutor extends string = string>({
           <ToolbarIconButton
             type="button"
             icon={PaperclipIcon}
-            aria-label={t("tasks:taskFormDialog.attachFile")}
-            title={t("tasks:taskFormDialog.attachFile")}
+            aria-label={t('tasks:taskFormDialog.attachFile')}
+            title={t('tasks:taskFormDialog.attachFile')}
             onClick={handleAttachClick}
             disabled={isDisabled}
             className="mr-half min-h-8 min-w-8 shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
@@ -236,11 +247,11 @@ export function CreateChatBox<TExecutor extends string = string>({
         <PrimaryButton
           onClick={onSend}
           disabled={!canSend}
-          actionIcon={isSending ? "spinner" : undefined}
+          actionIcon={isSending ? 'spinner' : undefined}
           value={
             isSending
-              ? t("tasks:conversation.workspace.creating")
-              : t("tasks:conversation.workspace.create")
+              ? t('tasks:conversation.workspace.creating')
+              : t('tasks:conversation.workspace.create')
           }
         />
       }

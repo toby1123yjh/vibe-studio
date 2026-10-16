@@ -1,0 +1,131 @@
+/* Provider identity only: never use these tokens for success/error/run state.
+ * Mark colors follow upstream assets; label colors are contrast-adjusted for
+ * our surfaces. Codex and OpenCode intentionally retain monochrome branding.
+ */
+[data-agent-brand] {
+  --vk-agent-brand-mark: #242424;
+  --vk-agent-brand-accent: #343434;
+  --vk-agent-brand-tint: color-mix(
+    in srgb,
+    var(--vk-agent-brand-mark) 7%,
+    transparent
+  );
+  --vk-agent-brand-border: color-mix(
+    in srgb,
+    var(--vk-agent-brand-mark) 24%,
+    transparent
+  );
+}
+
+[data-agent-brand='claude-code'] {
+  --vk-agent-brand-mark: #d97757;
+  --vk-agent-brand-accent: #99452d;
+}
+
+[data-agent-brand='gemini'] {
+  --vk-agent-brand-mark: #8e75b2;
+  --vk-agent-brand-accent: #725294;
+}
+
+[data-agent-brand='oh-my-pi'] {
+  --vk-agent-brand-mark: #f97316;
+  --vk-agent-brand-accent: #a1460a;
+}
+
+[data-agent-brand='deepseek-harness'] {
+  --vk-agent-brand-mark: #4d6bfe;
+  --vk-agent-brand-accent: #3654c7;
+}
+
+.dark [data-agent-brand] {
+  --vk-agent-brand-mark: #eeeeee;
+  --vk-agent-brand-accent: #eeeeee;
+}
+
+.dark [data-agent-brand='claude-code'] {
+  --vk-agent-brand-mark: #d97757;
+  --vk-agent-brand-accent: #eca58d;
+}
+
+.dark [data-agent-brand='gemini'] {
+  --vk-agent-brand-mark: #bba2df;
+  --vk-agent-brand-accent: #c9b2e7;
+}
+
+.dark [data-agent-brand='oh-my-pi'] {
+  --vk-agent-brand-mark: #f97316;
+  --vk-agent-brand-accent: #ffb580;
+}
+
+.dark [data-agent-brand='deepseek-harness'] {
+  --vk-agent-brand-mark: #7891ff;
+  --vk-agent-brand-accent: #a3b3ff;
+}
+
+.vk-agent-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+
+.vk-agent-mark__glyph,
+.vk-agent-mark__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.vk-agent-mark__glyph {
+  background: var(--vk-agent-brand-mark);
+  mask: var(--vk-agent-icon) center / contain no-repeat;
+}
+
+.vk-agent-brand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0.25rem;
+  border: 1px solid var(--vk-agent-brand-border);
+  border-radius: 6px;
+  background: var(--vk-agent-brand-tint);
+}
+
+.vk-agent-brand-label {
+  color: var(--vk-agent-brand-accent);
+}
+
+/* ToolbarDropdown gives its label and caret explicit neutral text colors.
+ * Opted-in provider selectors inherit the branded trigger color instead.
+ */
+[data-agent-brand] button.vk-agent-brand-label > span,
+[data-agent-brand] button.vk-agent-brand-label > svg {
+  color: inherit;
+}
+
+.vk-agent-brand-surface,
+.vk-agent-brand-choice:is(
+  [aria-pressed='true'],
+  [aria-selected='true'],
+  [data-state='selected']
+) {
+  background: var(--vk-agent-brand-tint);
+  border-color: var(--vk-agent-brand-border);
+}
+
+@media (forced-colors: active) {
+  .vk-agent-mark__glyph {
+    background: CanvasText;
+  }
+
+  .vk-agent-brand-label {
+    color: CanvasText;
+  }
+
+  .vk-agent-brand-icon {
+    border-color: CanvasText;
+  }
+}

@@ -20,7 +20,8 @@ import {
   type ResumableAgentSession,
   type Workspace,
 } from 'shared/types';
-import { AgentIcon } from '@/shared/components/AgentIcon';
+import { AgentIcon, getAgentName } from '@/shared/components/AgentIcon';
+import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { workspaceSessionKeys } from '@/shared/hooks/workspaceSessionKeys';
 import { useWorkspaceExecution } from '@/shared/hooks/useWorkspaceExecution';
@@ -53,7 +54,6 @@ import { ResolveConflictsDialog } from '@/shared/dialogs/tasks/ResolveConflictsD
 import { workspaceSummaryKeys } from '@/shared/hooks/workspaceSummaryKeys';
 import { buildAgentPrompt } from '@/shared/lib/promptMessage';
 import { formatDateShortWithTime } from '@/shared/lib/date';
-import { toPrettyCase } from '@/shared/lib/string';
 import {
   SessionChatBox,
   type ExecutionStatus,
@@ -1317,7 +1317,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         repoIds={repoIds}
         tokenUsageInfo={tokenUsageInfo}
         supportsContextUsage={false}
-        formatExecutorLabel={toPrettyCase}
+        formatExecutorLabel={getAgentName}
         formatSessionDate={(createdAt) =>
           formatDateShortWithTime(
             createdAt instanceof Date ? createdAt.toISOString() : createdAt
@@ -1326,7 +1326,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         renderAgentIcon={(executor, className) => (
           <AgentIcon
             agent={executor as BaseCodingAgent | null | undefined}
-            className={className}
+            className={`vk-agent-brand-icon ${className ?? ''}`}
           />
         )}
         editor={{
@@ -1375,7 +1375,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       repoIds={repoIds}
       tokenUsageInfo={tokenUsageInfo}
       supportsContextUsage={supportsContextUsage}
-      formatExecutorLabel={toPrettyCase}
+      formatExecutorLabel={getAgentName}
       formatSessionDate={(createdAt) =>
         formatDateShortWithTime(
           createdAt instanceof Date ? createdAt.toISOString() : createdAt
@@ -1384,7 +1384,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       renderAgentIcon={(executor, className) => (
         <AgentIcon
           agent={executor as BaseCodingAgent | null | undefined}
-          className={className}
+          className={`vk-agent-brand-icon ${className ?? ''}`}
         />
       )}
       editor={{
@@ -1439,6 +1439,9 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       }}
       error={configError?.message ?? sendError}
       agent={effectiveExecutor}
+      agentBrand={
+        getAgentBrandAttributes(effectiveExecutor)['data-agent-brand']
+      }
       todos={todos}
       inProgressTodo={inProgressTodo}
       executor={

@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useDropzone } from 'react-dropzone';
 import { useSessionProjectTarget } from '@/shared/hooks/useSessionProjectTarget';
 import { useCreateMode } from '@/features/create-mode/model/useCreateMode';
-import { AgentIcon } from '@/shared/components/AgentIcon';
+import { AgentIcon, getAgentName } from '@/shared/components/AgentIcon';
+import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
 import { useCreateWorkspace } from '@/shared/hooks/useCreateWorkspace';
@@ -15,10 +16,7 @@ import { getSortedExecutorVariantKeys } from '@/shared/lib/executor';
 import { getDestinationHostId } from '@/shared/lib/routes/appNavigation';
 import { buildAgentPrompt } from '@/shared/lib/promptMessage';
 import { resolveWorkspaceWorkingDirectory } from '@/shared/lib/workspaceContext';
-import {
-  toPrettyCase,
-  splitMessageToTitleDescription,
-} from '@/shared/lib/string';
+import { splitMessageToTitleDescription } from '@/shared/lib/string';
 import type {
   BaseCodingAgent,
   ResumableAgentSession,
@@ -558,8 +556,11 @@ export function CreateChatBoxContainer({
                 agentIcon={
                   <AgentIcon
                     agent={effectiveExecutor}
-                    className="size-icon-xl"
+                    className="vk-agent-brand-icon size-icon-xl"
                   />
+                }
+                agentBrand={
+                  getAgentBrandAttributes(effectiveExecutor)['data-agent-brand']
                 }
                 onSend={handleSubmit}
                 isSending={createWorkspace.isPending}
@@ -570,7 +571,7 @@ export function CreateChatBoxContainer({
                   onChange: handleExecutorChange,
                   afterSelector: resumePickerNode,
                 }}
-                formatExecutorLabel={toPrettyCase}
+                formatExecutorLabel={getAgentName}
                 error={displayError}
                 repoIds={
                   workspaceMode === 'worktree' && selectedRepo

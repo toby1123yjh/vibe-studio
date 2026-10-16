@@ -14,6 +14,7 @@ import {
 } from '../model/workflowNodeSchemas';
 import { getWorkflowAgentDisplay } from '../model/workflowAgentDisplay';
 import { AgentIcon } from '@/shared/components/AgentIcon';
+import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { getWorkflowSplitScopes } from '../model/workflowSplitScope';
 import { WorkflowNodeFieldRenderer } from './WorkflowNodeFieldRenderer';
 import { WorkflowAgentExecutorField } from './WorkflowAgentExecutorField';
@@ -252,13 +253,16 @@ export function WorkflowNodeInspector({
           </div>
 
           {hasRouterExecutorConfig ? (
-            <div className="flex items-center gap-2 rounded-md border border-brand/20 bg-brand/10 px-2.5 py-2">
+            <div
+              {...getAgentBrandAttributes(routerDisplay.executor)}
+              className="vk-agent-brand-surface flex items-center gap-2 rounded-md border px-2.5 py-2"
+            >
               <AgentIcon
                 agent={routerDisplay.executor}
                 className="size-5 shrink-0"
               />
               <div className="min-w-0">
-                <div className="truncate text-xs font-semibold text-high">
+                <div className="vk-agent-brand-label truncate text-xs font-semibold">
                   {routerDisplay.agentLabel}
                 </div>
                 <div className="truncate text-xs text-low">

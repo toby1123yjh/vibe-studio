@@ -270,6 +270,7 @@ interface SessionChatBoxProps<TExecutor extends string = string> {
   error?: string | null;
   repoIds?: string[];
   agent?: TExecutor | null;
+  agentBrand?: string;
   executor?: ExecutorProps<TExecutor>;
   formatExecutorLabel?: (executor: TExecutor) => string;
   emptyExecutorLabel?: string;
@@ -355,6 +356,7 @@ export function SessionChatBox<TExecutor extends string = string>({
   agent,
   executor,
   formatExecutorLabel = defaultExecutorLabel,
+  agentBrand,
   emptyExecutorLabel = 'Select Executor',
   renderAgentIcon,
   formatSessionDate = defaultFormatSessionDate,
@@ -942,27 +944,33 @@ export function SessionChatBox<TExecutor extends string = string>({
           {/* New session mode: agent icon + executor dropdown */}
           {isNewSessionMode && executor && (
             <>
-              {renderAgentIcon?.(agent, 'size-icon-xl')}
-              <ToolbarDropdown
-                label={
-                  executor.selected
-                    ? formatExecutorLabel(executor.selected)
-                    : emptyExecutorLabel
-                }
+              <span
+                data-agent-brand={agentBrand}
+                className="flex min-w-0 items-center gap-2"
               >
-                <DropdownMenuLabel>
-                  {t('conversation.executors')}
-                </DropdownMenuLabel>
-                {executor.options.map((exec) => (
-                  <DropdownMenuItem
-                    key={exec}
-                    icon={executor.selected === exec ? CheckIcon : undefined}
-                    onClick={() => executor.onChange(exec)}
-                  >
-                    {formatExecutorLabel(exec)}
-                  </DropdownMenuItem>
-                ))}
-              </ToolbarDropdown>
+                {renderAgentIcon?.(agent, 'size-icon-xl')}
+                <ToolbarDropdown
+                  className="vk-agent-brand-label"
+                  label={
+                    executor.selected
+                      ? formatExecutorLabel(executor.selected)
+                      : emptyExecutorLabel
+                  }
+                >
+                  <DropdownMenuLabel>
+                    {t('conversation.executors')}
+                  </DropdownMenuLabel>
+                  {executor.options.map((exec) => (
+                    <DropdownMenuItem
+                      key={exec}
+                      icon={executor.selected === exec ? CheckIcon : undefined}
+                      onClick={() => executor.onChange(exec)}
+                    >
+                      {formatExecutorLabel(exec)}
+                    </DropdownMenuItem>
+                  ))}
+                </ToolbarDropdown>
+              </span>
               {executor.afterSelector}
             </>
           )}
@@ -1077,7 +1085,18 @@ export function SessionChatBox<TExecutor extends string = string>({
                   />
                 </TurnNavigationPopup>
               )}
-              {renderAgentIcon?.(agent, 'size-icon-xl')}
+              <span
+                data-agent-brand={agentBrand}
+                className="vk-agent-brand-label flex min-w-0 items-center gap-1.5"
+                title={agent ? formatExecutorLabel(agent) : undefined}
+              >
+                {renderAgentIcon?.(agent, 'size-icon-xl')}
+                {agent && (
+                  <span className="max-w-[100px] truncate text-sm">
+                    {formatExecutorLabel(agent)}
+                  </span>
+                )}
+              </span>
               {resumeSelector}
             </>
           )}
