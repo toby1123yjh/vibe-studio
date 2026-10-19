@@ -68,9 +68,10 @@ pub async fn launch_direct_provider(
         ));
     }
 
+    apply_attempt_model_selection(&mut agent, request.executor_config)?;
+
     match &mut agent {
         CodingAgent::Gemini(agent) => {
-            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -83,7 +84,6 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::Codex(agent) => {
-            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -97,7 +97,6 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::ClaudeCode(agent) => {
-            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -111,7 +110,6 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::OhMyPi(agent) => {
-            agent.apply_direct_overrides(request.executor_config)?;
             agent
                 .launch_direct(
                     request.intent,
@@ -123,7 +121,6 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::Opencode(agent) => {
-            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -136,7 +133,6 @@ pub async fn launch_direct_provider(
                 .await
         }
         CodingAgent::DeepseekHarness(agent) => {
-            agent.apply_direct_overrides(request.executor_config)?;
             agent.use_direct_approvals(request.approvals);
             agent
                 .launch_direct(
@@ -153,6 +149,24 @@ pub async fn launch_direct_provider(
             request.provider,
             request.executor_config,
         )),
+    }
+}
+
+fn apply_attempt_model_selection(
+    agent: &mut CodingAgent,
+    config: &ExecutorConfig,
+) -> Result<(), ExecutorError> {
+    // Preserve omitted fields for profile-only workflow requests. Explicit null
+    // clears that preset field and delegates to the native CLI/session.
+    match agent {
+        CodingAgent::Gemini(agent) => agent.apply_direct_overrides(config),
+        CodingAgent::Codex(agent) => agent.apply_direct_overrides(config),
+        CodingAgent::ClaudeCode(agent) => agent.apply_direct_overrides(config),
+        CodingAgent::OhMyPi(agent) => agent.apply_direct_overrides(config),
+        CodingAgent::Opencode(agent) => agent.apply_direct_overrides(config),
+        CodingAgent::DeepseekHarness(agent) => agent.apply_direct_overrides(config),
+        #[cfg(feature = "qa-mode")]
+        CodingAgent::QaMock(_) => Ok(()),
     }
 }
 
@@ -1646,6 +1660,92 @@ mod tests {
         executors::BaseCodingAgent,
         runtime::{NativeAuditChannel, PROVIDER_SESSION_REFERENCE_SCHEMA_VERSION},
     };
+
+    #[test]
+    fn attempt_model_snapshot_does_not_resurrect_cleared_preset_values() {
+        for (name, executor, effort_key) in [
+            ("GEMINI", BaseCodingAgent::Gemini, None),
+            (
+                "CODEX",
+                BaseCodingAgent::Codex,
+                Some("model_reasoning_effort"),
+            ),
+            ("CLAUDE_CODE", BaseCodingAgent::ClaudeCode, Some("effort")),
+            ("OH_MY_PI", BaseCodingAgent::OhMyPi, Some("thinking_level")),
+            (
+                "OPENCODE",
+                BaseCodingAgent::Opencode,
+                Some("reasoning_effort"),
+            ),
+            (
+                "DEEPSEEK_HARNESS",
+                BaseCodingAgent::DeepseekHarness,
+                Some("reasoning_effort"),
+            ),
+        ] {
+            let mut settings = serde_json::json!({
+                "model": "preset-model",
+                "env": {"PRESERVED_PROFILE_OPTION": "value"},
+            });
+            if let Some(key) = effort_key {
+                settings[key] = serde_json::json!("high");
+            }
+            let mut agent: CodingAgent =
+                serde_json::from_value(serde_json::json!({(name): settings})).unwrap();
+            let inherited = serde_json::to_value(&agent).unwrap();
+            let profile_only = ExecutorConfig::new(executor);
+            apply_attempt_model_selection(&mut agent, &profile_only).unwrap();
+            assert_eq!(serde_json::to_value(&agent).unwrap(), inherited, "{name}");
+
+            for (field, native_key) in std::iter::once(("model_id", "model"))
+                .chain(effort_key.map(|key| ("reasoning_id", key)))
+            {
+                let mut isolated = agent.clone();
+                let partial: ExecutorConfig = serde_json::from_value(serde_json::json!({
+                    "executor": executor,
+                    (field): null,
+                }))
+                .unwrap();
+                apply_attempt_model_selection(&mut isolated, &partial).unwrap();
+                let mut expected = inherited.clone();
+                expected[name].as_object_mut().unwrap().remove(native_key);
+                assert_eq!(
+                    serde_json::to_value(isolated).unwrap(),
+                    expected,
+                    "{name}/{field}"
+                );
+            }
+
+            let cleared: ExecutorConfig = serde_json::from_value(serde_json::json!({
+                "executor": executor,
+                "model_id": null,
+                "reasoning_id": null,
+            }))
+            .unwrap();
+            cleared.validate_provider_options().unwrap();
+            // Audit/persistence must retain null rather than turning it back into omission.
+            let cleared: ExecutorConfig =
+                serde_json::from_value(serde_json::to_value(&cleared).unwrap()).unwrap();
+            let mut expected = inherited;
+            expected[name].as_object_mut().unwrap().remove("model");
+            if let Some(key) = effort_key {
+                expected[name].as_object_mut().unwrap().remove(key);
+            }
+
+            apply_attempt_model_selection(&mut agent, &cleared).unwrap();
+            assert_eq!(serde_json::to_value(&agent).unwrap(), expected, "{name}");
+
+            let mut explicit = ExecutorConfig::new(executor);
+            explicit.model_id = Some(Some("selected-model".into()));
+            explicit.reasoning_id = effort_key.map(|_| Some("low".into()));
+            apply_attempt_model_selection(&mut agent, &explicit).unwrap();
+            expected[name]["model"] = serde_json::json!("selected-model");
+            if let Some(key) = effort_key {
+                expected[name][key] = serde_json::json!("low");
+            }
+            assert_eq!(serde_json::to_value(&agent).unwrap(), expected, "{name}");
+        }
+    }
 
     fn frame(provider: DirectProvider, payload: Value) -> NativeAuditFrame {
         NativeAuditFrame::from_bytes(

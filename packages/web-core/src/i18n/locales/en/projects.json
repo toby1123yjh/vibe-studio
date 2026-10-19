@@ -99,6 +99,7 @@
     "searchingRemaining": "Searching remaining projects…",
     "loadingMore": "Loading more projects…",
     "moreAvailable": "More projects load automatically on scroll.",
+    "builtInProject": "Built-in project",
     "updated": "Updated {{date}}"
   }
 }

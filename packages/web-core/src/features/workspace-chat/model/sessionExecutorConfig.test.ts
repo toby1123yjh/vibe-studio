@@ -16,19 +16,38 @@ const preset = {
   permission_policy: 'AUTO' as PermissionPolicy,
 };
 
-test('canonical omitted overrides are full-snapshot nulls, not preset fallbacks', () => {
+test('omitted model and effort retain preset inheritance on restoration', () => {
   const saved = restoreExecutorConfig({ executor, variant: 'PLAN' });
   expect(
     resolveExecutorOverrides(executor, 'PLAN', {}, undefined, saved, preset)
   ).toEqual({
     executor,
     variant: 'PLAN',
-    model_id: null,
+    model_id: 'preset-model',
     agent_id: null,
-    reasoning_id: null,
+    reasoning_id: 'high',
     permission_policy: null,
     provider_options: null,
   });
+});
+
+test('explicit native model and effort survive request restoration', () => {
+  const saved = restoreExecutorConfig({
+    executor,
+    variant: 'PLAN',
+    model_id: null,
+    reasoning_id: null,
+  });
+  const resolved = resolveExecutorOverrides(
+    executor,
+    'PLAN',
+    {},
+    undefined,
+    saved,
+    preset
+  );
+  expect(resolved?.model_id).toBeNull();
+  expect(resolved?.reasoning_id).toBeNull();
 });
 
 test('explicit null draft fields override saved values while missing fields inherit', () => {

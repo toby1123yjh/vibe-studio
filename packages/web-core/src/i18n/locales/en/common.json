@@ -210,9 +210,7 @@
     "openGitHub": "View on GitHub"
   },
   "projectSessions": {
-    "column": "Discuss",
-    "create": "New discussion",
-    "empty": "No discussions yet."
+    "create": "New discussion"
   },
   "sessionProject": {
     "messagePlaceholder": "Describe the task...",
@@ -1696,8 +1694,6 @@
     "copyLink": "Copy link",
     "issueTitlePlaceholder": "Task Title...",
     "issueDescriptionPlaceholder": "Enter task description here...",
-    "createDraftWorkspaceImmediately": "Create draft workspace immediately",
-    "createDraftWorkspaceDescription": "After creating the task, open the workspace creation form pre-filled with the task details",
     "createIssue": "Create Task",
     "newIssue": "New Task",
     "previewCodeBlock": "[Code block]",
@@ -1888,6 +1884,8 @@
     "geminiNativeThinking": "Gemini thinking budgets are native model settings in Agent Center. They are not per-attempt overrides.",
     "unspecified": "Model not specified",
     "followCliConfig": "Follow CLI config",
+    "followCliValue": "Follow CLI · {{value}}",
+    "builtinCatalog": "Fallback list. Native capabilities are unconfirmed.",
     "preset": "Preset",
     "custom": "Custom",
     "permissions": "Permissions",

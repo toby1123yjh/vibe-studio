@@ -1,7 +1,4 @@
 {
-  "projectSessions": {
-    "column": "Discuss"
-  },
   "editorNames": {
     "custom": "カスタム"
   },
@@ -634,8 +631,6 @@
     "copyLink": "リンクをコピー",
     "issueTitlePlaceholder": "タスクタイトル...",
     "issueDescriptionPlaceholder": "タスクの説明を入力してください...",
-    "createDraftWorkspaceImmediately": "下書きワークスペースをすぐに作成",
-    "createDraftWorkspaceDescription": "タスクを作成した後、タスクの詳細が入力されたワークスペース作成フォームを開きます",
     "createIssue": "タスクを作成",
     "newIssue": "新しいタスク",
     "previewCodeBlock": "[コードブロック]",
@@ -773,6 +768,8 @@
   "modelSelector": {
     "unspecified": "モデル未指定",
     "followCliConfig": "Follow CLI config",
+    "followCliValue": "CLI設定を使用 · {{value}}",
+    "builtinCatalog": "代替リストです。エージェントの対応状況は未確認です。",
     "preset": "プリセット",
     "custom": "カスタマイズ",
     "permissions": "権限",

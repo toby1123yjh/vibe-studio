@@ -1,13 +1,20 @@
 import { expect, test as it } from '@playwright/test';
 const describe = it.describe;
-import type { ModelInfo } from 'shared/types';
+import type { ModelInfo, ModelSelectorConfig } from 'shared/types';
 import {
+  appendPresetModel,
   buildModelSelectionOverride,
   parseModelId,
   resolveConfiguredReasoningIdForOptions,
   resolveDefaultReasoningId,
   resolveReasoningOverrideState,
   resolveReasoningIdForOptions,
+  getModelDisplayId,
+  getReasoningDisplayLabel,
+  resolveModelDisplayId,
+  resolveNativeModelId,
+  resolveNativeReasoningId,
+  resolveDefaultModelId,
 } from './modelSelector';
 
 const models: ModelInfo[] = [
@@ -75,6 +82,198 @@ describe('model selector model ID semantics', () => {
       providerId: null,
       modelId: value,
     });
+  });
+});
+
+describe('native configured model and reasoning display', () => {
+  const config: ModelSelectorConfig = {
+    providers: [],
+    models,
+    agents: [],
+    permissions: [],
+    default_model: 'gpt-5.5',
+    native_defaults: {
+      model_id: 'gpt-6.1-sol',
+      reasoning_id: 'max',
+      model_reasoning: {},
+    },
+    catalog_source: 'native',
+  };
+
+  it('shows native configured values instead of catalog defaults without creating overrides', () => {
+    const request = { model_id: undefined, reasoning_id: undefined };
+    const modelId = resolveModelDisplayId(
+      request.model_id,
+      undefined,
+      config.native_defaults?.model_id
+    );
+    expect(modelId).toBe('gpt-6.1-sol');
+    const effort = resolveNativeReasoningId(config, modelId);
+    expect(effort).toBe('max');
+    expect(
+      getReasoningDisplayLabel([], undefined, false, 'Follow CLI', effort)
+    ).toBe('Max');
+    expect(request).toEqual({ model_id: undefined, reasoning_id: undefined });
+  });
+
+  it('keeps native models absent from the catalog visible with unknown capabilities', () => {
+    const appended = appendPresetModel(
+      config,
+      config.native_defaults?.model_id
+    );
+    expect(appended?.models[0]).toEqual({
+      id: 'gpt-6.1-sol',
+      name: 'gpt-6.1-sol',
+      provider_id: null,
+      reasoning_options: [],
+    });
+    expect(appended?.models[0].capabilities).toBeUndefined();
+  });
+
+  it('preserves explicit overrides and explicit null bypasses a preset', () => {
+    expect(resolveModelDisplayId('gpt-5.5', 'preset', 'gpt-6.1-sol')).toBe(
+      'gpt-5.5'
+    );
+    expect(resolveModelDisplayId(null, 'preset', 'gpt-6.1-sol')).toBe(
+      'gpt-6.1-sol'
+    );
+    expect(
+      getReasoningDisplayLabel(
+        models[0].reasoning_options,
+        'medium',
+        true,
+        'Follow CLI',
+        'max'
+      )
+    ).toBe('Medium');
+    expect(
+      getReasoningDisplayLabel(
+        models[0].reasoning_options,
+        null,
+        true,
+        'Follow CLI',
+        'max'
+      )
+    ).toBe('Max');
+  });
+
+  it('does not use catalog defaults or list order when native configuration is missing', () => {
+    const unknown: ModelSelectorConfig = {
+      ...config,
+      native_defaults: undefined,
+    };
+    expect(resolveNativeReasoningId(unknown, 'gpt-5.5')).toBeNull();
+    expect(
+      resolveModelDisplayId(
+        undefined,
+        undefined,
+        unknown.native_defaults?.model_id
+      )
+    ).toBeNull();
+    expect(resolveDefaultModelId(models, null, 'missing', false)).toBeNull();
+  });
+
+  const aliasConfig: ModelSelectorConfig = {
+    ...config,
+    models: [
+      {
+        id: 'opus',
+        name: 'Opus',
+        reasoning_options: [
+          { id: 'xhigh', label: 'Extra High', is_default: false },
+        ],
+        capabilities: {
+          reasoning: 'supported',
+          input_modalities: ['text'],
+          fast_mode: 'unknown',
+          auto_mode: 'unknown',
+          resolved_model: 'claude-opus-4-6',
+          is_default: false,
+          service_tiers: [],
+        },
+      },
+      { id: 'sonnet', name: 'Sonnet', reasoning_options: [] },
+    ],
+    native_defaults: {
+      model_id: 'opus',
+      reasoning_id: null,
+      model_reasoning: { 'claude-opus-4-6': 'xhigh' },
+    },
+  };
+
+  it('uses an advertised alias resolution for display and per-model settings without rewriting execution IDs', () => {
+    const selected = aliasConfig.models[0];
+    expect(getModelDisplayId(selected, selected.id)).toBe('claude-opus-4-6');
+    expect(resolveNativeReasoningId(aliasConfig, selected.id)).toBe('xhigh');
+    expect(
+      buildModelSelectionOverride(aliasConfig.models, selected.id)
+    ).toEqual({ model_id: 'opus' });
+  });
+
+  it('does not carry one model-specific effort into another model', () => {
+    expect(resolveNativeReasoningId(aliasConfig, 'sonnet')).toBeNull();
+    expect(resolveNativeReasoningId(aliasConfig, 'OPUS')).toBeNull();
+  });
+
+  it('uses exact model settings before resolved alias settings and preserves empty effort', () => {
+    const exact = {
+      ...aliasConfig,
+      native_defaults: {
+        ...aliasConfig.native_defaults!,
+        model_reasoning: { opus: '', 'claude-opus-4-6': 'xhigh' },
+      },
+    };
+    expect(resolveNativeReasoningId(exact, 'opus')).toBe('');
+    expect(
+      getReasoningDisplayLabel(
+        [{ id: '', label: 'No effort', is_default: false }],
+        null,
+        true,
+        'Follow CLI',
+        ''
+      )
+    ).toBe('No effort');
+  });
+
+  it('keeps a provider-global effort when only the requested model changes', () => {
+    expect(resolveNativeReasoningId(config, 'another-exact-model')).toBe('max');
+  });
+
+  it('does not infer a full model ID from an unadvertised alias', () => {
+    expect(getModelDisplayId(null, 'opus')).toBe('opus');
+    expect(resolveNativeReasoningId(aliasConfig, 'claude-opus-4-7')).toBeNull();
+  });
+
+  it('uses only a unique native resolved default alias when no model is configured', () => {
+    const unconfigured: ModelSelectorConfig = {
+      ...aliasConfig,
+      native_defaults: undefined,
+      models: aliasConfig.models.map((model) => ({
+        ...model,
+        capabilities: model.capabilities
+          ? { ...model.capabilities, is_default: true }
+          : model.capabilities,
+      })),
+    };
+    expect(resolveNativeModelId(unconfigured)).toBe('opus');
+    expect(
+      resolveNativeModelId({ ...unconfigured, catalog_source: 'observed' })
+    ).toBeNull();
+    expect(
+      resolveNativeModelId({ ...unconfigured, catalog_source: 'builtin' })
+    ).toBeNull();
+    expect(
+      resolveNativeModelId({ ...config, native_defaults: undefined })
+    ).toBeNull();
+    expect(
+      resolveNativeModelId({
+        ...unconfigured,
+        models: [
+          ...unconfigured.models,
+          { ...unconfigured.models[0], id: 'other' },
+        ],
+      })
+    ).toBeNull();
   });
 });
 

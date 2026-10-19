@@ -102,6 +102,22 @@ const columns: KanbanColumnProjection[] = [
 ];
 
 function Harness() {
+  const boardColumns = React.useMemo(
+    () =>
+      new URLSearchParams(location.search).has("discuss")
+        ? [
+            {
+              id: "discuss",
+              name: "Discuss",
+              color: "215 12% 55%",
+              sortOrder: 0,
+              tasks: [],
+            },
+            ...columns,
+          ]
+        : columns,
+    [],
+  );
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(
     null,
   );
@@ -109,12 +125,14 @@ function Harness() {
   const [taskOpenCount, setTaskOpenCount] = React.useState(0);
   const [deletedId, setDeletedId] = React.useState("");
   const [rejectMove, setRejectMove] = React.useState(false);
+  const [lastMove, setLastMove] = React.useState<KanbanMoveUpdate[]>([]);
   const moveCountRef = React.useRef(0);
   const [loading, setLoading] = React.useState(
     new URLSearchParams(location.search).has("loading"),
   );
 
-  const move = async (_updates: KanbanMoveUpdate[]) => {
+  const move = async (updates: KanbanMoveUpdate[]) => {
+    setLastMove(updates);
     moveCountRef.current += 1;
     setMoveCount(moveCountRef.current);
     if (rejectMove) throw new Error("Fixture mutation failure");
@@ -127,8 +145,8 @@ function Harness() {
       ) : (
         <ProjectKanbanView
           projectName="Fixture project"
-          columns={columns}
-          taskCount={columns.reduce(
+          columns={boardColumns}
+          taskCount={boardColumns.reduce(
             (count, column) => count + column.tasks.length,
             0,
           )}
@@ -144,10 +162,7 @@ function Harness() {
               >
                 <div className="fixture-panel">
                   <h2>{selectedTaskId}</h2>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTaskId(null)}
-                  >
+                  <button type="button" onClick={() => setSelectedTaskId(null)}>
                     Close panel
                   </button>
                 </div>
@@ -170,6 +185,9 @@ function Harness() {
           Finish loading
         </button>
         <output data-testid="move-count">{moveCount}</output>
+        <output data-testid="last-move" hidden>
+          {JSON.stringify(lastMove)}
+        </output>
         <output data-testid="task-open-count">{taskOpenCount}</output>
         <output data-testid="deleted-id">{deletedId}</output>
         <button type="button" onClick={() => setRejectMove((value) => !value)}>

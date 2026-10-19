@@ -27,11 +27,14 @@ import {
   escapeAttributeValue,
   parseModelId,
   appendPresetModel,
-  resolveDefaultModelId,
   buildModelSelectionOverride,
   findModelForSelection,
   resolveReasoningOverrideState,
   resolveModelDisplayId,
+  resolveNativeModelId,
+  getModelDisplayId,
+  getReasoningLabel,
+  resolveNativeReasoningId,
   getCurrentObservedConfiguration,
 } from '@/shared/lib/modelSelector';
 import { profilesApi } from '@/shared/lib/api';
@@ -137,70 +140,30 @@ export function ModelSelectorContainer({
 
   const baseConfig = streamConfig;
   const config = appendPresetModel(
-    appendPresetModel(baseConfig, presetOptions?.model_id),
+    appendPresetModel(
+      appendPresetModel(baseConfig, baseConfig?.native_defaults?.model_id),
+      presetOptions?.model_id
+    ),
     executorConfig?.model_id
   );
 
-  const availableProviderIds = useMemo(
-    () => config?.providers.map((item) => item.id) ?? [],
-    [config?.providers]
+  const hasProviders = (config?.providers.length ?? 0) > 0;
+  const nativeModelId = resolveNativeModelId(config);
+  const requestedModelId = resolveModelDisplayId(
+    executorConfig?.model_id,
+    presetOptions?.model_id,
+    nativeModelId
   );
-  const hasProviders = availableProviderIds.length > 0;
-  const providerIdMap = useMemo(
-    () => new Map(availableProviderIds.map((id) => [id, id])),
-    [availableProviderIds]
-  );
-  const resolveProviderId = (value?: string | null) =>
-    value ? (providerIdMap.get(value) ?? null) : null;
-
-  const { providerId: configProviderId, modelId: configModelId } = useMemo(
-    () => parseModelId(executorConfig?.model_id, hasProviders),
-    [executorConfig?.model_id, hasProviders]
-  );
-
-  const fallbackProviderId = availableProviderIds[0] ?? null;
-  const resolvedConfigProviderId = configProviderId;
-
-  const { providerId: presetProviderId } = useMemo(
-    () => parseModelId(presetOptions?.model_id, hasProviders),
-    [presetOptions?.model_id, hasProviders]
-  );
-  const resolvedPresetProviderId = resolveProviderId(presetProviderId);
-
-  const hasDefaultModel = Boolean(config?.default_model);
-  const hasModelOverride = executorConfig?.model_id !== undefined;
-  const selectedProviderId =
-    hasModelOverride && executorConfig.model_id === null
-      ? null
-      : (resolvedConfigProviderId ??
-        resolvedPresetProviderId ??
-        (hasDefaultModel ? fallbackProviderId : null));
-
-  const defaultModelId = config
-    ? resolveDefaultModelId(
+  const { providerId: selectedProviderId, modelId: selectedModelId } =
+    parseModelId(requestedModelId, hasProviders);
+  const nativeModelSelection = parseModelId(nativeModelId, hasProviders);
+  const nativeModel = config
+    ? getSelectedModel(
         config.models,
-        selectedProviderId,
-        config.default_model,
-        hasProviders
+        nativeModelSelection.providerId,
+        nativeModelSelection.modelId
       )
     : null;
-
-  const { modelId: presetModelId } = useMemo(
-    () => parseModelId(presetOptions?.model_id, hasProviders),
-    [presetOptions?.model_id, hasProviders]
-  );
-
-  const presetModelMatchesProvider =
-    !selectedProviderId ||
-    !resolvedPresetProviderId ||
-    resolvedPresetProviderId === selectedProviderId;
-  const resolvedPresetModelId = presetModelMatchesProvider
-    ? presetModelId
-    : null;
-
-  const selectedModelId = hasModelOverride
-    ? configModelId
-    : (resolvedPresetModelId ?? defaultModelId);
 
   const selectedModel = config
     ? getSelectedModel(config.models, selectedProviderId, selectedModelId)
@@ -233,6 +196,17 @@ export function ModelSelectorContainer({
     [configuredReasoningId, hasConfiguredReasoning, selectedReasoningOptions]
   );
   const selectedReasoningId = reasoningOverrideState.selectedReasoningId;
+  const inheritedReasoningId = resolveNativeReasoningId(
+    config,
+    requestedModelId
+  );
+  const inheritedReasoningLabel = getReasoningLabel(
+    selectedReasoningOptions,
+    inheritedReasoningId
+  );
+  const followCliReasoningLabel = inheritedReasoningLabel
+    ? t('modelSelector.followCliValue', { value: inheritedReasoningLabel })
+    : t('modelSelector.followCliConfig');
 
   const providerOptions =
     executorConfig?.provider_options !== undefined
@@ -420,11 +394,7 @@ export function ModelSelectorContainer({
     ? toPrettyCase(resolvedPreset)
     : defaultLabel;
 
-  const displayModelId = resolveModelDisplayId(
-    executorConfig?.model_id,
-    presetOptions?.model_id,
-    config?.default_model
-  );
+  const displayModelId = getModelDisplayId(selectedModel, requestedModelId);
 
   if (!config) {
     return (
@@ -455,28 +425,15 @@ export function ModelSelectorContainer({
   }
 
   const showModelSelector = loadingModels || config.models.length > 0;
-  const showDefaultOption = !config.default_model && config.models.length > 0;
-  const displaySelection = parseModelId(displayModelId, hasProviders);
-  const displayProviderId = displaySelection.providerId ?? selectedProviderId;
-  const displayModelAmbiguous =
-    !displayProviderId &&
-    config.models.filter((model) => model.id === displaySelection.modelId)
-      .length > 1;
-  const displaySelectedModel =
-    showModelSelector && !displayModelAmbiguous
-      ? getSelectedModel(
-          config.models,
-          displayProviderId,
-          displaySelection.modelId
-        )
-      : null;
+  const showDefaultOption = config.models.length > 0;
   const reasoningLabel = loadingModels
     ? null
     : getReasoningDisplayLabel(
-        displaySelectedModel?.reasoning_options ?? EMPTY_REASONING_OPTIONS,
+        selectedReasoningOptions,
         configuredReasoningId,
         hasConfiguredReasoning,
-        t('modelSelector.followCliConfig')
+        t('modelSelector.followCliConfig'),
+        inheritedReasoningId
       );
   const modelLabelBase = loadingModels
     ? loadingLabel
@@ -642,6 +599,8 @@ export function ModelSelectorContainer({
           selectedProviderId={selectedProviderId}
           selectedModelId={selectedModelId}
           selectedReasoningId={selectedReasoningId}
+          followCliReasoningLabel={followCliReasoningLabel}
+          inheritedModelLabel={getModelDisplayId(nativeModel, nativeModelId)}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onModelSelect={handleModelSelect}

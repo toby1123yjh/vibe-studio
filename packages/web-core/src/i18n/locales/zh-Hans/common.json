@@ -200,9 +200,7 @@
     "openGitHub": "在 GitHub 查看"
   },
   "projectSessions": {
-    "column": "Discuss",
-    "create": "新建讨论",
-    "empty": "暂无讨论。"
+    "create": "新建讨论"
   },
   "sessionProject": {
     "messagePlaceholder": "描述你想做的事…",
@@ -1671,8 +1669,6 @@
     "copyLink": "复制链接",
     "issueTitlePlaceholder": "任务标题...",
     "issueDescriptionPlaceholder": "输入任务描述...",
-    "createDraftWorkspaceImmediately": "立即创建草稿工作空间",
-    "createDraftWorkspaceDescription": "创建任务后，打开预填了任务详情的工作空间创建表单",
     "createIssue": "创建任务",
     "newIssue": "新任务",
     "previewCodeBlock": "[代码块]",
@@ -1863,6 +1859,8 @@
     "geminiNativeThinking": "Gemini 思考预算在智能体中心的原生模型设置中管理，不属于单次执行覆盖。",
     "unspecified": "未指定模型",
     "followCliConfig": "跟随智能体配置",
+    "followCliValue": "跟随智能体 · {{value}}",
+    "builtinCatalog": "备用列表，尚未确认智能体实际支持的选项。",
     "preset": "预设",
     "custom": "自定义",
     "permissions": "权限",

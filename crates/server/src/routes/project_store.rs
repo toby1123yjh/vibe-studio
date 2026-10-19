@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const MAX_BYTES: u64 = 32 * 1024 * 1024;
 const METADATA: &str = ".vibe-kanban";
 const DOCUMENT: &str = "project.json";
@@ -113,7 +113,7 @@ impl ProjectDocument {
     }
 
     pub fn validate(&self) -> Result<(), ApiError> {
-        if self.schema_version != FORMAT_VERSION || self.revision < 1 {
+        if !(1..=FORMAT_VERSION).contains(&self.schema_version) || self.revision < 1 {
             return Err(invalid("Unsupported schema version or revision"));
         }
         if self.project.id == DEFAULT_PROJECT_ID
@@ -410,6 +410,55 @@ fn stage(
     })
 }
 
+/// Upgrade once at the file authority boundary, so deliberately removed statuses
+/// are not re-created on subsequent reads. Pure monitoring snapshots stay read-only.
+fn prepare_document(
+    root: &Path,
+    document: &mut ProjectDocument,
+    exists: bool,
+) -> Result<Option<PreparedDocument>, ApiError> {
+    let revision = document.revision;
+    let upgrading = document.schema_version < FORMAT_VERSION;
+    if upgrading {
+        if !document
+            .statuses
+            .iter()
+            .any(|status| status.name.trim().eq_ignore_ascii_case("Discuss"))
+        {
+            let (name, color, _, hidden) = super::local_remote::DISCUSS_STATUS;
+            document.statuses.insert(
+                0,
+                ProjectStatus {
+                    id: Uuid::new_v4(),
+                    project_id: document.project.id,
+                    name: name.into(),
+                    color: color.into(),
+                    sort_order: document
+                        .statuses
+                        .iter()
+                        .map(|status| status.sort_order)
+                        .min()
+                        .unwrap_or(100)
+                        .saturating_sub(100),
+                    hidden,
+                    created_at: Utc::now(),
+                },
+            );
+        }
+        document.schema_version = FORMAT_VERSION;
+        if exists {
+            document.revision = revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("Revision overflow"))?;
+        }
+    }
+    if !exists || upgrading {
+        Ok(Some(stage(root, document, exists.then_some(revision))?))
+    } else {
+        Ok(None)
+    }
+}
+
 pub(crate) async fn load_in(
     conn: &mut SqliteConnection,
     project_id: Uuid,
@@ -424,11 +473,15 @@ pub(crate) async fn load_in(
     } else {
         return adopt_in(conn, project_id).await;
     };
-    let document = read_path(&metadata_path(&root, false)?)?;
+    let mut document = read_path(&metadata_path(&root, false)?)?;
     if document.project.id != project_id {
         return Err(invalid(
             "Project identity does not match its registered directory",
         ));
+    }
+    if let Some(prepared) = prepare_document(&root, &mut document, true)? {
+        project_in(conn, &document).await?;
+        prepared.publish()?;
     }
     Ok((root, document))
 }
@@ -487,7 +540,7 @@ async fn adopt_in(
     let root = tokio::fs::canonicalize(path).await?;
     let target = metadata_path(&root, true)?;
     let exists = target.try_exists()?;
-    let document = if exists {
+    let mut document = if exists {
         read_path(&target)?
     } else {
         legacy_in(conn, project_id).await?
@@ -498,9 +551,10 @@ async fn adopt_in(
         ));
     }
     register_in(conn, &root, &document).await?;
+    let prepared = prepare_document(&root, &mut document, exists)?;
     project_in(conn, &document).await?;
-    if !exists {
-        stage(&root, &document, None)?.publish()?;
+    if let Some(prepared) = prepared {
+        prepared.publish()?;
     }
     Ok((root, document))
 }
@@ -538,7 +592,8 @@ async fn legacy_in(
     let task_followers=sqlx::query("SELECT r.* FROM local_issue_followers r JOIN local_issues i ON i.id=r.issue_id WHERE i.project_id=?").bind(project_id).fetch_all(&mut *conn).await?.iter().map(issue_follower_from_row).collect::<Result<Vec<_>,_>>()?;
     let task_relationships=sqlx::query("SELECT r.* FROM local_issue_relationships r JOIN local_issues i ON i.id=r.issue_id WHERE i.project_id=?").bind(project_id).fetch_all(&mut *conn).await?.iter().map(issue_relationship_from_row).collect::<Result<Vec<_>,_>>()?;
     let document = ProjectDocument {
-        schema_version: FORMAT_VERSION,
+        // Legacy projections predate the real Discuss task status.
+        schema_version: 1,
         revision: 1,
         project,
         statuses,
@@ -707,7 +762,7 @@ pub(crate) async fn open(
             "The registered project document is missing; it must not be recreated from the local index",
         ));
     }
-    let document = if existing {
+    let mut document = if existing {
         read_path(&target)?
     } else if let Some(id) = request.id {
         let registered: bool =
@@ -724,9 +779,10 @@ pub(crate) async fn open(
         ProjectDocument::new(request)
     };
     register_in(&mut tx, &root, &document).await?;
+    let prepared = prepare_document(&root, &mut document, existing)?;
     project_in(&mut tx, &document).await?;
-    if !existing {
-        stage(&root, &document, None)?.publish()?;
+    if let Some(prepared) = prepared {
+        prepared.publish()?;
     }
     tx.commit().await?;
     Ok(document.project)
@@ -748,7 +804,7 @@ pub(crate) async fn create_in(
     if mounted && !exists {
         return Err(invalid("The registered project document is missing"));
     }
-    let document = if exists {
+    let mut document = if exists {
         let document = read_path(&path)?;
         if Some(document.project.id) != request.id {
             return Err(invalid(
@@ -760,12 +816,9 @@ pub(crate) async fn create_in(
         ProjectDocument::new(request)
     };
     register_in(conn, root, &document).await?;
+    let prepared = prepare_document(root, &mut document, exists)?;
     project_in(conn, &document).await?;
-    if exists {
-        Ok(None)
-    } else {
-        Ok(Some(stage(root, &document, None)?))
-    }
+    Ok(prepared)
 }
 
 async fn register_in(
@@ -1163,6 +1216,92 @@ mod tests {
             parent_issue_sort_order: None,
             extension_metadata: Value::Null,
         }
+    }
+
+    #[tokio::test]
+    async fn discuss_upgrade_preserves_existing_tasks_and_publishes_once() {
+        for mounted in [false, true] {
+            let pool = pool().await;
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().canonicalize().unwrap();
+            let mut old = ProjectDocument::new(project_request());
+            old.schema_version = 1;
+            old.statuses.remove(0);
+            let request = task_request(&old);
+            let task_id = old.insert_task(request).unwrap();
+            let old_statuses = serde_json::to_value(&old.statuses).unwrap();
+            let old_tasks = serde_json::to_value(&old.tasks).unwrap();
+            let id = old.project.id;
+            stage(&root, &old, None).unwrap().publish().unwrap();
+            if mounted {
+                let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+                register_in(&mut tx, &root, &old).await.unwrap();
+                project_in(&mut tx, &old).await.unwrap();
+                tx.commit().await.unwrap();
+            } else {
+                open(&pool, root.to_str().unwrap(), project_request())
+                    .await
+                    .unwrap();
+            }
+
+            let upgraded = read(&pool, id).await.unwrap();
+            assert_eq!(upgraded.schema_version, FORMAT_VERSION);
+            assert_eq!(upgraded.revision, old.revision + 1);
+            assert_eq!(upgraded.statuses[0].name, "Discuss");
+            assert!(!upgraded.statuses[0].hidden);
+            assert!(upgraded.statuses[0].sort_order < upgraded.statuses[1].sort_order);
+            assert_eq!(
+                serde_json::to_value(&upgraded.statuses[1..]).unwrap(),
+                old_statuses
+            );
+            assert_eq!(serde_json::to_value(&upgraded.tasks).unwrap(), old_tasks);
+            let projected_status: Uuid =
+                sqlx::query_scalar("SELECT status_id FROM local_issues WHERE id=?")
+                    .bind(task_id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(projected_status, old.tasks[0].status_id);
+            let path = metadata_path(&root, false).unwrap();
+            let published = std::fs::read(&path).unwrap();
+            open(&pool, root.to_str().unwrap(), project_request())
+                .await
+                .unwrap();
+            read(&pool, id).await.unwrap();
+            assert_eq!(std::fs::read(path).unwrap(), published);
+
+            // Later user edits are authoritative; reads must not reseed defaults.
+            mutate(&pool, id, |document| {
+                document.statuses.remove(0);
+                Ok(())
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                read(&pool, id).await.unwrap().statuses.len(),
+                old.statuses.len()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn discuss_upgrade_reuses_custom_status_including_hidden_setting() {
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let mut old = ProjectDocument::new(project_request());
+        old.schema_version = 1;
+        old.statuses[0].name = " discuss ".into();
+        old.statuses[0].hidden = true;
+        let statuses = serde_json::to_value(&old.statuses).unwrap();
+        stage(&root, &old, None).unwrap().publish().unwrap();
+
+        open(&pool, root.to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        let upgraded = read(&pool, old.project.id).await.unwrap();
+        assert_eq!(upgraded.schema_version, FORMAT_VERSION);
+        assert_eq!(serde_json::to_value(upgraded.statuses).unwrap(), statuses);
     }
 
     #[tokio::test]

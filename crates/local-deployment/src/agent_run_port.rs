@@ -4233,7 +4233,7 @@ mod tests {
                 .is_err()
         );
         let mut wrong_config = attempt.clone();
-        wrong_config.executor_config.model_id = Some("switched-model".into());
+        wrong_config.executor_config.model_id = Some(Some("switched-model".into()));
         assert!(
             port.issue_workflow_mcp_token(&request, &wrong_config)
                 .await
@@ -4401,8 +4401,8 @@ mod tests {
             name: "runtime-contracts".to_string(),
             path: PathBuf::from("C:/skills/runtime-contracts/SKILL.md"),
         }];
-        attempt.executor_config.model_id = Some("openai/gpt-5.6-codex".to_string());
-        attempt.executor_config.reasoning_id = Some("high".to_string());
+        attempt.executor_config.model_id = Some(Some("openai/gpt-5.6-codex".to_string()));
+        attempt.executor_config.reasoning_id = Some(Some("high".to_string()));
         attempt.selected_skills = Some(selected_skills.clone());
 
         let launch = FrozenDirectProviderLaunchSpec::new(
@@ -4458,7 +4458,7 @@ mod tests {
         attempt.executor_config = executors::profile::ExecutorConfig {
             executor: executors::executors::BaseCodingAgent::ClaudeCode,
             variant: Some("default".to_string()),
-            model_id: Some("claude-sonnet-4".to_string()),
+            model_id: Some(Some("claude-sonnet-4".to_string())),
             agent_id: None,
             reasoning_id: None,
             permission_policy: None,

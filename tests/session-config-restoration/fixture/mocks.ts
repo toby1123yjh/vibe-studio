@@ -72,6 +72,7 @@ export const agentsApi = {
     model_id: 'preset-model',
     agent_id: 'preset-agent',
     reasoning_id: 'preset-reasoning',
+    provider_options: null,
   }),
 };
 

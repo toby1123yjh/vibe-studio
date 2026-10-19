@@ -26,7 +26,6 @@ import {
 import { TaskFloatingPanelContainer } from './TaskFloatingPanelContainer';
 import { ProjectKanbanView } from './ProjectKanbanView';
 import { ProjectBoardActions } from './ProjectBoardActions';
-import { ProjectSessions } from './ProjectSessions';
 
 interface ProjectKanbanContainerProps {
   projectName: string;
@@ -402,13 +401,6 @@ export function ProjectKanbanContainer({
         />
       }
       columns={columns}
-      sessionColumn={
-        <ProjectSessions
-          projectId={projectId}
-          variant="column"
-          onCreateTask={() => openKanbanTaskComposer(composerKey)}
-        />
-      }
       taskCount={columns.reduce(
         (count, column) => count + column.tasks.length,
         0

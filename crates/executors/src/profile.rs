@@ -132,15 +132,25 @@ pub struct ExecutorConfig {
     /// Optional variant/preset name (e.g., "PLAN", "ROUTER")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
-    /// Model override (e.g., "anthropic/claude-sonnet-4-20250514")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_id: Option<String>,
+    /// Omitted inherits the Studio preset; null delegates to the native agent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_with::rust::double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub model_id: Option<Option<String>>,
     /// Agent mode override
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// Reasoning effort override (e.g., "high", "medium")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_id: Option<String>,
+    /// Omitted inherits the Studio preset; null delegates to the native agent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_with::rust::double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub reasoning_id: Option<Option<String>>,
     /// Permission policy override
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<PermissionPolicy>,
@@ -223,7 +233,9 @@ impl ExecutorConfig {
         {
             return Err("Attempt options belong to a different agent".into());
         }
-        if self.executor == BaseCodingAgent::Gemini && self.reasoning_id.is_some() {
+        if self.executor == BaseCodingAgent::Gemini
+            && self.reasoning_id.as_ref().is_some_and(Option::is_some)
+        {
             return Err("Gemini thinking budget must be configured in native model settings; per-attempt reasoning is not supported".into());
         }
         if let Some(ProviderRunOptions::ClaudeCode {
@@ -633,6 +645,26 @@ mod provider_expansion_tests {
     };
 
     #[test]
+    fn model_and_effort_keep_omitted_null_and_explicit_values_distinct() {
+        for field in ["model_id", "reasoning_id"] {
+            for value in [
+                None,
+                Some(serde_json::Value::Null),
+                Some(serde_json::json!("")),
+                Some(serde_json::json!("exact/native-value")),
+            ] {
+                let mut wire = serde_json::json!({"executor": "CODEX"});
+                if let Some(value) = value {
+                    wire[field] = value;
+                }
+                let config: ExecutorConfig = serde_json::from_value(wire.clone()).unwrap();
+                assert_eq!(serde_json::to_value(&config).unwrap(), wire);
+                assert_eq!(config.has_overrides(), wire.get(field).is_some());
+            }
+        }
+    }
+
+    #[test]
     fn attempt_provider_options_round_trip_without_losing_explicit_false() {
         for (executor, options) in [
             (
@@ -685,7 +717,7 @@ mod provider_expansion_tests {
         assert!(config.validate_provider_options().is_err());
 
         let mut gemini = ExecutorConfig::new(BaseCodingAgent::Gemini);
-        gemini.reasoning_id = Some("high".into());
+        gemini.reasoning_id = Some(Some("high".into()));
         assert!(gemini.validate_provider_options().is_err());
     }
 

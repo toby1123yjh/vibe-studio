@@ -24,11 +24,7 @@ import {
   type LinkedPullRequest as TaskTagsLinkedPullRequest,
 } from './TaskTagsRow';
 import { PrimaryButton } from './PrimaryButton';
-import { Toggle } from './Toggle';
-import {
-  TaskPropertyRow,
-  type TaskPropertyRowProps,
-} from './TaskPropertyRow';
+import { TaskPropertyRow, type TaskPropertyRowProps } from './TaskPropertyRow';
 import { IconButton } from './IconButton';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 import {
@@ -42,9 +38,7 @@ import { ErrorAlert } from './ErrorAlert';
 export type TaskPanelMode = 'create' | 'edit';
 type TaskPriority = TaskPropertyRowProps['priority'];
 type TaskStatus = TaskPropertyRowProps['statuses'][number];
-type TaskAssignee = NonNullable<
-  TaskPropertyRowProps['assigneeUsers']
->[number];
+type TaskAssignee = NonNullable<TaskPropertyRowProps['assigneeUsers']>[number];
 type TaskCreator = Exclude<TaskPropertyRowProps['creatorUser'], undefined>;
 export interface KanbanTaskTag extends TaskTagBase {
   project_id: string;
@@ -57,7 +51,6 @@ export interface TaskFormData {
   priority: TaskPriority | null;
   assigneeIds: string[];
   tagIds: string[];
-  createDraftWorkspace: boolean;
 }
 
 export interface LinkedPullRequest extends TaskTagsLinkedPullRequest {}
@@ -496,21 +489,6 @@ export function KanbanTaskPanel({
             )}
           </div>
         </div>
-
-        {/* Create Draft Workspace Toggle (Create mode only) */}
-        {isCreateMode && (
-          <div className="p-base border-t">
-            <Toggle
-              checked={formData.createDraftWorkspace}
-              onCheckedChange={(checked) =>
-                onFormChange('createDraftWorkspace', checked)
-              }
-              label={t('kanban.createDraftWorkspaceImmediately')}
-              description={t('kanban.createDraftWorkspaceDescription')}
-              disabled={isSubmitting}
-            />
-          </div>
-        )}
 
         {/* Create Issue Button (Create mode only) */}
         {isCreateMode && (

@@ -109,9 +109,9 @@ mod tests {
         );
         let config = ExecutorConfig {
             variant: Some("PLAN".into()),
-            model_id: Some("provider/custom/model".into()),
+            model_id: Some(Some("provider/custom/model".into())),
             agent_id: Some("plan".into()),
-            reasoning_id: Some("high".into()),
+            reasoning_id: Some(Some("high".into())),
             ..ExecutorConfig::new(BaseCodingAgent::Codex)
         };
         reference.metadata = Some(json!({"profile_context": {"executor_config": config}}));
@@ -174,9 +174,9 @@ mod tests {
         }
         let expected = ExecutorConfig {
             variant: Some("PLAN".into()),
-            model_id: Some("provider/model:latest".into()),
+            model_id: Some(Some("provider/model:latest".into())),
             agent_id: Some("plan".into()),
-            reasoning_id: Some("high".into()),
+            reasoning_id: Some(Some("high".into())),
             permission_policy: Some(executors::model_selector::PermissionPolicy::Supervised),
             provider_options: Some(executors::profile::ProviderRunOptions::Codex {
                 service_tier: Some("priority".into()),

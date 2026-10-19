@@ -19,8 +19,8 @@ use crate::{
     agent_tools::native_assets,
     executors::ExecutorError,
     model_selector::{
-        AgentInfo, CapabilitySupport, ModelCapabilities, ModelInfo, ModelSelectorConfig,
-        PermissionPolicy, ReasoningOption,
+        AgentInfo, CapabilitySupport, ModelCapabilities, ModelCatalogSource, ModelInfo,
+        ModelSelectorConfig, PermissionPolicy, ReasoningOption,
     },
 };
 
@@ -317,6 +317,7 @@ pub(crate) fn observe_legacy_catalog(
             // Native modes are the authority. Do not add an overlapping
             // generic policy switch beside default/auto_edit/yolo/plan.
             permissions: Vec::new(),
+            catalog_source: Some(ModelCatalogSource::Observed),
             ..Default::default()
         },
     };
@@ -598,6 +599,8 @@ pub(crate) fn observe_catalog(
             })
             .unwrap_or_default(),
         permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
+        catalog_source: Some(ModelCatalogSource::Observed),
+        ..Default::default()
     };
     let observation = AcpCatalogObservation {
         working_dir: cwd,

@@ -52,7 +52,7 @@ use crate::{
             shell_command_parsing::CommandCategory,
         },
     },
-    model_selector::PermissionPolicy,
+    model_selector::{ModelCatalogSource, NativeModelDefaults, PermissionPolicy},
     profile::{ExecutorConfig, ProviderRunOptions},
     stdout_dup::create_stdout_pipe_writer,
 };
@@ -183,17 +183,22 @@ impl ClaudeCode {
         executor_config: &ExecutorConfig,
     ) -> Result<(), ExecutorError> {
         if let Some(model_id) = &executor_config.model_id {
-            self.model = Some(model_id.clone());
+            self.model = model_id.clone();
         }
         if let Some(agent) = &executor_config.agent_id {
             self.agent = Some(agent.clone());
         }
         if let Some(reasoning_id) = &executor_config.reasoning_id {
-            self.effort = Some(reasoning_id.parse().map_err(|_| {
-                ExecutorError::Io(std::io::Error::other(format!(
-                    "Unsupported Claude effort: {reasoning_id}"
-                )))
-            })?);
+            self.effort = reasoning_id
+                .as_deref()
+                .map(|value| {
+                    value.parse().map_err(|_| {
+                        ExecutorError::Io(std::io::Error::other(format!(
+                            "Unsupported Claude effort: {value}"
+                        )))
+                    })
+                })
+                .transpose()?;
         }
         if let Some(ProviderRunOptions::ClaudeCode {
             fast_mode,
@@ -416,6 +421,7 @@ impl ClaudeCode {
         let mut hash = Sha256::new();
         hash.update(serde_json::to_vec(self).unwrap_or_default());
         hash.update(cwd.to_string_lossy().as_bytes());
+        hash.update(serde_json::to_vec(&self.native_model_defaults(cwd)).unwrap_or_default());
         for name in [
             "PATH",
             "CLAUDE_CONFIG_DIR",
@@ -423,6 +429,7 @@ impl ClaudeCode {
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_BASE_URL",
             "ANTHROPIC_MODEL",
+            "CLAUDE_CODE_EFFORT_LEVEL",
             "CLAUDE_CODE_USE_BEDROCK",
             "CLAUDE_CODE_USE_VERTEX",
         ] {
@@ -465,6 +472,17 @@ impl ClaudeCode {
             }
         }
         Ok(format!("{:x}", hash.finalize()))
+    }
+
+    fn native_model_defaults(&self, cwd: &Path) -> Option<NativeModelDefaults> {
+        if self.claude_code_router == Some(true) && self.cmd.base_command_override.is_none() {
+            return None;
+        }
+        crate::agent_settings::native_model_defaults_for(
+            Self::DIRECT_PROVIDER,
+            Some(cwd),
+            &self.cmd,
+        )
     }
 
     pub async fn invalidate_discovery_cache(
@@ -645,12 +663,14 @@ fn default_discovered_options(
             providers: vec![],
             models: claude_model_options(supports_effort),
             default_model: Some("default".to_string()),
+            catalog_source: Some(ModelCatalogSource::Builtin),
             agents: vec![],
             permissions: vec![
                 PermissionPolicy::Auto,
                 PermissionPolicy::Supervised,
                 PermissionPolicy::Plan,
             ],
+            ..Default::default()
         },
         slash_commands: ClaudeCode::hardcoded_slash_commands(),
         skills: vec![],
@@ -744,9 +764,28 @@ impl StandardCodingAgentExecutor for ClaudeCode {
             .or(repo_path)
             .map(Path::to_path_buf)
             .unwrap_or(std::env::current_dir()?);
-        let cmd_key = self.compute_cmd_key(&discovery_cwd).await?;
+        let native_defaults = self.native_model_defaults(&discovery_cwd);
+        // Return useful local config even when the executable/probe is missing
+        // or broken. Failure must remain visible alongside the builtin hints.
+        let (cmd_key, supports_effort) = match async {
+            Ok::<_, ExecutorError>((
+                self.compute_cmd_key(&discovery_cwd).await?,
+                self.supports_effort_flag_at(Some(&discovery_cwd)).await?,
+            ))
+        }
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let mut options = default_discovered_options(false);
+                options.model_selector.native_defaults = native_defaults;
+                options.error = Some(format!("Claude Code option discovery failed: {error}"));
+                return Ok(Box::pin(futures::stream::once(async move {
+                    patch::executor_discovered_options(options)
+                })));
+            }
+        };
         let base_executor = BaseCodingAgent::ClaudeCode;
-        let supports_effort = self.supports_effort_flag_at(workdir.or(repo_path)).await?;
 
         let (target_path, initial_options) = if let Some(wd) = workdir {
             let wd_buf = wd.to_path_buf();
@@ -755,6 +794,7 @@ impl StandardCodingAgentExecutor for ClaudeCode {
             if let Some(cached) = cache.get(&target_key) {
                 let mut options = cached.as_ref().clone().with_loading(false);
                 apply_claude_effort_support(&mut options, supports_effort);
+                options.model_selector.native_defaults = native_defaults;
                 return Ok(Box::pin(futures::stream::once(async move {
                     patch::executor_discovered_options(options)
                 })));
@@ -799,6 +839,7 @@ impl StandardCodingAgentExecutor for ClaudeCode {
             if let Some(cached) = cache.get(&target_key) {
                 let mut options = cached.as_ref().clone().with_loading(false);
                 apply_claude_effort_support(&mut options, supports_effort);
+                options.model_selector.native_defaults = native_defaults;
                 return Ok(Box::pin(futures::stream::once(async move {
                     patch::executor_discovered_options(options)
                 })));
@@ -831,6 +872,7 @@ impl StandardCodingAgentExecutor for ClaudeCode {
             if let Some(cached) = cache.get(&global_key) {
                 let mut options = cached.as_ref().clone().with_loading(false);
                 apply_claude_effort_support(&mut options, supports_effort);
+                options.model_selector.native_defaults = native_defaults;
                 return Ok(Box::pin(futures::stream::once(async move {
                     patch::executor_discovered_options(options)
                 })));
@@ -843,19 +885,26 @@ impl StandardCodingAgentExecutor for ClaudeCode {
             (None, opts)
         };
 
+        let mut initial_options = initial_options;
+        initial_options.model_selector.native_defaults = native_defaults.clone();
+        initial_options.loading_models = true;
         let initial_patch = patch::executor_discovered_options(initial_options);
 
         let this = self.clone();
         let cmd_key_for_discovery = cmd_key.clone();
 
         let discovery_stream = async_stream::stream! {
-            let discovery_path = target_path.as_deref().unwrap_or(Path::new(".")).to_path_buf();
+            let discovery_path = discovery_cwd;
             let mut final_options = default_discovered_options(supports_effort);
+            final_options.model_selector.native_defaults = native_defaults;
 
             match this.discover_agents_and_slash_commands_initial(&discovery_path).await {
                 Ok((mut agent_options, slash_commands_initial, plugins, skills, models)) => {
                     if !models.is_empty() {
                         final_options.model_selector.models = models;
+                        final_options.model_selector.catalog_source = Some(ModelCatalogSource::Native);
+                    } else {
+                        final_options.error = Some("Claude returned no models; capabilities are unconfirmed".into());
                     }
                     yield patch::executor_discovered_options(final_options.clone());
                     let default_agents = [
@@ -940,9 +989,9 @@ impl StandardCodingAgentExecutor for ClaudeCode {
         ExecutorConfig {
             executor: BaseCodingAgent::ClaudeCode,
             variant: None,
-            model_id: self.model.clone(),
+            model_id: self.model.clone().map(Some),
             agent_id: None,
-            reasoning_id: self.effort.as_ref().map(|e| e.as_ref().to_owned()),
+            reasoning_id: self.effort.as_ref().map(|e| Some(e.as_ref().to_owned())),
             permission_policy: Some(permission_policy),
             provider_options: Some(ProviderRunOptions::ClaudeCode {
                 fast_mode: self.fast_mode,
@@ -3256,6 +3305,8 @@ mod tests {
     use super::*;
     use crate::logs::utils::{EntryIndexProvider, patch::extract_normalized_entry_from_patch};
 
+    static DISCOVERY_FIXTURE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn patches_to_entries(patches: &[json_patch::Patch]) -> Vec<NormalizedEntry> {
         patches
             .iter()
@@ -3366,6 +3417,164 @@ mod tests {
                 model.id
             );
         }
+    }
+
+    #[test]
+    fn native_defaults_read_configured_model_and_per_model_effort_without_execution_overrides() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("claude-config");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("settings.json"),
+            r#"{
+            "model":"custom-model-alias",
+            "effortLevel":"high",
+            "modelSettings":{"canonical-future-model":{"effortLevel":"xhigh"}},
+            "env":{"ANTHROPIC_API_KEY":"secret-not-for-picker"}
+        }"#,
+        )
+        .unwrap();
+        let mut executor = test_executor(None);
+        executor.cmd.env = Some(HashMap::from([
+            (
+                "CLAUDE_CONFIG_DIR".into(),
+                root.to_string_lossy().into_owned(),
+            ),
+            (
+                if cfg!(windows) { "USERPROFILE" } else { "HOME" }.into(),
+                directory.path().to_string_lossy().into_owned(),
+            ),
+            ("ANTHROPIC_MODEL".into(), "custom-model-alias".into()),
+            ("CLAUDE_CODE_EFFORT_LEVEL".into(), String::new()),
+        ]));
+        let defaults = executor.native_model_defaults(directory.path()).unwrap();
+        assert_eq!(defaults.model_id.as_deref(), Some("custom-model-alias"));
+        assert_eq!(defaults.reasoning_id.as_deref(), Some("high"));
+        assert_eq!(
+            defaults
+                .model_reasoning
+                .get("canonical-future-model")
+                .map(String::as_str),
+            Some("xhigh")
+        );
+        assert!(
+            !serde_json::to_string(&defaults)
+                .unwrap()
+                .contains("secret-not-for-picker")
+        );
+        assert_eq!(executor.get_preset_options().model_id, None);
+        assert_eq!(executor.get_preset_options().reasoning_id, None);
+        // Opaque wrappers cannot establish that host files are their authority.
+        executor.cmd.base_command_override = Some("custom-claude-wrapper".into());
+        assert!(executor.native_model_defaults(directory.path()).is_none());
+    }
+
+    #[tokio::test]
+    async fn discovery_cache_tracks_native_config_changes_and_preserves_catalog_source() {
+        let _guard = DISCOVERY_FIXTURE_LOCK.lock().await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("native-config");
+        std::fs::create_dir_all(&root).unwrap();
+        let settings = root.join("settings.json");
+        std::fs::write(&settings, r#"{"model":"local-alias-a"}"#).unwrap();
+        let trace = directory.path().join("initialize.jsonl");
+        let script = directory.path().join("claude-discovery.cjs");
+        std::fs::write(&script, r#"
+const fs = require('node:fs');
+if (process.argv.includes('--help')) { process.stdout.write('--effort'); process.exit(0); }
+const readline = require('node:readline');
+readline.createInterface({input:process.stdin}).on('line', line => {
+  const request = JSON.parse(line);
+  fs.appendFileSync(process.env.VK_FIXTURE_TRACE, JSON.stringify({request,args:process.argv.slice(2)}) + '\n');
+  if (request.type !== 'control_request' || request.request.subtype !== 'initialize') process.exit(22);
+  process.stdout.write(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:request.request_id,response:{models:[{value:'native-alias',resolvedModel:'canonical-native-model',supportsEffort:true,supportedEffortLevels:['high','max']}]}}}) + '\n');
+});
+"#).unwrap();
+        let mut executor = test_executor(None);
+        executor.cmd.base_command_override = Some(format!("node \"{}\"", script.display()));
+        executor.cmd.env = Some(HashMap::from([
+            (
+                "CLAUDE_CONFIG_DIR".into(),
+                root.to_string_lossy().into_owned(),
+            ),
+            (
+                "VK_FIXTURE_TRACE".into(),
+                trace.to_string_lossy().into_owned(),
+            ),
+        ]));
+        for expected_probes in [1, 1, 2] {
+            if expected_probes == 2 {
+                std::fs::write(&settings, r#"{"model":"local-alias-b","modelSettings":{"canonical-native-model":{"effortLevel":"xhigh"}}}"#).unwrap();
+            }
+            let mut stream = executor
+                .discover_options(Some(directory.path()), None)
+                .await
+                .unwrap();
+            let mut state = serde_json::json!({"options":null});
+            while let Some(patch) = stream.next().await {
+                json_patch::patch(&mut state, &patch).unwrap();
+            }
+            let options: crate::executor_discovery::ExecutorDiscoveredOptions =
+                serde_json::from_value(state["options"].clone()).unwrap();
+            assert_eq!(
+                options.model_selector.catalog_source,
+                Some(ModelCatalogSource::Native)
+            );
+            assert_eq!(options.model_selector.models[0].id, "native-alias");
+            assert_eq!(options.model_selector.models[0].reasoning_options.len(), 2);
+            assert!(options.error.is_none());
+            // The fixture uses an opaque command override, so its catalog is
+            // native but unrelated host defaults must not be projected.
+            assert!(options.model_selector.native_defaults.is_none());
+            let probes: Vec<serde_json::Value> = std::fs::read_to_string(&trace)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(probes.len(), expected_probes);
+            assert!(probes.iter().all(|probe| {
+                probe["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|arg| arg == "--no-session-persistence")
+            }));
+            assert!(
+                probes
+                    .iter()
+                    .all(|probe| probe["request"]["request"]["subtype"] == "initialize")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_claude_discovery_returns_builtin_source_with_visible_failure() {
+        // Resolving a missing CLI may refresh process PATH. Keep it from
+        // changing the cache authority during the neighboring fixture test.
+        let _guard = DISCOVERY_FIXTURE_LOCK.lock().await;
+        let mut executor = test_executor(None);
+        executor.cmd.base_command_override =
+            Some("missing-vibe-studio-discovery-fixture-executable".into());
+        let mut stream = executor.discover_options(None, None).await.unwrap();
+        let mut state = serde_json::json!({"options":null});
+        while let Some(patch) = stream.next().await {
+            json_patch::patch(&mut state, &patch).unwrap();
+        }
+        let options: crate::executor_discovery::ExecutorDiscoveredOptions =
+            serde_json::from_value(state["options"].clone()).unwrap();
+        assert_eq!(
+            options.model_selector.catalog_source,
+            Some(ModelCatalogSource::Builtin)
+        );
+        assert!(options.error.is_some());
+        assert!(!options.loading_models);
+        assert!(
+            options
+                .model_selector
+                .models
+                .iter()
+                .all(|model| model.reasoning_options.is_empty())
+        );
     }
 
     #[test]

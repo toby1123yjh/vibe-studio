@@ -1,7 +1,4 @@
 {
-  "projectSessions": {
-    "column": "Discuss"
-  },
   "editorNames": {
     "custom": "Personnalisé"
   },
@@ -634,8 +631,6 @@
     "copyLink": "Copier le lien",
     "issueTitlePlaceholder": "Titre du tâche...",
     "issueDescriptionPlaceholder": "Entrez la description de la tâche...",
-    "createDraftWorkspaceImmediately": "Créer immédiatement un espace de travail brouillon",
-    "createDraftWorkspaceDescription": "Après la création de l'task, ouvrir le formulaire de création de workspace pré-rempli avec les détails de l'task",
     "createIssue": "Créer la tâche",
     "newIssue": "Nouveau tâche",
     "previewCodeBlock": "[Bloc de code]",
@@ -773,6 +768,8 @@
   "modelSelector": {
     "unspecified": "Modèle non spécifié",
     "followCliConfig": "Follow CLI config",
+    "followCliValue": "Suivre la CLI · {{value}}",
+    "builtinCatalog": "Liste de secours. Les capacités de l’agent ne sont pas confirmées.",
     "preset": "Préréglage",
     "custom": "Personnaliser",
     "permissions": "Permissions",

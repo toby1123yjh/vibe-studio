@@ -285,13 +285,13 @@ test("real workflow selector supports both new providers and reports the selecte
   await workflow
     .getByRole("button", { name: "Select executor", exact: true })
     .click();
-  await page.getByRole("menuitem", { name: "Opencode", exact: true }).click();
+  await page.getByRole("menuitem", { name: "OpenCode", exact: true }).click();
   await expect(page.getByTestId("workflow-selection")).toContainText(
     '"executor":"OPENCODE"',
   );
-  await workflow.getByRole("button", { name: "Opencode", exact: true }).click();
+  await workflow.getByRole("button", { name: "OpenCode", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Deepseek Harness", exact: true })
+    .getByRole("menuitem", { name: "DeepSeek Harness", exact: true })
     .click();
   await expect(page.getByTestId("workflow-selection")).toContainText(
     '"executor":"DEEPSEEK_HARNESS"',
@@ -312,6 +312,6 @@ test("unavailable provider is disabled in session and real workflow selectors", 
     .getByRole("button", { name: "Select executor", exact: true })
     .click();
   await expect(
-    page.getByRole("menuitem", { name: /^Deepseek Harness/ }),
+    page.getByRole("menuitem", { name: /^DeepSeek Harness/ }),
   ).toHaveAttribute("aria-disabled", "true");
 });

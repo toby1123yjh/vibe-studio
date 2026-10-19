@@ -83,8 +83,8 @@ mod tests {
             .execute(&pool).await.unwrap();
         let session_id = Uuid::new_v4();
         let config = ExecutorConfig {
-            model_id: Some("configured-model".into()),
-            reasoning_id: Some("high".into()),
+            model_id: Some(Some("configured-model".into())),
+            reasoning_id: Some(Some("high".into())),
             permission_policy: Some(PermissionPolicy::Supervised),
             provider_options: Some(executors::profile::ProviderRunOptions::Codex {
                 service_tier: Some("priority".into()),
@@ -116,7 +116,7 @@ mod tests {
         );
         for changed in [
             ExecutorConfig {
-                model_id: Some("another".into()),
+                model_id: Some(Some("another".into())),
                 ..config.clone()
             },
             ExecutorConfig {

@@ -957,8 +957,8 @@ mod tests {
     #[test]
     fn canonical_profile_resolution_preserves_recorded_overrides() {
         let mut expected = ExecutorConfig::new(BaseCodingAgent::Codex);
-        expected.model_id = Some("gpt-5.4".to_string());
-        expected.reasoning_id = Some("high".to_string());
+        expected.model_id = Some(Some("gpt-5.4".to_string()));
+        expected.reasoning_id = Some(Some("high".to_string()));
 
         let resolved = resolve_canonical_executor_config(
             canonical_profile_context(expected.clone()),

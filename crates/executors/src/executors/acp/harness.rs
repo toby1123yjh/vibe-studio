@@ -210,14 +210,14 @@ impl AcpAgentHarness {
 
     pub fn apply_overrides(&mut self, executor_config: &crate::profile::ExecutorConfig) {
         if let Some(model_id) = &executor_config.model_id {
-            self.model = Some(model_id.clone());
+            self.model = model_id.clone();
         }
 
         if let Some(agent_id) = &executor_config.agent_id {
             self.mode = Some(agent_id.clone());
         }
         if let Some(effort) = &executor_config.reasoning_id {
-            self.reasoning_effort = Some(effort.clone());
+            self.reasoning_effort = effort.clone();
         }
     }
 

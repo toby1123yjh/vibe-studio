@@ -99,6 +99,7 @@
     "searchingRemaining": "正在搜索其余项目…",
     "loadingMore": "正在加载更多项目…",
     "moreAvailable": "滚动后会自动加载更多项目。",
+    "builtInProject": "内置项目",
     "updated": "更新于 {{date}}"
   }
 }

@@ -9,6 +9,7 @@ use super::{
     },
 };
 use crate::{
+    agent_settings::native_model_defaults_for,
     approvals::ExecutorApprovalService,
     command::{CmdOverrides, CommandBuildError, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
@@ -17,7 +18,7 @@ use crate::{
         AppendPrompt, ExecutorError, SpawnedChild,
         provider_adapter::{DirectControl, DirectIntent, DirectProvider},
     },
-    model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy},
+    model_selector::{ModelCatalogSource, ModelInfo, ModelSelectorConfig, PermissionPolicy},
     workflow_mcp::{FORWARDED_ENV_KEYS, ScopedWorkflowMcp, WorkflowMcpReadiness},
 };
 
@@ -174,65 +175,44 @@ pub(crate) fn discover_options(
     cmd: &CmdOverrides,
     model: Option<&str>,
 ) -> ExecutorDiscoveredOptions {
-    let mut configured_model = model.map(str::to_owned);
-    // The native manager follows this host's file authority. A command/env
-    // override may point the child elsewhere, so do not present host defaults
-    // as that child's effective settings before an actual observed catalog.
-    let native_authority_overridden = cmd.base_command_override.is_some()
-        || cmd
-            .additional_params
-            .as_ref()
-            .is_some_and(|params| !params.is_empty())
-        || cmd.env.as_ref().is_some_and(|env| {
-            env.keys().any(|key| {
-                key.starts_with("OPENCODE_")
-                    || key.starts_with("GEMINI_")
-                    || key.starts_with("GOOGLE_")
-                    || key.starts_with("DSH_")
-                    || key.starts_with("XDG_")
-                    || matches!(key.as_str(), "HOME" | "USERPROFILE")
-            })
-        });
-    if !native_authority_overridden
-        && let Some(home) = dirs::home_dir()
-        && let Ok(snapshot) = provider
-            .settings_manager(home, project.or(workdir).map(Path::to_path_buf))
-            .discover()
-    {
-        for setting in snapshot.effective_settings {
-            match setting.key.id().as_str() {
-                "common.model" if configured_model.is_none() => {
-                    configured_model = setting
-                        .effective_value
-                        .and_then(|value| value.as_str().map(str::to_owned))
-                }
-                _ => {}
-            }
-        }
-    }
     let fallback_cwd = std::env::current_dir().ok();
-    let selector = workdir
-        .or(project)
-        .or(fallback_cwd.as_deref())
-        .and_then(|cwd| observed_catalog(dialect, cwd, &scoped_catalog_identity(dialect, cwd, cmd)))
-        .unwrap_or_else(|| {
-            let mut selector = ModelSelectorConfig {
-                permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
+    let cwd = workdir.or(project).or(fallback_cwd.as_deref());
+    let native_defaults = native_model_defaults_for(provider, cwd, cmd);
+    let configured_model = model.map(str::to_owned).or_else(|| {
+        native_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.model_id.clone())
+    });
+    let observed = cwd.and_then(|cwd| {
+        observed_catalog(dialect, cwd, &scoped_catalog_identity(dialect, cwd, cmd))
+    });
+    let source = if observed.is_some() {
+        Some(ModelCatalogSource::Observed)
+    } else {
+        configured_model
+            .as_ref()
+            .map(|_| ModelCatalogSource::Configured)
+    };
+    let mut selector = observed.unwrap_or_else(|| {
+        let mut selector = ModelSelectorConfig {
+            permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
+            ..Default::default()
+        };
+        if let Some(model) = configured_model {
+            // A configured ID is displayable, not proof of supported effort.
+            selector.models.push(ModelInfo {
+                id: model.clone(),
+                name: model.clone(),
+                provider_id: None,
+                reasoning_options: Vec::new(),
                 ..Default::default()
-            };
-            if let Some(model) = configured_model {
-                // A configured ID is displayable, not proof of supported effort.
-                selector.models.push(ModelInfo {
-                    id: model.clone(),
-                    name: model.clone(),
-                    provider_id: None,
-                    reasoning_options: Vec::new(),
-                    ..Default::default()
-                });
-                selector.default_model = Some(model);
-            }
-            selector
-        });
+            });
+            selector.default_model = Some(model);
+        }
+        selector
+    });
+    selector.native_defaults = native_defaults;
+    selector.catalog_source = source;
     ExecutorDiscoveredOptions {
         model_selector: selector,
         ..Default::default()
@@ -298,5 +278,90 @@ mod tests {
             assert!(unset.model_selector.default_model.is_none());
         }
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn observed_catalog_keeps_configured_inheritance_separate_and_prefers_execution_directory() {
+        use crate::executors::acp::session_config::{ACP_CATALOG_EVENT, cache_catalog_extension};
+
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("original-project");
+        let cwd = root.path().join("actual-worktree");
+        std::fs::create_dir_all(project.join(".gemini")).unwrap();
+        std::fs::create_dir_all(cwd.join(".gemini")).unwrap();
+        std::fs::write(
+            project.join(".gemini/settings.json"),
+            r#"{"model":{"name":"wrong-original"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join(".gemini/settings.json"),
+            r#"{"model":{"name":"configured-native"}}"#,
+        )
+        .unwrap();
+        let cmd = CmdOverrides {
+            env: Some(std::collections::HashMap::from([(
+                "GEMINI_CLI_HOME".into(),
+                root.path().join("empty-home").display().to_string(),
+            )])),
+            ..Default::default()
+        };
+        let cold = discover_options(
+            DirectProvider::Gemini,
+            AcpDialect::Gemini,
+            Some(&cwd),
+            Some(&project),
+            &cmd,
+            None,
+        );
+        assert_eq!(
+            cold.model_selector.catalog_source,
+            Some(ModelCatalogSource::Configured)
+        );
+        assert_eq!(
+            cold.model_selector
+                .native_defaults
+                .unwrap()
+                .model_id
+                .as_deref(),
+            Some("configured-native")
+        );
+        assert!(cold.model_selector.models[0].reasoning_options.is_empty());
+        let scope = scoped_catalog_identity(AcpDialect::Gemini, &cwd, &cmd);
+        cache_catalog_extension(
+            "gemini",
+            &crate::runtime::AgentEventPayload::ProviderExtension {
+                provider_namespace: "gemini".into(),
+                provider_event: ACP_CATALOG_EVENT.into(),
+                payload: serde_json::json!({"working_dir":cwd,"scope_id":scope,
+                "model_selector":{"models":[{"id":"observed-native","name":"Observed","reasoning_options":[]}],
+                    "providers":[],"agents":[],"permissions":[],"default_model":"observed-native"}}),
+            },
+        );
+        let observed = discover_options(
+            DirectProvider::Gemini,
+            AcpDialect::Gemini,
+            Some(&cwd),
+            Some(&project),
+            &cmd,
+            None,
+        );
+        assert_eq!(
+            observed.model_selector.catalog_source,
+            Some(ModelCatalogSource::Observed)
+        );
+        assert_eq!(
+            observed.model_selector.default_model.as_deref(),
+            Some("observed-native")
+        );
+        assert_eq!(
+            observed
+                .model_selector
+                .native_defaults
+                .unwrap()
+                .model_id
+                .as_deref(),
+            Some("configured-native")
+        );
     }
 }

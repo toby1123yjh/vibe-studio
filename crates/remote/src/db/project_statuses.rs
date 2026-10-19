@@ -9,6 +9,7 @@ use super::get_txid;
 /// Default statuses that are created for each new project (name, color, sort_order, hidden)
 /// Colors are in HSL format: "H S% L%"
 pub const DEFAULT_STATUSES: &[(&str, &str, i32, bool)] = &[
+    ("Discuss", "215 12% 55%", -1, false),
     ("Backlog", "220 9% 46%", 0, true),
     ("To do", "217 91% 60%", 1, false),
     ("In progress", "38 92% 50%", 2, false),

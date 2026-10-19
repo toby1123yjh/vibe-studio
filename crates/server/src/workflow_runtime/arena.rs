@@ -1045,9 +1045,9 @@ mod tests {
     #[test]
     fn canonical_arena_config_accepts_frozen_executor_overrides() {
         let mut config = ExecutorConfig::new(BaseCodingAgent::Codex);
-        config.model_id = Some("openai/gpt-5.6-codex".to_string());
+        config.model_id = Some(Some("openai/gpt-5.6-codex".to_string()));
         config.agent_id = Some("implementation".to_string());
-        config.reasoning_id = Some("high".to_string());
+        config.reasoning_id = Some(Some("high".to_string()));
 
         validate_canonical_executor_config(&config)
             .expect("RunAttemptRequest now represents all executor overrides");

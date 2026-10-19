@@ -299,7 +299,7 @@ mod tests {
         let mut requested = config.clone();
         requested.variant = Some("DEFAULT".into());
         assert!(matches_snapshot(&config, &requested));
-        requested.model_id = Some("other-model".into());
+        requested.model_id = Some(Some("other-model".into()));
         assert!(!matches_snapshot(&config, &requested));
         assert_eq!(
             local_backend_url("0.0.0.0:3001".parse().unwrap()),

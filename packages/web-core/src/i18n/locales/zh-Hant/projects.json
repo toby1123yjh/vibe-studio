@@ -99,6 +99,7 @@
     "searchingRemaining": "正在搜尋其餘專案…",
     "loadingMore": "正在載入更多專案…",
     "moreAvailable": "捲動後會自動載入更多專案。",
+    "builtInProject": "內建專案",
     "updated": "更新於 {{date}}"
   }
 }

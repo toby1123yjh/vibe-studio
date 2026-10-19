@@ -619,7 +619,12 @@ async fn preparation_is_only_discussion_and_replays_captured_configuration() {
     let replay = f.prepare("prepare", None).await;
     assert_eq!(first.session.id, replay.session.id);
     assert_eq!(
-        replay.context.main_agent_config.model_id.as_deref(),
+        replay
+            .context
+            .main_agent_config
+            .model_id
+            .as_ref()
+            .and_then(|value| value.as_deref()),
         Some("captured-model")
     );
     assert_eq!(replay.context.main_agent_prompt, "captured prompt");
@@ -634,7 +639,12 @@ async fn preparation_is_only_discussion_and_replays_captured_configuration() {
         .await
         .unwrap();
     assert_eq!(
-        captured.main_agent_config.unwrap().model_id.as_deref(),
+        captured
+            .main_agent_config
+            .unwrap()
+            .model_id
+            .as_ref()
+            .and_then(|value| value.as_deref()),
         Some("captured-model")
     );
     assert_eq!(

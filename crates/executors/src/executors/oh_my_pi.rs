@@ -40,20 +40,29 @@ pub fn oh_my_pi_agent_root() -> Option<PathBuf> {
 /// fallback. This keeps all consumers aligned without coupling tests to the
 /// process user's real home directory.
 pub fn oh_my_pi_agent_root_for(home_dir: &Path) -> PathBuf {
-    if let Some(agent_dir) = std::env::var_os("PI_CODING_AGENT_DIR") {
+    oh_my_pi_agent_root_with_env(home_dir, |name| std::env::var_os(name))
+}
+
+/// The same resolver for per-profile child environments, without changing the
+/// application's process-global environment during concurrent discovery.
+pub(crate) fn oh_my_pi_agent_root_with_env(
+    home_dir: &Path,
+    env: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> PathBuf {
+    if let Some(agent_dir) = env("PI_CODING_AGENT_DIR") {
         return expand_tilde_path(PathBuf::from(agent_dir), home_dir);
     }
-    if let Some(agent_dir) = std::env::var_os("OMP_AGENT_DIR") {
+    if let Some(agent_dir) = env("OMP_AGENT_DIR") {
         return expand_tilde_path(PathBuf::from(agent_dir), home_dir);
     }
 
-    let profile = std::env::var("OMP_PROFILE")
-        .ok()
-        .or_else(|| std::env::var("PI_PROFILE").ok())
+    let profile = env("OMP_PROFILE")
+        .or_else(|| env("PI_PROFILE"))
+        .and_then(|profile| profile.into_string().ok())
         .and_then(|profile| normalize_profile(&profile));
 
     if cfg!(unix)
-        && let Some(xdg_data) = std::env::var_os("XDG_DATA_HOME")
+        && let Some(xdg_data) = env("XDG_DATA_HOME")
     {
         let mut root = PathBuf::from(xdg_data).join("omp");
         if let Some(profile) = profile.as_deref() {
@@ -64,7 +73,7 @@ pub fn oh_my_pi_agent_root_for(home_dir: &Path) -> PathBuf {
         }
     }
 
-    let config_dir = std::env::var_os("PI_CONFIG_DIR")
+    let config_dir = env("PI_CONFIG_DIR")
         .map(|path| expand_tilde_path(PathBuf::from(path), home_dir))
         .unwrap_or_else(|| PathBuf::from(".omp"));
     let mut root = home_dir.join(config_dir);
@@ -221,10 +230,10 @@ impl OhMyPi {
             ));
         }
         if let Some(model_id) = &executor_config.model_id {
-            self.model = Some(model_id.clone());
+            self.model = model_id.clone();
         }
         if let Some(reasoning_id) = &executor_config.reasoning_id {
-            self.thinking_level = Some(reasoning_id.clone());
+            self.thinking_level = reasoning_id.clone();
         }
         if let Some(ProviderRunOptions::OhMyPi {
             auto_compaction,
@@ -392,9 +401,9 @@ impl OhMyPi {
         ExecutorConfig {
             executor: BaseCodingAgent::OhMyPi,
             variant: None,
-            model_id: self.model.clone(),
+            model_id: self.model.clone().map(Some),
             agent_id: None,
-            reasoning_id: self.thinking_level.clone(),
+            reasoning_id: self.thinking_level.clone().map(Some),
             permission_policy: Some(crate::model_selector::PermissionPolicy::Supervised),
             provider_options: (self.auto_compaction.is_some() || self.auto_retry.is_some())
                 .then_some(ProviderRunOptions::OhMyPi {
@@ -413,19 +422,35 @@ impl StandardCodingAgentExecutor for OhMyPi {
         repo_path: Option<&Path>,
     ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ExecutorError> {
         use crate::{
+            agent_settings::native_model_defaults_for,
             executor_discovery::ExecutorDiscoveredOptions,
-            model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy},
+            model_selector::{
+                ModelCatalogSource, ModelInfo, ModelSelectorConfig, PermissionPolicy,
+            },
         };
         let cwd = workdir
             .or(repo_path)
             .map(Path::to_path_buf)
             .unwrap_or(std::env::current_dir()?);
         let observed = catalog::observed_catalog(&cwd, &self.cmd);
+        let native_defaults =
+            native_model_defaults_for(DirectProvider::OhMyPi, Some(&cwd), &self.cmd);
+        let configured_model = self.model.clone().or_else(|| {
+            native_defaults
+                .as_ref()
+                .and_then(|defaults| defaults.model_id.clone())
+        });
+        let source = if observed.is_some() {
+            Some(ModelCatalogSource::Observed)
+        } else {
+            configured_model
+                .as_ref()
+                .map(|_| ModelCatalogSource::Configured)
+        };
         let error = observed.is_none().then(||
             "Oh My Pi capabilities are unconfirmed; the next agent run will report its native model catalog".to_string());
-        let model_selector = observed.unwrap_or_else(|| ModelSelectorConfig {
-            models: self
-                .model
+        let mut model_selector = observed.unwrap_or_else(|| ModelSelectorConfig {
+            models: configured_model
                 .iter()
                 .map(|model| ModelInfo {
                     id: model.clone(),
@@ -433,10 +458,12 @@ impl StandardCodingAgentExecutor for OhMyPi {
                     ..Default::default()
                 })
                 .collect(),
-            default_model: self.model.clone(),
+            default_model: configured_model,
             permissions: vec![PermissionPolicy::Supervised],
             ..Default::default()
         });
+        model_selector.native_defaults = native_defaults;
+        model_selector.catalog_source = source;
         let options = ExecutorDiscoveredOptions {
             model_selector,
             error,
@@ -559,6 +586,81 @@ mod tests {
 
         assert_eq!(command.base, "omp");
         assert_eq!(command.params, Some(vec!["--mode".into(), "rpc".into()]));
+    }
+
+    #[tokio::test]
+    async fn native_defaults_survive_an_observed_catalog_without_becoming_capabilities() {
+        use futures::StreamExt;
+
+        use crate::{model_selector::ModelCatalogSource, runtime::AgentEventPayload};
+
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("project");
+        let native_root = root.path().join("native-agent");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&native_root).unwrap();
+        std::fs::write(
+            native_root.join("config.yml"),
+            "modelRoles:\n  default: native/model\ndefaultThinkingLevel: auto\n",
+        )
+        .unwrap();
+        let agent = OhMyPi {
+            cmd: CmdOverrides {
+                env: Some(std::collections::HashMap::from([(
+                    "PI_CODING_AGENT_DIR".into(),
+                    native_root.display().to_string(),
+                )])),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut stream = agent.discover_options(Some(&cwd), None).await.unwrap();
+        let mut options = serde_json::json!({"options": null});
+        json_patch::patch(&mut options, &stream.next().await.unwrap()).unwrap();
+        let cold: crate::executor_discovery::ExecutorDiscoveredOptions =
+            serde_json::from_value(options["options"].clone()).unwrap();
+        assert_eq!(
+            cold.model_selector.catalog_source,
+            Some(ModelCatalogSource::Configured)
+        );
+        assert!(cold.model_selector.models[0].reasoning_options.is_empty());
+        assert_eq!(
+            cold.model_selector
+                .native_defaults
+                .unwrap()
+                .reasoning_id
+                .as_deref(),
+            Some("auto")
+        );
+
+        let scope = catalog::scope(&cwd, &agent.cmd);
+        catalog::cache_catalog_extension(
+            "oh_my_pi",
+            &AgentEventPayload::ProviderExtension {
+                provider_namespace: "oh_my_pi".into(),
+                provider_event: catalog::CATALOG_EVENT.into(),
+                payload: serde_json::json!({"working_dir":scope.working_dir,"scope_id":scope.scope_id,
+                "model_selector":{"models":[{"id":"observed/model","name":"Observed","reasoning_options":[]}],
+                    "providers":[],"agents":[],"permissions":[],"default_model":"observed/model"}}),
+            },
+        );
+        let mut stream = agent.discover_options(Some(&cwd), None).await.unwrap();
+        let mut options = serde_json::json!({"options": null});
+        json_patch::patch(&mut options, &stream.next().await.unwrap()).unwrap();
+        let observed: crate::executor_discovery::ExecutorDiscoveredOptions =
+            serde_json::from_value(options["options"].clone()).unwrap();
+        assert_eq!(
+            observed.model_selector.catalog_source,
+            Some(ModelCatalogSource::Observed)
+        );
+        assert_eq!(
+            observed.model_selector.default_model.as_deref(),
+            Some("observed/model")
+        );
+        let defaults = observed.model_selector.native_defaults.unwrap();
+        assert_eq!(defaults.model_id.as_deref(), Some("native/model"));
+        assert_eq!(defaults.reasoning_id.as_deref(), Some("auto"));
+        assert_eq!(std::fs::read_dir(cwd).unwrap().count(), 0);
     }
 
     #[tokio::test]

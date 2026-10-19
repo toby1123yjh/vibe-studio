@@ -15,6 +15,9 @@ use utils::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
 
+#[cfg(windows)]
+mod windows_picker;
+
 #[derive(Debug, Deserialize)]
 pub struct ListDirectoryQuery {
     path: Option<String>,
@@ -84,6 +87,15 @@ pub async fn pick_folder(
     ResponseJson(payload): ResponseJson<PickFolderRequest>,
 ) -> ResponseJson<ApiResponse<Option<String>>> {
     let mut dialog = rfd::AsyncFileDialog::new();
+
+    // The browser owns the foreground window, not this HTTP server. Without an
+    // explicit owner Windows can place the native picker behind the browser.
+    #[cfg(windows)]
+    let parent = windows_picker::ForegroundOwner::capture();
+    #[cfg(windows)]
+    if let Some(parent) = &parent {
+        dialog = dialog.set_parent(parent);
+    }
 
     if let Some(title) = payload
         .title

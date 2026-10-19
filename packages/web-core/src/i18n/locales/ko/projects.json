@@ -41,6 +41,7 @@
     "searchingRemaining": "남은 프로젝트 검색 중…",
     "loadingMore": "프로젝트 더 로드 중…",
     "moreAvailable": "스크롤하면 더 많은 프로젝트가 자동으로 로드됩니다.",
+    "builtInProject": "기본 제공 프로젝트",
     "updated": "업데이트 {{date}}"
   }
 }

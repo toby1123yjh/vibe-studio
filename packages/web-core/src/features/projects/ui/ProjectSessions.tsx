@@ -1,8 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
-import { Plus, Trash2 } from 'lucide-react';
-import type { CSSProperties } from 'react';
 import type { SessionCursor } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
 import { executionDataApi } from '@/shared/lib/executionDataApi';
@@ -14,39 +12,25 @@ import { sessionRoute } from '@/features/app-shell/model/appShell';
 
 interface ProjectSessionsProps {
   projectId: string;
-  variant?: 'list' | 'column';
-  onCreateTask?: () => void;
 }
 
-export function ProjectSessions({
-  projectId,
-  variant = 'list',
-  onCreateTask,
-}: ProjectSessionsProps) {
+export function ProjectSessions({ projectId }: ProjectSessionsProps) {
   const shell = useAppShellProjects();
   return (
     <ProjectSessionsContent
       key={`${shell?.scopeKey}:${projectId}`}
       projectId={projectId}
-      variant={variant}
-      onCreateTask={onCreateTask}
     />
   );
 }
 
-function ProjectSessionsContent({
-  projectId,
-  variant,
-  onCreateTask,
-}: ProjectSessionsProps) {
+function ProjectSessionsContent({ projectId }: ProjectSessionsProps) {
   const { t } = useTranslation('common');
   const shell = useAppShellProjects();
   const hostId = shell?.hostId ?? null;
   const enabled =
     Boolean(shell) && !(shell?.deployment === 'remote' && !hostId);
   const navigate = useNavigate();
-  const navigation = useAppNavigation();
-  const isColumn = variant === 'column';
   const query = useInfiniteQuery({
     queryKey: ['project-sessions', shell?.scopeKey, projectId],
     enabled,
@@ -77,8 +61,8 @@ function ProjectSessionsContent({
       ).map((session) => [session.id, session])
     ).values()
   );
-  const content = (
-    <div className={isColumn ? 'vk-kanban-column__cards' : 'space-y-base'}>
+  return (
+    <div className="space-y-base">
       {!enabled && <p role="alert">{t('defaultProject.offline')}</p>}
       {enabled && query.isPending && <p role="status">{t('states.loading')}</p>}
       {query.isError && (
@@ -97,7 +81,6 @@ function ProjectSessionsContent({
         </div>
       )}
       {enabled &&
-        !isColumn &&
         !query.isPending &&
         !query.isError &&
         sessions.length === 0 && (
@@ -107,20 +90,12 @@ function ProjectSessionsContent({
         <article
           key={session.id}
           data-session-id={session.id}
-          className={
-            isColumn
-              ? 'vk-session-column-card'
-              : 'flex flex-wrap items-center gap-base rounded-sm border border-border p-base'
-          }
+          className="flex flex-wrap items-center gap-base rounded-sm border border-border p-base"
         >
           <button
             type="button"
             disabled={!enabled}
-            className={
-              isColumn
-                ? 'vk-session-column-card__open'
-                : 'min-w-0 flex-1 truncate text-left hover:underline'
-            }
+            className="min-w-0 flex-1 truncate text-left hover:underline"
             title={session.title}
             onClick={() =>
               void navigate({
@@ -132,10 +107,6 @@ function ProjectSessionsContent({
           </button>
           <Button
             variant="ghost"
-            className={isColumn ? 'vk-session-column-card__delete' : undefined}
-            aria-label={
-              isColumn ? `${t('buttons.delete')} ${session.title}` : undefined
-            }
             title={t('buttons.delete')}
             disabled={!enabled || pendingSessionId !== null}
             onClick={() =>
@@ -146,11 +117,7 @@ function ProjectSessionsContent({
               })
             }
           >
-            {isColumn ? (
-              <Trash2 size={15} aria-hidden="true" />
-            ) : (
-              t('buttons.delete')
-            )}
+            {t('buttons.delete')}
           </Button>
         </article>
       ))}
@@ -164,45 +131,6 @@ function ProjectSessionsContent({
         </Button>
       )}
     </div>
-  );
-  if (!isColumn) return content;
-  return (
-    <section
-      className="vk-kanban-column vk-session-column"
-      aria-label={t('projectSessions.column', { defaultValue: 'Discuss' })}
-    >
-      <header className="vk-kanban-column__header">
-        <span
-          className="vk-kanban-column__dot"
-          style={{ '--vk-status-color': 'hsl(215 12% 55%)' } as CSSProperties}
-          aria-hidden="true"
-        />
-        <h2>{t('projectSessions.column', { defaultValue: 'Discuss' })}</h2>
-        <span className="vk-kanban-column__count">
-          {sessions.length}
-          {query.hasNextPage ? '+' : ''}
-        </span>
-        <button
-          type="button"
-          aria-label={t('projectSessions.create', {
-            defaultValue: 'New discussion',
-          })}
-          title={
-            navigation.agentExecutionUnavailableReason ??
-            t('projectSessions.create', { defaultValue: 'New discussion' })
-          }
-          disabled={
-            !enabled ||
-            !onCreateTask ||
-            Boolean(navigation.agentExecutionUnavailableReason)
-          }
-          onClick={onCreateTask}
-        >
-          <Plus size={16} aria-hidden="true" />
-        </button>
-      </header>
-      {content}
-    </section>
   );
 }
 

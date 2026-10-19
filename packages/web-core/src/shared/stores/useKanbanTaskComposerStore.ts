@@ -16,7 +16,6 @@ export interface KanbanTaskComposerDraft {
   priority?: TaskPriority | null;
   assigneeIds?: string[];
   tagIds?: string[];
-  createDraftWorkspace?: boolean;
   parentTaskId?: string;
 }
 
@@ -50,9 +49,6 @@ function normalizeComposerDraft(
       ? { assigneeIds: [...draft.assigneeIds] }
       : {}),
     ...(draft.tagIds !== undefined ? { tagIds: [...draft.tagIds] } : {}),
-    ...(draft.createDraftWorkspace !== undefined
-      ? { createDraftWorkspace: draft.createDraftWorkspace }
-      : {}),
     ...(draft.parentTaskId ? { parentTaskId: draft.parentTaskId } : {}),
   };
 }
@@ -74,7 +70,6 @@ function toInitialComposerDraft(
     assigneeIds: options?.assigneeIds,
     parentTaskId: options?.parentTaskId,
     tagIds: [],
-    createDraftWorkspace: false,
   });
 }
 

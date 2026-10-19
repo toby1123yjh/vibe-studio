@@ -10,7 +10,6 @@ import {
 } from 'shared/types';
 import {
   useUiPreferencesStore,
-  DEFAULT_CREATE_DRAFT_WORKSPACE_BY_DEFAULT,
   type RightMainPanelMode,
   type ContextBarPosition,
   type WorkspacePanelState,
@@ -47,7 +46,6 @@ function storeToScratchData(state: {
   workspaceSort: WorkspaceSortState;
   selectedOrgId: string | null;
   selectedProjectId: string | null;
-  createDraftWorkspaceByDefault: boolean;
   kanbanProjectViewSelections: Record<string, KanbanProjectViewSelection>;
   kanbanProjectViewPreferences: Record<
     string,
@@ -83,7 +81,8 @@ function storeToScratchData(state: {
     },
     selected_org_id: state.selectedOrgId,
     selected_project_id: state.selectedProjectId,
-    create_draft_workspace_by_default: state.createDraftWorkspaceByDefault,
+    // Retired preference: keep the existing scratch wire field inert.
+    create_draft_workspace_by_default: null,
     kanban_project_view_selections: state.kanbanProjectViewSelections as Record<
       string,
       JsonValue
@@ -111,7 +110,6 @@ function scratchDataToStore(data: UiPreferencesData): {
   workspaceSort: WorkspaceSortState;
   selectedOrgId: string | null;
   selectedProjectId: string | null;
-  createDraftWorkspaceByDefault: boolean;
   kanbanProjectViewSelections: Record<string, KanbanProjectViewSelection>;
   kanbanProjectViewPreferences: Record<
     string,
@@ -168,9 +166,6 @@ function scratchDataToStore(data: UiPreferencesData): {
     },
     selectedOrgId: data.selected_org_id ?? null,
     selectedProjectId: data.selected_project_id ?? null,
-    createDraftWorkspaceByDefault:
-      data.create_draft_workspace_by_default ??
-      DEFAULT_CREATE_DRAFT_WORKSPACE_BY_DEFAULT,
     kanbanProjectViewSelections: (data.kanban_project_view_selections ??
       {}) as Record<string, KanbanProjectViewSelection>,
     kanbanProjectViewPreferences: (data.kanban_project_view_preferences ??
@@ -209,7 +204,6 @@ export function useUiPreferencesScratch() {
     workspaceSort: state.workspaceSort,
     selectedOrgId: state.selectedOrgId,
     selectedProjectId: state.selectedProjectId,
-    createDraftWorkspaceByDefault: state.createDraftWorkspaceByDefault,
     kanbanProjectViewSelections: state.kanbanProjectViewSelections,
     kanbanProjectViewPreferences: state.kanbanProjectViewPreferences,
   }));
@@ -241,7 +235,6 @@ export function useUiPreferencesScratch() {
       workspaceSort: currentState.workspaceSort,
       selectedOrgId: currentState.selectedOrgId,
       selectedProjectId: currentState.selectedProjectId,
-      createDraftWorkspaceByDefault: currentState.createDraftWorkspaceByDefault,
       kanbanProjectViewSelections: currentState.kanbanProjectViewSelections,
       kanbanProjectViewPreferences: currentState.kanbanProjectViewPreferences,
     });
@@ -289,8 +282,6 @@ export function useUiPreferencesScratch() {
         workspaceSort: serverState.workspaceSort,
         selectedOrgId: serverState.selectedOrgId,
         selectedProjectId: serverState.selectedProjectId,
-        createDraftWorkspaceByDefault:
-          serverState.createDraftWorkspaceByDefault,
         kanbanProjectViewSelections: serverState.kanbanProjectViewSelections,
         kanbanProjectViewPreferences: serverState.kanbanProjectViewPreferences,
       });

@@ -1,31 +1,31 @@
-import { useState } from "react";
-import { createRoot } from "react-dom/client";
-import { HotkeysProvider } from "react-hotkeys-hook";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { HotkeysProvider } from 'react-hotkeys-hook';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   AgentProviderCapability,
   BaseCodingAgent,
   type ExecutorConfig,
-} from "shared/types";
-import { AgentCenterPage } from "../../../../packages/web-core/src/features/agent-center/ui/AgentCenterPage";
-import { ModelSelectorContainer } from "../../../../packages/web-core/src/shared/components/ModelSelectorContainer";
-import { useAgentProviderOptions } from "../../../../packages/web-core/src/shared/hooks/useAgentProviderPolicy";
-import { WorkflowAgentExecutorField } from "../../../../packages/web-core/src/features/workflow/ui/WorkflowAgentExecutorField";
-import { SettingsDirtyProvider } from "../../../../packages/web-core/src/shared/dialogs/settings/settings/SettingsDirtyContext";
+} from 'shared/types';
+import { AgentCenterPage } from '../../../../packages/web-core/src/features/agent-center/ui/AgentCenterPage';
+import { ModelSelectorContainer } from '../../../../packages/web-core/src/shared/components/ModelSelectorContainer';
+import { useAgentProviderOptions } from '../../../../packages/web-core/src/shared/hooks/useAgentProviderPolicy';
+import { WorkflowAgentExecutorField } from '../../../../packages/web-core/src/features/workflow/ui/WorkflowAgentExecutorField';
+import { SettingsDirtyProvider } from '../../../../packages/web-core/src/shared/dialogs/settings/settings/SettingsDirtyContext';
 import {
   SettingsHostProvider,
   useSettingsHost,
-} from "../../../../packages/web-core/src/shared/dialogs/settings/settings/SettingsHostContext";
-import "../../../../packages/web-core/src/i18n/config";
-import "../../../../packages/ui/src/styles/tokens.css";
-import "./style.css";
+} from '../../../../packages/web-core/src/shared/dialogs/settings/settings/SettingsHostContext';
+import '../../../../packages/web-core/src/i18n/config';
+import '../../../../packages/ui/src/styles/tokens.css';
+import './style.css';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },
 });
 
-const root = document.getElementById("root");
-if (!root) throw new Error("Agent Center fixture root is missing");
+const root = document.getElementById('root');
+if (!root) throw new Error('Agent Center fixture root is missing');
 
 function HostDiscoveryProbe() {
   const { hostDiscovery, remoteHostDiscovery } = useSettingsHost();
@@ -43,6 +43,8 @@ function HostDiscoveryProbe() {
 const SESSION_CAPABILITIES = [AgentProviderCapability.INITIAL_RUN] as const;
 
 function SelectorsFixture() {
+  const params = new URLSearchParams(window.location.search);
+  const [overrides, setOverrides] = useState<Partial<ExecutorConfig>[]>([]);
   const [executorConfig, setExecutorConfig] = useState<ExecutorConfig>({
     executor: BaseCodingAgent.OPENCODE,
     variant: null,
@@ -73,17 +75,30 @@ function SelectorsFixture() {
           agent={executorConfig.executor}
           workspaceId={undefined}
           onAdvancedSettings={() => undefined}
-          presets={["DEFAULT"]}
+          presets={['DEFAULT']}
           selectedPreset={null}
           onPresetSelect={() => undefined}
-          onOverrideChange={(change) =>
-            setExecutorConfig((previous) => ({ ...previous, ...change }))
-          }
+          onOverrideChange={(change) => {
+            setOverrides((previous) => [...previous, change]);
+            setExecutorConfig((previous) => ({ ...previous, ...change }));
+          }}
           executorConfig={executorConfig}
-          presetOptions={null}
+          presetOptions={
+            params.has('preset') &&
+            executorConfig.executor === BaseCodingAgent.CODEX
+              ? {
+                  executor: BaseCodingAgent.CODEX,
+                  model_id: 'gpt-6.0',
+                  reasoning_id: 'high',
+                }
+              : null
+          }
         />
         <output data-testid="session-selection">
           {JSON.stringify(executorConfig)}
+        </output>
+        <output data-testid="selector-overrides">
+          {JSON.stringify(overrides)}
         </output>
       </section>
       <section aria-label="Workflow agent selector">
@@ -100,13 +115,13 @@ function SelectorsFixture() {
 }
 
 createRoot(root).render(
-  <HotkeysProvider initiallyActiveScopes={["kanban", "projects"]}>
+  <HotkeysProvider initiallyActiveScopes={['kanban', 'projects']}>
     <QueryClientProvider client={queryClient}>
       <main className="fixture-shell">
         <SettingsHostProvider>
           <SettingsDirtyProvider>
             <HostDiscoveryProbe />
-            {new URLSearchParams(window.location.search).has("selectors") ? (
+            {new URLSearchParams(window.location.search).has('selectors') ? (
               <SelectorsFixture />
             ) : (
               <AgentCenterPage />
@@ -115,5 +130,5 @@ createRoot(root).render(
         </SettingsHostProvider>
       </main>
     </QueryClientProvider>
-  </HotkeysProvider>,
+  </HotkeysProvider>
 );

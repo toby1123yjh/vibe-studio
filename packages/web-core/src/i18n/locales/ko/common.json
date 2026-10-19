@@ -1,7 +1,4 @@
 {
-  "projectSessions": {
-    "column": "Discuss"
-  },
   "editorNames": {
     "custom": "사용자 지정"
   },
@@ -634,8 +631,6 @@
     "copyLink": "링크 복사",
     "issueTitlePlaceholder": "작업 제목...",
     "issueDescriptionPlaceholder": "작업 설명을 입력하세요...",
-    "createDraftWorkspaceImmediately": "초안 워크스페이스를 즉시 생성",
-    "createDraftWorkspaceDescription": "작업를 생성한 후, 작업 세부 정보가 미리 입력된 워크스페이스 생성 양식을 엽니다",
     "createIssue": "작업 생성",
     "newIssue": "새 작업",
     "previewCodeBlock": "[코드 블록]",
@@ -773,6 +768,8 @@
   "modelSelector": {
     "unspecified": "모델 미지정",
     "followCliConfig": "Follow CLI config",
+    "followCliValue": "CLI 설정 사용 · {{value}}",
+    "builtinCatalog": "대체 목록입니다. 에이전트의 지원 기능은 확인되지 않았습니다.",
     "preset": "프리셋",
     "custom": "사용자 정의",
     "permissions": "권한",

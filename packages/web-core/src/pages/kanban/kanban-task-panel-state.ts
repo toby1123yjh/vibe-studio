@@ -55,8 +55,7 @@ const EMPTY_EDIT_TEXT_STATE: EditTextState = {
 };
 
 export function createBlankCreateFormData(
-  defaultStatusId: string,
-  createDraftWorkspaceByDefault = false
+  defaultStatusId: string
 ): TaskFormData {
   return {
     title: '',
@@ -65,7 +64,6 @@ export function createBlankCreateFormData(
     priority: null,
     assigneeIds: [],
     tagIds: [],
-    createDraftWorkspace: createDraftWorkspaceByDefault,
   };
 }
 
@@ -188,7 +186,6 @@ export function selectDisplayData({
     priority: selectedTask?.priority ?? null,
     assigneeIds: currentAssigneeIds,
     tagIds: currentTagIds,
-    createDraftWorkspace: false,
   };
 }
 
@@ -215,11 +212,6 @@ export function selectIsCreateDraftDirty({
       state.createFormData.assigneeIds,
       createModeDefaults.assigneeIds
     ) ||
-    !areStringSetsEqual(
-      state.createFormData.tagIds,
-      createModeDefaults.tagIds
-    ) ||
-    state.createFormData.createDraftWorkspace !==
-      createModeDefaults.createDraftWorkspace
+    !areStringSetsEqual(state.createFormData.tagIds, createModeDefaults.tagIds)
   );
 }

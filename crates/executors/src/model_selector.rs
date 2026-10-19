@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -100,7 +102,26 @@ pub enum PermissionPolicy {
     Plan,
 }
 
-/// Full model selector configuration
+/// Native configured inheritance, separate from catalog and runtime state.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NativeModelDefaults {
+    pub model_id: Option<String>,
+    pub reasoning_id: Option<String>,
+    /// Exact provider-owned model IDs, independent from advertised capabilities.
+    #[serde(default)]
+    pub model_reasoning: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCatalogSource {
+    Native,
+    Observed,
+    Configured,
+    Builtin,
+}
+
+/// Full model selector configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
 pub struct ModelSelectorConfig {
     /// Available providers
@@ -112,6 +133,15 @@ pub struct ModelSelectorConfig {
     /// Global default model (format: provider_id/model_id)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+
+    /// Read-only native inheritance, never proof of an active run's settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub native_defaults: Option<NativeModelDefaults>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub catalog_source: Option<ModelCatalogSource>,
 
     /// Available agents
     pub agents: Vec<AgentInfo>,

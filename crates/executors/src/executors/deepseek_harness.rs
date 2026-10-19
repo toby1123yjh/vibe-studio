@@ -62,10 +62,10 @@ impl DeepseekHarness {
             ));
         }
         if let Some(model) = &config.model_id {
-            self.model = Some(model.clone());
+            self.model = model.clone();
         }
         if let Some(effort) = &config.reasoning_id {
-            self.reasoning_effort = Some(effort.clone());
+            self.reasoning_effort = effort.clone();
         }
         if let Some(policy) = &config.permission_policy {
             self.yolo = Some(matches!(policy, PermissionPolicy::Auto));
@@ -166,8 +166,8 @@ impl StandardCodingAgentExecutor for DeepseekHarness {
         ExecutorConfig {
             executor: BaseCodingAgent::DeepseekHarness,
             variant: None,
-            model_id: self.model.clone(),
-            reasoning_id: self.reasoning_effort.clone(),
+            model_id: self.model.clone().map(Some),
+            reasoning_id: self.reasoning_effort.clone().map(Some),
             agent_id: None,
             provider_options: None,
             permission_policy: Some(if self.yolo.unwrap_or(false) {

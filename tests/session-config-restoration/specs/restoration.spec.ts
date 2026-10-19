@@ -7,6 +7,7 @@ const savedA = {
   agent_id: 'saved-agent',
   reasoning_id: 'high',
   permission_policy: 'SUPERVISED',
+  provider_options: null,
 };
 const savedB = {
   executor: 'CLAUDE_CODE',
@@ -15,6 +16,7 @@ const savedB = {
   agent_id: 'claude-agent',
   reasoning_id: null,
   permission_policy: null,
+  provider_options: null,
 };
 
 async function fixtureBackend(page: Page) {
@@ -219,10 +221,11 @@ test('explicit null draft overrides remain Follow CLI rather than preset values'
       agent_id: null,
       reasoning_id: null,
       permission_policy: null,
+      provider_options: null,
     });
 });
 
-test('omitted canonical overrides cannot resurrect a newly changed preset', async ({
+test('profile-only requests retain preset model and effort inheritance', async ({
   page,
 }) => {
   const backend = await fixtureBackend(page);
@@ -233,10 +236,11 @@ test('omitted canonical overrides cannot resurrect a newly changed preset', asyn
     .toEqual({
       executor: 'CODEX',
       variant: 'PLAN',
-      model_id: null,
+      model_id: 'preset-model',
       agent_id: null,
-      reasoning_id: null,
+      reasoning_id: 'preset-reasoning',
       permission_policy: null,
+      provider_options: null,
     });
 });
 
@@ -256,7 +260,7 @@ test('empty existing session uses its own provider while a new session uses defa
     .toMatchObject({ executor: 'CLAUDE_CODE' });
 });
 
-test('bound draft omissions after Rust serialization still mean Follow CLI', async ({
+test('omitted draft model and effort inherit the saved request', async ({
   page,
 }) => {
   await fixtureBackend(page);
@@ -266,10 +270,11 @@ test('bound draft omissions after Rust serialization still mean Follow CLI', asy
     .toEqual({
       executor: 'CODEX',
       variant: 'PLAN',
-      model_id: null,
+      model_id: 'saved-model',
       agent_id: null,
-      reasoning_id: null,
+      reasoning_id: 'high',
       permission_policy: null,
+      provider_options: null,
     });
 });
 

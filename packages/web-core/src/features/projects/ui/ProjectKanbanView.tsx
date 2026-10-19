@@ -19,6 +19,7 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragCancelEvent,
   type DragStartEvent,
@@ -68,6 +69,33 @@ import {
   ExecutionDeleteButton,
   type ExecutionDeletionActions,
 } from './ExecutionDeleteButton';
+
+const kanbanCollisionDetection: CollisionDetection = (args) => {
+  if (args.pointerCoordinates) return pointerWithin(args);
+
+  const centerX = args.collisionRect.left + args.collisionRect.width / 2;
+  const column = args.droppableContainers.find((container) => {
+    const rect = args.droppableRects.get(container.id);
+    return (
+      container.data.current?.type === 'column' &&
+      rect &&
+      centerX >= rect.left &&
+      centerX <= rect.right
+    );
+  });
+  if (!column) return closestCorners(args);
+  const tasks = args.droppableContainers.filter(
+    (container) =>
+      container.data.current?.type === 'task' &&
+      container.data.current.statusId === column.data.current?.statusId
+  );
+  // A tall empty column's corners can be farther away than the source card's.
+  // Choose the destination column first, then its cards (or the empty column).
+  return closestCorners({
+    ...args,
+    droppableContainers: tasks.length ? tasks : [column],
+  });
+};
 
 const kanbanKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
   if (event.code !== 'ArrowLeft' && event.code !== 'ArrowRight') {
@@ -127,7 +155,6 @@ const kanbanKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
 interface ProjectKanbanViewProps extends ExecutionDeletionActions {
   projectName: string;
   projectActions?: ReactNode;
-  sessionColumn?: ReactNode;
   columns: KanbanColumnProjection[];
   taskCount: number;
   query: string;
@@ -552,6 +579,7 @@ function KanbanColumn({
     id: column.id,
     data: { type: 'column', statusId: column.id },
   });
+  const { t } = useTranslation('common');
   return (
     <section
       ref={setNodeRef}
@@ -572,7 +600,11 @@ function KanbanColumn({
         <button
           type="button"
           onClick={onCreateTask}
-          aria-label={`Create task in ${column.name}`}
+          aria-label={
+            column.name.trim().toLowerCase() === 'discuss'
+              ? t('projectSessions.create', { defaultValue: 'New discussion' })
+              : `Create task in ${column.name}`
+          }
         >
           <Plus aria-hidden="true" size={16} />
         </button>
@@ -620,7 +652,6 @@ interface KanbanDragSnapshot {
 export function ProjectKanbanView({
   projectName,
   projectActions,
-  sessionColumn,
   columns,
   taskCount,
   query,
@@ -895,9 +926,7 @@ export function ProjectKanbanView({
       <div className="vk-kanban-dnd-root">
         <DndContext
           sensors={sensors}
-          collisionDetection={(args) =>
-            args.pointerCoordinates ? pointerWithin(args) : closestCorners(args)
-          }
+          collisionDetection={kanbanCollisionDetection}
           onDragStart={handleDragStart}
           onDragCancel={handleDragCancel}
           onDragEnd={(event) => void handleDragEnd(event)}
@@ -909,7 +938,6 @@ export function ProjectKanbanView({
             aria-label="Kanban columns"
           >
             <div className="vk-kanban-columns">
-              {sessionColumn}
               {displayColumns.map((column) => (
                 <KanbanColumn
                   key={column.id}

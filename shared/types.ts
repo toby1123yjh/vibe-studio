@@ -1185,7 +1185,7 @@ executor: BaseCodingAgent,
  */
 variant?: string | null,
 /**
- * Model override (e.g., "anthropic/claude-sonnet-4-20250514")
+ * Omitted inherits the Studio preset; null delegates to the native agent.
  */
 model_id?: string | null,
 /**
@@ -1193,7 +1193,7 @@ model_id?: string | null,
  */
 agent_id?: string | null,
 /**
- * Reasoning effort override (e.g., "high", "medium")
+ * Omitted inherits the Studio preset; null delegates to the native agent.
  */
 reasoning_id?: string | null,
 /**
@@ -1398,6 +1398,14 @@ export type AgentInfo = { id: string, label: string, description?: string | null
 
 export enum PermissionPolicy { AUTO = "AUTO", SUPERVISED = "SUPERVISED", PLAN = "PLAN" }
 
+export type NativeModelDefaults = { model_id: string | null, reasoning_id: string | null,
+/**
+ * Exact provider-owned model IDs, independent from advertised capabilities.
+ */
+model_reasoning: { [key in string]?: string }, };
+
+export type ModelCatalogSource = "native" | "observed" | "configured" | "builtin";
+
 export type ModelSelectorConfig = {
 /**
  * Available providers
@@ -1411,6 +1419,10 @@ models: Array<ModelInfo>,
  * Global default model (format: provider_id/model_id)
  */
 default_model?: string | null,
+/**
+ * Read-only native inheritance, never proof of an active run's settings.
+ */
+native_defaults?: NativeModelDefaults, catalog_source?: ModelCatalogSource,
 /**
  * Available agents
  */

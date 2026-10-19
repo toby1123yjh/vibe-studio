@@ -32,10 +32,7 @@ import { configureAuthRuntime } from "../../../../packages/web-core/src/shared/l
 import { setLocalRemoteApiEnabled } from "../../../../packages/web-core/src/shared/lib/remoteApi";
 import { useAppUpdateStore } from "../../../../packages/web-core/src/shared/stores/useAppUpdateStore";
 import { ProjectDirectoryPage } from "../../../../packages/web-core/src/features/projects/ui/ProjectDirectoryPage";
-import {
-  DefaultProjectPage,
-  ProjectSessions,
-} from "../../../../packages/web-core/src/features/projects/ui/ProjectSessions";
+import { DefaultProjectPage } from "../../../../packages/web-core/src/features/projects/ui/ProjectSessions";
 import { ProjectKanbanView } from "../../../../packages/web-core/src/features/projects/ui/ProjectKanbanView";
 import { ProjectBoardActions } from "../../../../packages/web-core/src/features/projects/ui/ProjectBoardActions";
 import { useFixtureProjects } from "./projectSettingsMock";
@@ -108,8 +105,11 @@ function navigation() {
 function ProjectDirectoryFixture({ board = false }: { board?: boolean }) {
   const projects = useFixtureProjects();
   const [taskComposerRequests, setTaskComposerRequests] = React.useState(0);
-  const openTaskComposer = () =>
+  const [taskComposerStatus, setTaskComposerStatus] = React.useState("");
+  const openTaskComposer = (statusId?: string) => {
+    setTaskComposerStatus(statusId ?? "");
     setTaskComposerRequests((count) => count + 1);
+  };
   const [scope, setScope] = React.useState("fixture");
   React.useEffect(() => {
     const changeScope = () => setScope((previous) => `${previous}-changed`);
@@ -144,6 +144,9 @@ function ProjectDirectoryFixture({ board = false }: { board?: boolean }) {
         <output data-testid="issue-composer-requests" hidden>
           {taskComposerRequests}
         </output>
+        <output data-testid="task-composer-status" hidden>
+          {taskComposerStatus}
+        </output>
         {new URLSearchParams(location.search).has("defaultProject") ? (
           <DefaultProjectPage />
         ) : board ? (
@@ -158,22 +161,9 @@ function ProjectDirectoryFixture({ board = false }: { board?: boolean }) {
                 />
               ) : null
             }
-            sessionColumn={
-              new URLSearchParams(location.search).has("sessionColumn") ? (
-                <ProjectSessions
-                  projectId="project-2"
-                  variant="column"
-                  onCreateTask={
-                    new URLSearchParams(location.search).has("noTaskComposer")
-                      ? undefined
-                      : openTaskComposer
-                  }
-                />
-              ) : undefined
-            }
             columns={
-              new URLSearchParams(location.search).has("sessionColumn")
-                ? ["Todo", "In Progress", "In Review", "Done"].map(
+              new URLSearchParams(location.search).has("taskColumns")
+                ? ["Discuss", "Todo", "In Progress", "In Review", "Done"].map(
                     (name, index) => ({
                       id: `status-${index}`,
                       name,

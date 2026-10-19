@@ -926,7 +926,7 @@ mod tests {
         );
 
         let mut changed_config = config.clone();
-        changed_config.model_id = Some("different-model".to_string());
+        changed_config.model_id = Some(Some("different-model".to_string()));
         let profile_error = super::validate_session_provider_binding(
             &pool,
             session_id,

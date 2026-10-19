@@ -2108,9 +2108,9 @@ mod tests {
     fn queued_follow_up_data() -> DraftFollowUpData {
         let mut executor_config = ExecutorConfig::new(BaseCodingAgent::Codex);
         executor_config.variant = Some("queued-profile".to_string());
-        executor_config.model_id = Some("gpt-5.4".to_string());
+        executor_config.model_id = Some(Some("gpt-5.4".to_string()));
         executor_config.agent_id = Some("default".to_string());
-        executor_config.reasoning_id = Some("high".to_string());
+        executor_config.reasoning_id = Some(Some("high".to_string()));
         DraftFollowUpData {
             message: "Continue the canonical task".to_string(),
             executor_config,

@@ -64,10 +64,14 @@ function ProjectCard({
         <span className="vk-project-card__copy">
           <strong title={project.name}>{project.name}</strong>
           <small>
-            {t('directory.updated', {
-              date: formatUpdatedAt(project.updated_at, locale),
-              defaultValue: 'Updated {{date}}',
-            })}
+            {isDefaultProject(project.id)
+              ? t('directory.builtInProject', {
+                  defaultValue: 'Built-in project',
+                })
+              : t('directory.updated', {
+                  date: formatUpdatedAt(project.updated_at, locale),
+                  defaultValue: 'Updated {{date}}',
+                })}
           </small>
         </span>
       </button>

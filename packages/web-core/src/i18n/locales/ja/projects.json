@@ -41,6 +41,7 @@
     "searchingRemaining": "残りのプロジェクトを検索中…",
     "loadingMore": "プロジェクトを追加で読み込み中…",
     "moreAvailable": "追加のプロジェクトはスクロールで自動的に読み込まれます。",
+    "builtInProject": "組み込みプロジェクト",
     "updated": "更新日 {{date}}"
   }
 }

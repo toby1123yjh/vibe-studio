@@ -93,6 +93,51 @@ pub(crate) struct CatalogReasoningEffort {
     pub reasoning_effort: String,
 }
 
+/// Picker discovery reads only these native fields. Unrelated config (including
+/// credentials and native paths) must never become part of the browser payload.
+#[derive(Debug, Deserialize)]
+struct ModelConfigurationResponse {
+    config: ModelConfiguration,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ModelConfiguration {
+    model: Option<String>,
+    model_reasoning_effort: Option<String>,
+    profile: Option<String>,
+    #[serde(default)]
+    profiles: HashMap<String, ModelConfiguration>,
+}
+
+impl ModelConfiguration {
+    fn into_native_defaults(
+        self,
+        profile: Option<&str>,
+    ) -> Result<crate::model_selector::NativeModelDefaults, ExecutorError> {
+        let selected_profile = profile.or(self.profile.as_deref());
+        let selected = selected_profile
+            .map(|name| {
+                self.profiles.get(name).ok_or_else(|| {
+                    ExecutorError::InvalidConfiguration(
+                        "Codex config/read did not resolve the selected native profile".into(),
+                    )
+                })
+            })
+            .transpose()?;
+        let nonempty =
+            |value: Option<&String>| value.filter(|value| !value.trim().is_empty()).cloned();
+        Ok(crate::model_selector::NativeModelDefaults {
+            model_id: nonempty(selected.and_then(|config| config.model.as_ref()))
+                .or_else(|| nonempty(self.model.as_ref())),
+            reasoning_id: nonempty(
+                selected.and_then(|config| config.model_reasoning_effort.as_ref()),
+            )
+            .or_else(|| nonempty(self.model_reasoning_effort.as_ref())),
+            ..Default::default()
+        })
+    }
+}
+
 fn validate_model_options(
     catalog: &ModelCatalogResponse,
     model_id: &str,
@@ -687,6 +732,23 @@ impl AppServerClient {
             },
         };
         self.send_request(request, "config/read").await
+    }
+
+    pub(crate) async fn model_configuration_read(
+        &self,
+        cwd: String,
+        profile: Option<&str>,
+    ) -> Result<crate::model_selector::NativeModelDefaults, ExecutorError> {
+        let request = ClientRequest::ConfigRead {
+            request_id: self.next_request_id(),
+            params: ConfigReadParams {
+                include_layers: false,
+                cwd: Some(cwd),
+            },
+        };
+        let response: ModelConfigurationResponse =
+            self.send_request(request, "config/read").await?;
+        response.config.into_native_defaults(profile)
     }
 
     pub async fn get_account_rate_limits(
@@ -1605,6 +1667,61 @@ mod version_check_tests {
         parse_turn_completed_params, reasoning_update_from_thread_settings,
         turn_completion_control_flow,
     };
+
+    #[test]
+    fn native_model_config_preserves_opaque_ids_without_projecting_other_fields() {
+        let response: super::ModelConfigurationResponse = serde_json::from_value(json!({
+            "config": {
+                "model": "custom/future-model",
+                "model_reasoning_effort": "future-effort",
+                "env": {"API_KEY": "never-project-this-secret"},
+                "model_providers": {"custom": {"base_url": "private-endpoint"}}
+            },
+            "origins": {"model": {"path": "private-config-path"}},
+            "layers": [{"config": {"token": "hidden-layer-token"}}]
+        }))
+        .unwrap();
+        let defaults = response.config.into_native_defaults(None).unwrap();
+        assert_eq!(defaults.model_id.as_deref(), Some("custom/future-model"));
+        assert_eq!(defaults.reasoning_id.as_deref(), Some("future-effort"));
+        let projection = serde_json::to_string(&defaults).unwrap();
+        for secret in [
+            "never-project-this-secret",
+            "private-endpoint",
+            "private-config-path",
+            "hidden-layer-token",
+        ] {
+            assert!(!projection.contains(secret));
+        }
+    }
+
+    #[test]
+    fn native_model_config_uses_selected_profile_and_does_not_guess_missing_effort() {
+        let response: super::ModelConfigurationResponse = serde_json::from_value(json!({
+            "config": {
+                "model": "base-model", "profile": "native",
+                "profiles": {
+                    "native": {"model": "native-model"},
+                    "work": {"model": "work-model", "model_reasoning_effort": "max-plus"}
+                }
+            }
+        }))
+        .unwrap();
+        let defaults = response.config.into_native_defaults(None).unwrap();
+        assert_eq!(defaults.model_id.as_deref(), Some("native-model"));
+        assert_eq!(defaults.reasoning_id, None);
+        let config: super::ModelConfiguration = serde_json::from_value(json!({
+            "model": "base-model",
+            "profiles": {"work": {"model": "work-model", "model_reasoning_effort": "max-plus"}}
+        }))
+        .unwrap();
+        let defaults = config.into_native_defaults(Some("work")).unwrap();
+        assert_eq!(defaults.model_id.as_deref(), Some("work-model"));
+        assert_eq!(defaults.reasoning_id.as_deref(), Some("max-plus"));
+        let config: super::ModelConfiguration =
+            serde_json::from_value(json!({"model":"base-model"})).unwrap();
+        assert!(config.into_native_defaults(Some("missing")).is_err());
+    }
 
     #[test]
     fn thread_observation_does_not_confirm_plan_effort_from_regular_thread_defaults() {

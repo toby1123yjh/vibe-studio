@@ -77,7 +77,11 @@ impl Gemini {
         &mut self,
         executor_config: &ExecutorConfig,
     ) -> Result<(), ExecutorError> {
-        if executor_config.reasoning_id.is_some() {
+        if executor_config
+            .reasoning_id
+            .as_ref()
+            .is_some_and(Option::is_some)
+        {
             return Err(super::acp::session_config::config_error(
                 "Gemini thinking budgets are native model settings, not per-attempt reasoning options",
             ));
@@ -96,7 +100,7 @@ impl Gemini {
             }
         }
         if let Some(model_id) = &executor_config.model_id {
-            self.model = Some(model_id.clone());
+            self.model = model_id.clone();
         }
         if let Some(mode) = &executor_config.agent_id {
             self.mode = Some(mode.clone());
@@ -358,7 +362,7 @@ impl StandardCodingAgentExecutor for Gemini {
         ExecutorConfig {
             executor: BaseCodingAgent::Gemini,
             variant: None,
-            model_id: self.model.clone(),
+            model_id: self.model.clone().map(Some),
             agent_id: self.mode.clone(),
             reasoning_id: None,
             provider_options: None,
@@ -401,7 +405,7 @@ mod tests {
         let mut gemini: Gemini =
             serde_json::from_value(serde_json::json!({"model":"original"})).unwrap();
         let mut config = ExecutorConfig::new(BaseCodingAgent::Gemini);
-        config.model_id = Some("different".into());
+        config.model_id = Some(Some("different".into()));
         config.agent_id = Some("yolo".into());
         config.permission_policy = Some(PermissionPolicy::Supervised);
         assert!(gemini.apply_direct_overrides(&config).is_err());
@@ -417,7 +421,7 @@ mod tests {
     fn explicit_thinking_is_not_silently_ignored() {
         let mut gemini: Gemini = serde_json::from_value(serde_json::json!({})).unwrap();
         let mut config = ExecutorConfig::new(BaseCodingAgent::Gemini);
-        config.reasoning_id = Some("high".into());
+        config.reasoning_id = Some(Some("high".into()));
         assert!(gemini.apply_direct_overrides(&config).is_err());
     }
 }

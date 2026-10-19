@@ -735,9 +735,9 @@ mod tests {
         let executor_config = ExecutorConfig {
             executor: BaseCodingAgent::Codex,
             variant: Some("default".to_string()),
-            model_id: Some("openai/gpt-5.6-codex".to_string()),
+            model_id: Some(Some("openai/gpt-5.6-codex".to_string())),
             agent_id: None,
-            reasoning_id: Some("high".to_string()),
+            reasoning_id: Some(Some("high".to_string())),
             permission_policy: None,
             provider_options: None,
         };
@@ -841,11 +841,19 @@ mod tests {
 
         assert_eq!(round_trip, attempt);
         assert_eq!(
-            round_trip.executor_config.model_id.as_deref(),
+            round_trip
+                .executor_config
+                .model_id
+                .as_ref()
+                .and_then(|value| value.as_deref()),
             Some("openai/gpt-5.6-codex")
         );
         assert_eq!(
-            round_trip.executor_config.reasoning_id.as_deref(),
+            round_trip
+                .executor_config
+                .reasoning_id
+                .as_ref()
+                .and_then(|value| value.as_deref()),
             Some("high")
         );
         assert_eq!(round_trip.selected_skills, attempt.selected_skills);

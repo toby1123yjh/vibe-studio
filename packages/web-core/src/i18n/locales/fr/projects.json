@@ -41,6 +41,7 @@
     "searchingRemaining": "Recherche des projets restants…",
     "loadingMore": "Chargement de projets supplémentaires…",
     "moreAvailable": "Les projets supplémentaires se chargent au défilement.",
+    "builtInProject": "Projet intégré",
     "updated": "Mis à jour le {{date}}"
   }
 }

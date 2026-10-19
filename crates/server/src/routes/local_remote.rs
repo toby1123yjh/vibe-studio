@@ -47,8 +47,10 @@ use crate::{
 };
 
 const LOCAL_PROJECT_COLOR: &str = "210 80% 52%";
+pub(super) const DISCUSS_STATUS: (&str, &str, i32, bool) = ("Discuss", "215 12% 55%", 0, false);
 
-pub(super) const DEFAULT_STATUSES: [(&str, &str, i32, bool); 5] = [
+pub(super) const DEFAULT_STATUSES: [(&str, &str, i32, bool); 6] = [
+    DISCUSS_STATUS,
     ("Todo", "210 80% 52%", 100, false),
     ("In Progress", "38 92% 50%", 200, false),
     ("In Review", "265 70% 62%", 300, false),
@@ -3430,10 +3432,11 @@ mod tests {
             .await
             .expect("seed statuses");
 
-        assert_eq!(statuses.len(), 5);
-        assert_eq!(statuses[0].name, "Todo");
-        assert_eq!(statuses[4].name, "Cancelled");
-        assert!(statuses[4].hidden);
+        assert_eq!(statuses.len(), 6);
+        assert_eq!(statuses[0].name, "Discuss");
+        assert_eq!(statuses[1].name, "Todo");
+        assert_eq!(statuses[5].name, "Cancelled");
+        assert!(statuses[5].hidden);
 
         let issue = super::create_local_issue(
             &pool,
@@ -3457,6 +3460,7 @@ mod tests {
         .expect("create local issue");
 
         assert_eq!(issue.project_id, project_id);
+        assert_eq!(issue.status_id, statuses[0].id);
         assert_eq!(issue.issue_number, 1);
         assert_eq!(issue.simple_id, "TASK-1");
         assert_eq!(issue.title, "First local issue");

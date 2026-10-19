@@ -63,10 +63,10 @@ impl Opencode {
             ));
         }
         if let Some(model) = &config.model_id {
-            self.model = Some(model.clone());
+            self.model = model.clone();
         }
         if let Some(effort) = &config.reasoning_id {
-            self.reasoning_effort = Some(effort.clone());
+            self.reasoning_effort = effort.clone();
         }
         if let Some(agent) = &config.agent_id {
             self.agent = Some(agent.clone());
@@ -173,8 +173,8 @@ impl StandardCodingAgentExecutor for Opencode {
         ExecutorConfig {
             executor: BaseCodingAgent::Opencode,
             variant: None,
-            model_id: self.model.clone(),
-            reasoning_id: self.reasoning_effort.clone(),
+            model_id: self.model.clone().map(Some),
+            reasoning_id: self.reasoning_effort.clone().map(Some),
             agent_id: self.agent.clone(),
             provider_options: None,
             permission_policy: Some(if self.yolo.unwrap_or(false) {

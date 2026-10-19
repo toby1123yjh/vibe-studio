@@ -32,6 +32,9 @@ use crate::{
     profile::ExecutorProfileId,
 };
 
+mod native_model_defaults;
+pub use native_model_defaults::native_model_defaults_for;
+
 pub const SETTINGS_PROFILE_STORE_VERSION: u16 = 1;
 
 // Profile mutations are synchronous and infrequent. Serializing the complete
@@ -1753,7 +1756,9 @@ impl ProviderSettingsManager {
         }
     }
 
-    fn deepseek_file_specs(&self) -> Vec<NativeFileSpec> {
+    /// Configuration-only paths shared by model discovery and full settings
+    /// management. Building these specs never reads credentials or .env files.
+    fn deepseek_config_file_specs(&self) -> Vec<NativeFileSpec> {
         let mut profile = file_spec(
             "acp_profile_config",
             self.user_root.join("profiles/acp/cordis.patch.yml"),
@@ -1771,6 +1776,11 @@ impl ProviderSettingsManager {
         );
         home.dialect = NativeDialect::Cordis;
         home.raw_editable = false;
+        vec![profile, home]
+    }
+
+    fn deepseek_file_specs(&self) -> Vec<NativeFileSpec> {
+        let mut files = self.deepseek_config_file_specs();
         let mut credentials = file_spec(
             "user_credentials",
             self.user_root.join(".credentials.yaml"),
@@ -1779,7 +1789,6 @@ impl ProviderSettingsManager {
         );
         credentials.dialect = NativeDialect::Credentials;
         credentials.raw_editable = false;
-        let mut files = vec![profile, home];
         let mut env = file_spec(
             "home_env",
             self.user_root.join(".env"),
@@ -1802,7 +1811,8 @@ impl ProviderSettingsManager {
         }
         files.push(credentials);
         let key = effective_string_at_path(
-            &files
+            &self
+                .deepseek_config_file_specs()
                 .iter()
                 .cloned()
                 .map(read_native_file)
@@ -2622,25 +2632,16 @@ fn codex_descriptors(connection_provider: &str) -> Vec<SettingDescriptor> {
             &common_locations(&["model"]),
             true,
         ),
-        select_options(
-            descriptor(
-                "common",
-                "reasoning",
-                SettingSection::General,
-                "Reasoning effort",
-                "Default model reasoning effort.",
-                SettingValueType::String,
-                SettingControl::Select,
-                &common_locations(&["model_reasoning_effort"]),
-                true,
-            ),
-            &[
-                ("minimal", "Minimal"),
-                ("low", "Low"),
-                ("medium", "Medium"),
-                ("high", "High"),
-                ("xhigh", "Extra high"),
-            ],
+        descriptor(
+            "common",
+            "reasoning",
+            SettingSection::General,
+            "Reasoning effort",
+            "Native default model reasoning effort. Accepted values depend on the installed CLI and selected model; per-run choices come from its native catalog.",
+            SettingValueType::String,
+            SettingControl::Text,
+            &common_locations(&["model_reasoning_effort"]),
+            true,
         ),
         select_options(
             descriptor(

@@ -93,7 +93,10 @@ use crate::{
         ExecutorExitResult, SpawnedChild, StandardCodingAgentExecutor,
     },
     logs::utils::patch,
-    model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy, ReasoningOption},
+    model_selector::{
+        ModelCatalogSource, ModelInfo, ModelSelectorConfig, NativeModelDefaults, PermissionPolicy,
+        ReasoningOption,
+    },
     profile::{ExecutorConfig, ProviderRunOptions},
     stdout_dup::create_stdout_pipe_writer,
     workflow_mcp::{WorkflowMcpReadiness, WorkflowPromptGate},
@@ -419,12 +422,12 @@ impl StandardCodingAgentExecutor for Codex {
         ExecutorConfig {
             executor: BaseCodingAgent::Codex,
             variant: None,
-            model_id: self.model.clone(),
+            model_id: self.model.clone().map(Some),
             agent_id: None,
             reasoning_id: self
                 .model_reasoning_effort
                 .as_ref()
-                .map(|e| e.as_str().to_string()),
+                .map(|e| Some(e.as_str().to_string())),
             permission_policy: Some(permission_policy),
             provider_options: Some(ProviderRunOptions::Codex {
                 service_tier: self.service_tier.clone(),
@@ -445,6 +448,18 @@ impl StandardCodingAgentExecutor for Codex {
         let mut options = ExecutorDiscoveredOptions {
             model_selector: ModelSelectorConfig {
                 models: fallback_models(),
+                native_defaults: self
+                    .profile
+                    .is_none()
+                    .then(|| {
+                        crate::agent_settings::native_model_defaults_for(
+                            Self::DIRECT_PROVIDER,
+                            workdir.or(repo_path),
+                            &self.cmd,
+                        )
+                    })
+                    .flatten(),
+                catalog_source: Some(ModelCatalogSource::Builtin),
                 permissions: vec![
                     PermissionPolicy::Auto,
                     PermissionPolicy::Supervised,
@@ -458,7 +473,7 @@ impl StandardCodingAgentExecutor for Codex {
         options.loading_models = true;
         options.loading_slash_commands = true;
         options.loading_skills = skills_cwd.is_some();
-        let initial_patch = patch::executor_discovered_options(options);
+        let initial_patch = patch::executor_discovered_options(options.clone());
 
         let this = self.clone();
         let models_cwd = skills_cwd.clone();
@@ -467,35 +482,17 @@ impl StandardCodingAgentExecutor for Codex {
             yield patch::update_slash_commands(slash_commands);
             yield patch::slash_commands_loaded();
 
-            // Models: prefer the live `model/list` over the hardcoded fallback so
-            // new Codex models appear automatically. Run against the resolved cwd
-            // (config like model providers can be workspace-scoped).
+            // The catalog and inherited config are separate projections from
+            // the same app-server authority. A catalog recommendation must not
+            // replace the user's configured model or effort.
             let model_dir = models_cwd
                 .clone()
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let models_result = tokio::time::timeout(
-                MODELS_DISCOVERY_TIMEOUT,
-                this.discover_models(model_dir),
-            )
-            .await;
-            match models_result {
-                Ok(Ok(models)) if !models.is_empty() => {
-                    yield patch::update_models(models);
-                }
-                Ok(Ok(_)) => {
-                    tracing::warn!("Codex model/list returned no models; keeping fallback list");
-                    yield patch::discovery_error("Codex returned no models; capabilities are unconfirmed".into());
-                }
-                Ok(Err(err)) => {
-                    tracing::warn!("Failed to discover Codex models: {err}; keeping fallback list");
-                    yield patch::discovery_error(format!("Codex model discovery failed: {err}"));
-                }
-                Err(_) => {
-                    tracing::warn!("Timed out discovering Codex models; keeping fallback list");
-                    yield patch::discovery_error("Codex model discovery timed out; capabilities are unconfirmed".into());
-                }
-            }
-            yield patch::models_loaded();
+            apply_model_discovery(&mut options, this.discover_models(model_dir).await);
+            // Keep the following skill/command patches independent from the
+            // model result, including when one of the native queries failed.
+            options.loading_slash_commands = false;
+            yield patch::executor_discovered_options(options.clone());
 
             let Some(skills_cwd) = skills_cwd else {
                 return;
@@ -582,14 +579,14 @@ impl Codex {
         executor_config: &ExecutorConfig,
     ) -> Result<(), ExecutorError> {
         if let Some(model_id) = &executor_config.model_id {
-            self.model = Some(model_id.clone());
+            self.model = model_id.clone();
         }
         if let Some(reasoning_id) = &executor_config.reasoning_id {
-            self.model_reasoning_effort = Some(
-                reasoning_id
-                    .parse()
-                    .map_err(ExecutorError::InvalidConfiguration)?,
-            );
+            self.model_reasoning_effort = reasoning_id
+                .as_ref()
+                .map(|value| value.parse())
+                .transpose()
+                .map_err(ExecutorError::InvalidConfiguration)?;
         }
         if let Some(permission_policy) = &executor_config.permission_policy {
             match permission_policy {
@@ -771,11 +768,32 @@ impl Codex {
         Ok(skills_list_response_to_discovery(response))
     }
 
-    async fn discover_models(&self, cwd: PathBuf) -> Result<Vec<ModelInfo>, ExecutorError> {
-        let response = self
-            .with_discovery_app_server(&cwd, move |client| async move { client.model_list().await })
-            .await?;
-        Ok(model_list_response_to_model_infos(response))
+    async fn discover_models(&self, cwd: PathBuf) -> Result<CodexModelDiscovery, ExecutorError> {
+        let request_cwd = cwd.to_string_lossy().into_owned();
+        let profile = self.profile.clone();
+        self.with_discovery_app_server(&cwd, move |client| async move {
+            let (models, native_defaults) = tokio::join!(
+                tokio::time::timeout(MODELS_DISCOVERY_TIMEOUT, client.model_list()),
+                tokio::time::timeout(
+                    MODELS_DISCOVERY_TIMEOUT,
+                    client.model_configuration_read(request_cwd, profile.as_deref()),
+                ),
+            );
+            Ok(CodexModelDiscovery {
+                models: models
+                    .map_err(|_| {
+                        ExecutorError::InvalidConfiguration("Codex model/list timed out".into())
+                    })
+                    .and_then(|result| result)
+                    .map(model_list_response_to_model_infos),
+                native_defaults: native_defaults
+                    .map_err(|_| {
+                        ExecutorError::InvalidConfiguration("Codex config/read timed out".into())
+                    })
+                    .and_then(|result| result),
+            })
+        })
+        .await
     }
 
     async fn with_discovery_app_server<T, F, Fut>(
@@ -846,7 +864,13 @@ impl Codex {
         client.connect(rpc_peer);
 
         let result = async {
-            client.initialize().await?;
+            tokio::time::timeout(MODELS_DISCOVERY_TIMEOUT, client.initialize())
+                .await
+                .map_err(|_| {
+                    ExecutorError::InvalidConfiguration(
+                        "Codex discovery initialization timed out".into(),
+                    )
+                })??;
             task(client).await
         }
         .await;
@@ -1285,6 +1309,41 @@ fn skill_scope_to_string(scope: SkillScope) -> &'static str {
     }
 }
 
+struct CodexModelDiscovery {
+    models: Result<Vec<ModelInfo>, ExecutorError>,
+    native_defaults: Result<NativeModelDefaults, ExecutorError>,
+}
+
+fn apply_model_discovery(
+    options: &mut ExecutorDiscoveredOptions,
+    result: Result<CodexModelDiscovery, ExecutorError>,
+) {
+    let mut errors = Vec::new();
+    match result {
+        Ok(discovery) => {
+            match discovery.models {
+                Ok(models) if !models.is_empty() => {
+                    options.model_selector.models = models;
+                    options.model_selector.catalog_source = Some(ModelCatalogSource::Native);
+                }
+                Ok(_) => {
+                    errors.push("Codex returned no models; capabilities are unconfirmed".into())
+                }
+                Err(error) => errors.push(format!("Codex model discovery failed: {error}")),
+            }
+            match discovery.native_defaults {
+                Ok(defaults) => options.model_selector.native_defaults = Some(defaults),
+                Err(error) => errors.push(format!(
+                    "Codex native configuration discovery failed: {error}"
+                )),
+            }
+        }
+        Err(error) => errors.push(format!("Codex model/config discovery failed: {error}")),
+    }
+    options.error = (!errors.is_empty()).then(|| errors.join("; "));
+    options.loading_models = false;
+}
+
 /// Convert a live `model/list` response into the UI model-selector shape,
 /// dropping models hidden from the default picker.
 fn model_list_response_to_model_infos(response: client::ModelCatalogResponse) -> Vec<ModelInfo> {
@@ -1410,13 +1469,152 @@ mod tests {
         serde_json::from_value(json!({})).expect("empty Codex config should deserialize")
     }
 
+    #[tokio::test]
+    async fn model_discovery_reads_native_config_and_catalog_from_one_read_only_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("native-discovery.cjs");
+        let trace = directory.path().join("requests.jsonl");
+        std::fs::write(&script, r#"
+const fs = require('node:fs');
+const readline = require('node:readline');
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  fs.appendFileSync(process.env.VK_FIXTURE_TRACE, JSON.stringify({ method: request.method, params: request.params, pid: process.pid, cwd: process.cwd(), scope: process.env.VK_FIXTURE_SCOPE }) + '\n');
+  if (!Object.hasOwn(request, 'id')) return;
+  let result;
+  if (request.method === 'initialize') result = { userAgent: 'codex/0.144.1', codexHome: process.cwd(), platformFamily: process.platform === 'win32' ? 'windows' : 'unix', platformOs: process.platform };
+  else if (request.method === 'config/read') result = { config: { model: 'unlisted-native-model', model_reasoning_effort: 'future-effort', api_key: 'private-fixture-token' } };
+  else if (request.method === 'model/list') {
+    if (process.env.VK_FIXTURE_FAIL_CATALOG === '1') { process.stdout.write(JSON.stringify({ id: request.id, error: { code: -32000, message: 'catalog unavailable' } }) + '\n'); return; }
+    result = { data: [{ id: 'catalog-model', model: 'catalog-model', displayName: 'Catalog Model', defaultReasoningEffort: 'low', supportedReasoningEfforts: [{reasoningEffort:'low'}] }], nextCursor: null };
+  } else { process.exit(21); }
+  process.stdout.write(JSON.stringify({ id: request.id, result }) + '\n');
+});
+"#).unwrap();
+        for fail_catalog in [false, true] {
+            std::fs::write(&trace, "").unwrap();
+            let mut executor = test_executor();
+            executor.cmd.base_command_override = Some(format!("node \"{}\"", script.display()));
+            executor.cmd.env = Some(std::collections::HashMap::from([
+                (
+                    "VK_FIXTURE_TRACE".into(),
+                    trace.to_string_lossy().into_owned(),
+                ),
+                ("VK_FIXTURE_SCOPE".into(), "selected-profile".into()),
+                (
+                    "VK_FIXTURE_FAIL_CATALOG".into(),
+                    if fail_catalog { "1" } else { "0" }.into(),
+                ),
+            ]));
+            let result = executor
+                .discover_models(directory.path().to_path_buf())
+                .await;
+            let mut options = crate::executor_discovery::ExecutorDiscoveredOptions::default();
+            options.model_selector.models = fallback_models();
+            options.model_selector.catalog_source =
+                Some(crate::model_selector::ModelCatalogSource::Builtin);
+            super::apply_model_discovery(&mut options, result);
+            let defaults = options.model_selector.native_defaults.as_ref().unwrap();
+            assert_eq!(defaults.model_id.as_deref(), Some("unlisted-native-model"));
+            assert_eq!(defaults.reasoning_id.as_deref(), Some("future-effort"));
+            assert_eq!(options.error.is_some(), fail_catalog);
+            assert!(!options.loading_models);
+            assert_eq!(
+                options.model_selector.catalog_source,
+                Some(if fail_catalog {
+                    crate::model_selector::ModelCatalogSource::Builtin
+                } else {
+                    crate::model_selector::ModelCatalogSource::Native
+                })
+            );
+            assert!(
+                !serde_json::to_string(&options)
+                    .unwrap()
+                    .contains("private-fixture-token")
+            );
+            assert_eq!(executor.get_preset_options().model_id, None);
+            assert_eq!(executor.get_preset_options().reasoning_id, None);
+            let requests: Vec<serde_json::Value> = std::fs::read_to_string(&trace)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(requests.len(), 4);
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request["pid"] == requests[0]["pid"])
+            );
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request["scope"] == "selected-profile")
+            );
+            let config_request = requests
+                .iter()
+                .find(|request| request["method"] == "config/read")
+                .unwrap();
+            assert_eq!(
+                config_request["params"]["cwd"],
+                directory.path().to_string_lossy().as_ref()
+            );
+            assert_ne!(config_request["params"]["includeLayers"], true);
+            assert!(requests.iter().all(|request| {
+                !request["method"].as_str().unwrap().starts_with("thread/")
+                    && !request["method"].as_str().unwrap().starts_with("turn/")
+            }));
+        }
+    }
+
+    #[test]
+    fn model_discovery_failure_keeps_native_config_without_promoting_builtin_defaults() {
+        use crate::{
+            executor_discovery::ExecutorDiscoveredOptions,
+            model_selector::{ModelCatalogSource, NativeModelDefaults},
+        };
+        let defaults = NativeModelDefaults {
+            model_id: Some("configured-model".into()),
+            reasoning_id: Some("configured-effort".into()),
+            ..Default::default()
+        };
+        let mut options = ExecutorDiscoveredOptions::default();
+        options.model_selector.native_defaults = Some(defaults.clone());
+        options.model_selector.models = fallback_models();
+        options.model_selector.catalog_source = Some(ModelCatalogSource::Builtin);
+        super::apply_model_discovery(
+            &mut options,
+            Err(crate::executors::ExecutorError::InvalidConfiguration(
+                "initialization failed".into(),
+            )),
+        );
+        assert_eq!(options.model_selector.native_defaults, Some(defaults));
+        assert_eq!(
+            options.model_selector.catalog_source,
+            Some(ModelCatalogSource::Builtin)
+        );
+        assert!(
+            options
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("initialization failed")
+        );
+        assert!(
+            options
+                .model_selector
+                .models
+                .iter()
+                .all(|model| model.reasoning_options.is_empty())
+        );
+    }
+
     fn config_with_reasoning(reasoning_id: &str) -> ExecutorConfig {
         ExecutorConfig {
             executor: BaseCodingAgent::Codex,
             variant: None,
             model_id: None,
             agent_id: None,
-            reasoning_id: Some(reasoning_id.to_string()),
+            reasoning_id: Some(Some(reasoning_id.to_string())),
             permission_policy: None,
             provider_options: None,
         }

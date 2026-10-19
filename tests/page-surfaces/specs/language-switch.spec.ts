@@ -3,12 +3,7 @@ import { expect, test } from "@playwright/test";
 test("built-in board headings stay English while discussion actions follow the UI language", async ({
   page,
 }) => {
-  await page.route("**/api/sessions/recent?*", (route) =>
-    route.fulfill({
-      json: { success: true, data: { sessions: [], next_cursor: null } },
-    }),
-  );
-  await page.goto("/?surface=board&sessionColumn");
+  await page.goto("/?surface=board&taskColumns");
   for (const [language, action] of [
     ["zh-Hans", "新建讨论"],
     ["en", "New discussion"],

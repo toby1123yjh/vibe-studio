@@ -1,8 +1,8 @@
-import { fileURLToPath } from "node:url";
-import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { fileURLToPath } from 'node:url';
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 
-const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const fixtureRoot = `${repoRoot}/tests/agent-center/fixture`;
 
 export default defineConfig({
@@ -10,6 +10,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: [
+      {
+        find: '@/features/agent-runtime/model/AgentRunSessionContext',
+        replacement: `${fixtureRoot}/src/mocks.tsx`,
+      },
       {
         find: /^@\/shared\/(hooks\/auth\/useAuth|providers\/HostIdProvider|lib\/(api|remoteApi|machineClient|relayPairingStorage))$/,
         replacement: `${fixtureRoot}/src/mocks.tsx`,
@@ -35,44 +39,44 @@ export default defineConfig({
         replacement: `${fixtureRoot}/src/mocks.tsx`,
       },
       {
-        find: "@tanstack/react-router",
+        find: '@tanstack/react-router',
         replacement: `${fixtureRoot}/src/mocks.tsx`,
       },
       {
-        find: "@vibe/ui/components/StateSurface",
+        find: '@vibe/ui/components/StateSurface',
         replacement: `${fixtureRoot}/src/mocks.tsx`,
       },
       {
-        find: "@vibe/ui/components/ConfirmDialog",
+        find: '@vibe/ui/components/ConfirmDialog',
         replacement: `${fixtureRoot}/src/mocks.tsx`,
       },
-      { find: "@", replacement: `${repoRoot}/packages/web-core/src` },
-      { find: "shared", replacement: `${repoRoot}/shared` },
+      { find: '@', replacement: `${repoRoot}/packages/web-core/src` },
+      { find: 'shared', replacement: `${repoRoot}/shared` },
       {
-        find: "react",
+        find: 'react',
         replacement: `${repoRoot}/packages/web-core/node_modules/react`,
       },
       {
-        find: "react-dom",
+        find: 'react-dom',
         replacement: `${repoRoot}/packages/web-core/node_modules/react-dom`,
       },
       {
-        find: "@tanstack/react-query",
+        find: '@tanstack/react-query',
         replacement: `${repoRoot}/packages/web-core/node_modules/@tanstack/react-query`,
       },
       {
-        find: "react-i18next",
+        find: 'react-i18next',
         replacement: `${repoRoot}/packages/web-core/node_modules/react-i18next`,
       },
       {
-        find: "@phosphor-icons/react",
+        find: '@phosphor-icons/react',
         replacement: `${repoRoot}/packages/web-core/node_modules/@phosphor-icons/react`,
       },
       {
-        find: "react-hotkeys-hook",
+        find: 'react-hotkeys-hook',
         replacement: `${repoRoot}/packages/web-core/node_modules/react-hotkeys-hook`,
       },
-      { find: "@vibe/ui", replacement: `${repoRoot}/packages/ui/src` },
+      { find: '@vibe/ui', replacement: `${repoRoot}/packages/ui/src` },
     ],
   },
   server: { fs: { allow: [repoRoot] } },

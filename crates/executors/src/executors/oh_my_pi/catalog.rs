@@ -41,18 +41,31 @@ pub(crate) fn scope(cwd: &Path, cmd: &CmdOverrides) -> CatalogScope {
                 || key.starts_with("XDG_")
         })
         .collect();
-    let root = cmd
-        .env
-        .as_ref()
-        .and_then(|env| {
-            env.get("PI_CODING_AGENT_DIR")
-                .or_else(|| env.get("OMP_AGENT_DIR"))
-        })
+    let env = |name: &str| {
+        cmd.env
+            .as_ref()
+            .and_then(|env| env.get(name))
+            .map(std::ffi::OsString::from)
+            .or_else(|| std::env::var_os(name))
+    };
+    let root = env(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
-        .or_else(super::oh_my_pi_agent_root);
+        .or_else(dirs::home_dir)
+        .map(|home| super::oh_my_pi_agent_root_with_env(&home, env))
+        .map(|root| {
+            if root.is_absolute() {
+                root
+            } else {
+                cwd.join(root)
+            }
+        });
     let mut files = vec![working_dir.join(".omp/config.yml")];
     if let Some(root) = root {
-        files.extend([root.join("config.yml"), root.join("models.json")]);
+        files.extend([
+            root.join("config.yml"),
+            root.join("models.yml"),
+            root.join("models.json"),
+        ]);
     }
     // Include installed command identity so replacement/upgrades invalidate a
     // previously observed catalog without launching any discovery session.

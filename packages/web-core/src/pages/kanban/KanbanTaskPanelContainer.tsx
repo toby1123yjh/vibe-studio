@@ -13,7 +13,6 @@ import type { TaskPriority } from 'shared/remote-types';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useOrgContext } from '@/shared/hooks/useOrgContext';
-import { useProjectWorkspaceCreateDraft } from '@/shared/hooks/useProjectWorkspaceCreateDraft';
 import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
 import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTagDropdownContainer';
 import { ProjectWorkspaceDefaultContext } from '@/shared/components/ProjectWorkspaceDefaultContext';
@@ -27,15 +26,7 @@ import {
   type TaskFormData,
 } from '@vibe/ui/components/KanbanTaskPanel';
 import { useActions } from '@/shared/hooks/useActions';
-import { useUserContext } from '@/shared/hooks/useUserContext';
-import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import { CommandBarDialog } from '@/shared/dialogs/command-bar/CommandBarDialog';
-import { getWorkspaceDefaults } from '@/shared/lib/workspaceDefaults';
-import {
-  buildLinkedTaskCreateState,
-  buildWorkspaceCreateInitialState,
-  buildWorkspaceCreatePrompt,
-} from '@/shared/lib/workspaceCreateState';
 import {
   createBlankCreateFormData,
   createInitialKanbanTaskPanelFormState,
@@ -43,7 +34,6 @@ import {
   selectDisplayData,
   selectIsCreateDraftDirty,
 } from './kanban-task-panel-state';
-import { useUiPreferencesStore } from '@/shared/stores/useUiPreferencesStore';
 import { useAzureAttachments } from '@/shared/hooks/useAzureAttachments';
 import {
   commitTaskAttachments,
@@ -54,7 +44,6 @@ import {
   removeAttachmentMarkdownBySource,
   replaceAttachmentSource,
 } from '@/shared/lib/attachmentUtils';
-import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 import { useCurrentKanbanRouteState } from '@/shared/hooks/useCurrentKanbanRouteState';
 import {
@@ -83,20 +72,6 @@ export function KanbanTaskPanelContainer({
   const { t } = useTranslation('common');
   const appNavigation = useAppNavigation();
   const routeState = useCurrentKanbanRouteState();
-
-  const { openWorkspaceCreateFromState } = useProjectWorkspaceCreateDraft();
-  const { workspaces } = useUserContext();
-  const { activeWorkspaces, archivedWorkspaces } = useWorkspaceContext();
-
-  // Build set of local workspace IDs that exist on this machine
-  const localWorkspaceIds = useMemo(
-    () =>
-      new Set([
-        ...activeWorkspaces.map((w) => w.id),
-        ...archivedWorkspaces.map((w) => w.id),
-      ]),
-    [activeWorkspaces, archivedWorkspaces]
-  );
 
   // Get data from contexts
   const {
@@ -130,12 +105,6 @@ export function KanbanTaskPanelContainer({
     createComposerInitial?.assigneeIds ?? null;
   const kanbanCreateDefaultParentTaskId =
     createComposerInitial?.parentTaskId ?? null;
-  const createDraftWorkspaceByDefault = useUiPreferencesStore(
-    (state) => state.createDraftWorkspaceByDefault
-  );
-  const setCreateDraftWorkspaceByDefault = useUiPreferencesStore(
-    (state) => state.setCreateDraftWorkspaceByDefault
-  );
   const openTask = useCallback(
     (taskId: string) => {
       if (kanbanCreateMode && taskComposerKey) {
@@ -160,7 +129,6 @@ export function KanbanTaskPanelContainer({
       title?: string;
       description?: string | null;
       tagIds?: string[];
-      createDraftWorkspace?: boolean;
     }) => {
       if (!kanbanCreateMode || !taskComposerKey) {
         return;
@@ -271,13 +239,11 @@ export function KanbanTaskPanelContainer({
       priority: kanbanCreateDefaultPriority ?? null,
       assigneeIds: [...(kanbanCreateDefaultAssigneeIds ?? [])],
       tagIds: [],
-      createDraftWorkspace: createDraftWorkspaceByDefault,
     }),
     [
       defaultStatusId,
       kanbanCreateDefaultPriority,
       kanbanCreateDefaultAssigneeIds,
-      createDraftWorkspaceByDefault,
     ]
   );
 
@@ -394,9 +360,8 @@ export function KanbanTaskPanelContainer({
   }, [selectedKanbanTaskId, kanbanCreateMode]);
 
   const createFormFallback = useMemo(
-    () =>
-      createBlankCreateFormData(defaultStatusId, createDraftWorkspaceByDefault),
-    [defaultStatusId, createDraftWorkspaceByDefault]
+    () => createBlankCreateFormData(defaultStatusId),
+    [defaultStatusId]
   );
 
   // --- Image attachment upload integration ---
@@ -600,9 +565,6 @@ export function KanbanTaskPanelContainer({
           assigneeIds:
             composerDraft.assigneeIds ?? createModeDefaults.assigneeIds,
           tagIds: composerDraft.tagIds ?? createModeDefaults.tagIds,
-          createDraftWorkspace:
-            composerDraft.createDraftWorkspace ??
-            createModeDefaults.createDraftWorkspace,
         };
         restoredFromScratch = true;
       } else {
@@ -733,9 +695,6 @@ export function KanbanTaskPanelContainer({
           fallback: createFormFallback,
         });
         updateTaskComposerDraft({ [field]: value } as Partial<TaskFormData>);
-        if (field === 'createDraftWorkspace') {
-          setCreateDraftWorkspaceByDefault(value as boolean);
-        }
         return;
       }
 
@@ -809,7 +768,6 @@ export function KanbanTaskPanelContainer({
       openPrioritySelection,
       openAssigneeSelection,
       updateTaskComposerDraft,
-      setCreateDraftWorkspaceByDefault,
       taskTags,
       insertTaskTag,
       removeTaskTag,
@@ -893,51 +851,9 @@ export function KanbanTaskPanelContainer({
           });
         }
 
-        if (taskComposerKey) {
-          closeKanbanTaskComposer(taskComposerKey);
-        }
-
-        if (displayData.createDraftWorkspace) {
-          const initialPrompt = buildWorkspaceCreatePrompt(
-            displayData.title,
-            displayData.description
-          );
-
-          // Project-linked creation uses only the visible project working
-          // location. Recent workspace history is standalone-only.
-          const defaults = await getWorkspaceDefaults(
-            workspaces,
-            localWorkspaceIds,
-            projectId,
-            routeState.hostId
-          );
-
-          const createState = buildWorkspaceCreateInitialState({
-            prompt: initialPrompt,
-            defaults,
-            linkedTask: buildLinkedTaskCreateState(syncedTask, projectId),
-          });
-          const draftId = await openWorkspaceCreateFromState(createState, {
-            taskId: syncedTask.id,
-          });
-          if (!draftId) {
-            await ConfirmDialog.show({
-              title: t('common:error'),
-              message: t(
-                'workspaces.createDraftError',
-                'Failed to prepare workspace draft. Please try again.'
-              ),
-              confirmText: t('common:ok'),
-              showCancelButton: false,
-            });
-            onExpectTaskOpen?.(syncedTask.id);
-            openTask(syncedTask.id);
-          }
-          return; // Don't open issue panel since we're navigating away
-        }
-
-        // Open the newly created issue
-        onExpectTaskOpen?.(syncedTask.id);
+        // Creation only opens Task details. The user chooses an execution
+        // there; keep the expectation, composer close and navigation together.
+        onExpectTaskOpen(syncedTask.id);
         openTask(syncedTask.id);
       } else {
         // Update existing issue - would use update mutation
@@ -962,17 +878,11 @@ export function KanbanTaskPanelContainer({
     insertTaskTag,
     openTask,
     kanbanCreateDefaultParentTaskId,
-    openWorkspaceCreateFromState,
-    workspaces,
-    localWorkspaceIds,
-    routeState.hostId,
     closeKanbanTaskPanel,
-    taskComposerKey,
     getAttachmentIds,
     clearAttachments,
     hasPendingAttachments,
     onExpectTaskOpen,
-    t,
   ]);
 
   useEffect(() => {

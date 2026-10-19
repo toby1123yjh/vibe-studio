@@ -8,14 +8,14 @@ export function executorProfileKey(
   return executor ? `${executor}:${variant ?? 'DEFAULT'}` : null;
 }
 
-/** A persisted request is a complete snapshot, not a partial preset patch. */
+/** Preserve explicit native inheritance separately from omitted preset fields. */
 export function restoreExecutorConfig(config: ExecutorConfig): ExecutorConfig {
   return {
     executor: config.executor,
     variant: config.variant ?? null,
-    model_id: config.model_id ?? null,
+    model_id: config.model_id,
     agent_id: config.agent_id ?? null,
-    reasoning_id: config.reasoning_id ?? null,
+    reasoning_id: config.reasoning_id,
     permission_policy: config.permission_policy ?? null,
     provider_options: config.provider_options ?? null,
   };

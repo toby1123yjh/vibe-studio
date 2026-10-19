@@ -1,7 +1,4 @@
 {
-  "projectSessions": {
-    "column": "Discuss"
-  },
   "editorNames": {
     "custom": "Personalizado"
   },
@@ -634,8 +631,6 @@
     "copyLink": "Copiar enlace",
     "issueTitlePlaceholder": "Título del task...",
     "issueDescriptionPlaceholder": "Ingresa la descripción de la tarea...",
-    "createDraftWorkspaceImmediately": "Crear workspace borrador inmediatamente",
-    "createDraftWorkspaceDescription": "Después de crear la tarea, abrir el formulario de creación de workspace con los datos de la tarea",
     "createIssue": "Crear tarea",
     "newIssue": "Nuevo task",
     "previewCodeBlock": "[Bloque de código]",
@@ -773,6 +768,8 @@
   "modelSelector": {
     "unspecified": "Modelo no especificado",
     "followCliConfig": "Follow CLI config",
+    "followCliValue": "Usar CLI · {{value}}",
+    "builtinCatalog": "Lista de respaldo. Las capacidades del agente no están confirmadas.",
     "preset": "Preajuste",
     "custom": "Personalizar",
     "permissions": "Permisos",

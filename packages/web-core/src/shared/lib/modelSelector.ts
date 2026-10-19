@@ -45,6 +45,24 @@ export function resolveModelDisplayId(
   return value?.trim() ? value : null;
 }
 
+export function resolveNativeModelId(
+  config: ModelSelectorConfig | null
+): string | null {
+  const configured = config?.native_defaults?.model_id;
+  if (configured != null) return configured;
+  // A native resolved default alias is authoritative. Catalog recommendations
+  // and observations from previous attempts are not current configuration.
+  if (config?.catalog_source !== 'native') return null;
+  const defaults = config.models.filter(
+    (model) =>
+      model.capabilities?.is_default &&
+      model.capabilities.resolved_model != null
+  );
+  if (defaults.length !== 1) return null;
+  const model = defaults[0];
+  return model.provider_id ? `${model.provider_id}/${model.id}` : model.id;
+}
+
 export function getSelectedModel(
   models: ModelInfo[],
   selectedProviderId: string | null,
@@ -60,7 +78,8 @@ export function getSelectedModel(
       ) ?? null
     );
   }
-  return models.find((model) => model.id === selectedModelId) ?? null;
+  const matches = models.filter((model) => model.id === selectedModelId);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 export function findModelForSelection(
@@ -86,7 +105,8 @@ export function getReasoningDisplayLabel(
   options: ReasoningOption[],
   configuredReasoningId: string | null | undefined,
   hasConfiguredReasoning: boolean,
-  followCliLabel: string
+  followCliLabel: string,
+  inheritedReasoningId?: string | null
 ): string | null {
   const { selectedReasoningId } = resolveReasoningOverrideState(
     options,
@@ -95,8 +115,51 @@ export function getReasoningDisplayLabel(
   );
   const explicitLabel = getReasoningLabel(options, selectedReasoningId);
   if (explicitLabel != null) return explicitLabel;
+  const inheritedLabel = getReasoningLabel(
+    options,
+    inheritedReasoningId ?? null
+  );
+  if (inheritedLabel != null) return inheritedLabel;
   // A catalog default is not a confirmation of this session's actual effort.
   return options.length ? followCliLabel : null;
+}
+
+/** Native defaults are display metadata, never per-attempt overrides. */
+export function resolveNativeReasoningId(
+  config: ModelSelectorConfig | null,
+  requestedModelId: string | null
+): string | null {
+  const native = config?.native_defaults;
+  if (!config || !native) return null;
+  if (requestedModelId === null) return native.reasoning_id;
+  const hasProviders = config.providers.length > 0;
+  const selected = parseModelId(requestedModelId, hasProviders);
+  const model = getSelectedModel(
+    config.models,
+    selected.providerId,
+    selected.modelId
+  );
+  for (const key of [requestedModelId, model?.capabilities?.resolved_model]) {
+    if (
+      key != null &&
+      Object.prototype.hasOwnProperty.call(native.model_reasoning, key)
+    ) {
+      const effort = native.model_reasoning[key];
+      if (typeof effort === 'string') return effort;
+    }
+  }
+
+  // This field is provider-global. Per-model settings stay in model_reasoning
+  // so an effort configured for one model never leaks to a different model.
+  return native.reasoning_id;
+}
+
+/** Resolve a provider-advertised alias for presentation without rewriting IDs. */
+export function getModelDisplayId(
+  model: ModelInfo | null,
+  requestedModelId: string | null
+): string | null {
+  return model?.capabilities?.resolved_model ?? requestedModelId;
 }
 
 export function escapeAttributeValue(value: string): string {
@@ -177,7 +240,7 @@ export function resolveDefaultModelId(
 
   if (!defaultModel) return null;
 
-  return scoped[0]?.id ?? null;
+  return null;
 }
 
 export function isModelAvailable(

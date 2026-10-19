@@ -17,9 +17,7 @@
     "openGitHub": "在 GitHub 查看"
   },
   "projectSessions": {
-    "column": "Discuss",
-    "create": "新增討論",
-    "empty": "暫無討論。"
+    "create": "新增討論"
   },
   "sessionProject": {
     "messagePlaceholder": "描述你想做的事…",
@@ -1463,8 +1461,6 @@
     "copyLink": "複製連結",
     "issueTitlePlaceholder": "任務標題...",
     "issueDescriptionPlaceholder": "輸入任務描述...",
-    "createDraftWorkspaceImmediately": "立即建立草稿工作空間",
-    "createDraftWorkspaceDescription": "建立任務後，開啟預填了任務詳情的工作空間建立表單",
     "createIssue": "建立任務",
     "newIssue": "新任務",
     "previewCodeBlock": "[程式碼區塊]",
@@ -1624,6 +1620,8 @@
   "modelSelector": {
     "unspecified": "未指定模型",
     "followCliConfig": "跟隨智慧體設定",
+    "followCliValue": "跟隨智慧體 · {{value}}",
+    "builtinCatalog": "備用清單，尚未確認智慧體實際支援的選項。",
     "preset": "預設配置",
     "custom": "自訂",
     "permissions": "權限",
