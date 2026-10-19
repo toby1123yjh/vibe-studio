@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { useLocation, useSearch } from '@tanstack/react-router';
+import { useLocation, useNavigate, useSearch } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 import type {
   ProjectCursor,
@@ -28,6 +28,7 @@ import { useUiPreferencesStore } from '@/shared/stores/useUiPreferencesStore';
 import { AppShellRecentSessionsProvider } from '@/shared/hooks/useAppShellRecentSessions';
 import { AppShellProjectsProvider } from '@/shared/hooks/useAppShellProjects';
 import { WorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
+import { DashboardScopeProvider } from '@/features/session-dashboard/model/DashboardScope';
 import {
   appShellDiscoveryQueryKey,
   deriveActiveShellModule,
@@ -58,6 +59,13 @@ export function AppShellContainer({
 }: AppShellContainerProps) {
   const { t } = useTranslation('common');
   const location = useLocation();
+  const navigate = useNavigate();
+  const navigateDashboard = useCallback(
+    (href: string) => {
+      void navigate({ href });
+    },
+    [navigate]
+  );
   const renderedPathname = useRenderedPathname();
   const routeSearch = useSearch({ strict: false }) as {
     session_id?: string;
@@ -363,7 +371,16 @@ export function AppShellContainer({
                 ref={mainContentRef}
                 mode={derivePageCanvasMode(renderedPathname)}
               >
-                {children}
+                <DashboardScopeProvider
+                  value={{
+                    hostId: adapter.discoveryHostId,
+                    scopeKey: adapter.discoveryScopeKey,
+                    deployment: adapter.deployment,
+                    navigateToRoute: navigateDashboard,
+                  }}
+                >
+                  {children}
+                </DashboardScopeProvider>
               </PageCanvas>
             </div>
           </div>

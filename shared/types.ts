@@ -4,6 +4,80 @@
 
 // If you are an AI, and you absolutely have to edit this file, please confirm with the user first.
 
+export type DashboardWorkKind = "task" | "workflow" | "session" | "arena" | "unresolved";
+
+export type DashboardWorkRef = { kind: DashboardWorkKind, id: string, };
+
+export type DashboardStatusFilter = "current" | "waiting" | "running" | "failed" | "finished" | "all";
+
+export type DashboardStatusGroup = "waiting" | "running" | "failed" | "finished" | "idle";
+
+export type DashboardFilters = { status: DashboardStatusFilter, kinds: Array<DashboardWorkKind>, project_id: string | null, provider_id: string | null,
+/**
+ * direct_folder, worktree, or unknown.
+ */
+directory_kind: string | null, search: string,
+/**
+ * Supported windows are 24 hours, 7 days, and 30 days. Active work is never aged out.
+ */
+history_hours: number | null, group_by_project: boolean, };
+
+export type DashboardExpandedPage = { work: DashboardWorkRef, workflow_run_id: string | null, snapshot_id: string | null, page: number, };
+
+export type DashboardQuery = { filters: DashboardFilters, snapshot_id: string | null, page: number, page_size: number | null, expanded: Array<DashboardExpandedPage>, visible: Array<DashboardWorkRef>, refresh: boolean, };
+
+export type DashboardIssue = { code: string, message: string, work: DashboardWorkRef | null, };
+
+export type DashboardCounts = { work_count: number, active_session_count: number, active_run_count: number, waiting: number, running: number, failed: number, finished: number, current: number, all: number, };
+
+export type DashboardNamedRef = { id: string, title: string | null, };
+
+export type DashboardAgent = { provider_id: string, runtime_profile_id: string | null, model_id: string | null, reasoning_id: string | null,
+/**
+ * observed, requested, or unavailable.
+ */
+configuration_source: string, };
+
+export type DashboardOpenTarget = { "kind": "session", workspace_id: string, session_id: string, agent_run_id: string | null, workflow_run_id: string | null, node_execution_id: string | null, workflow_node_id: string | null, } | { "kind": "workflow", attempt_id: string, workflow_id: string, workflow_run_id: string | null, project_id: string | null, } | { "kind": "arena", arena_group_id: string, project_id: string | null, };
+
+export type DashboardReplyPreview = { text: string, truncated: boolean, occurred_at: string, message_id: string, session_id: string, workspace_id: string, agent_run_id: string, run_attempt_id: string | null, event_id: string | null, source_role: string, source_title: string, caught_up: boolean, open_target: DashboardOpenTarget, };
+
+export type DashboardActivity = { kind: string, description: string | null, status?: string, occurred_at: string, };
+
+export type DashboardDirectorySummary = { path: string | null, kind: string, git_branch: string | null, };
+
+export type DashboardWorkRow = { work: DashboardWorkRef, title: string, project: DashboardNamedRef | null, task: DashboardNamedRef | null, execution_id: string | null, workflow_run_id: string | null, raw_status: string, status_group: DashboardStatusGroup, directory: DashboardDirectorySummary, agents: Array<DashboardAgent>, active_session_count: number, active_run_count: number, matching_session_count: number, waiting_count: number, child_count: number, preview: DashboardReplyPreview | null,
+/**
+ * ready, catching_up, rebuilding, missing, or unavailable.
+ */
+preview_status: string, activity: DashboardActivity | null, open_target: DashboardOpenTarget | null, updated_at: string, issues: Array<DashboardIssue>, stale_membership: boolean, invalidated: boolean, };
+
+export type DashboardChildRow = { id: string, parent: DashboardWorkRef,
+/**
+ * main_agent, node, subtask, arena_candidate, other_active_run, or session.
+ */
+role: string, title: string, workflow_run_id: string | null, node_execution_id: string | null, subtask_id: string | null, arena_candidate_id: string | null, session_id: string | null, agent_run_id: string | null, raw_status: string,
+/**
+ * Canonical process status is independent of Node control-plane waiting.
+ */
+agent_run_status?: string, status_group: DashboardStatusGroup, agent: DashboardAgent | null, directory: DashboardDirectorySummary, preview: DashboardReplyPreview | null, preview_status: string, activity: DashboardActivity | null, open_target: DashboardOpenTarget | null, reused: boolean, matches_filter: boolean, issues: Array<DashboardIssue>, updated_at: string, };
+
+export type DashboardChildrenPage = { work: DashboardWorkRef, workflow_run_id: string | null, snapshot_id: string | null, page: number, page_size: number, total: number, rows: Array<DashboardChildRow>, has_updates: boolean, invalidation: string | null, };
+
+export type DashboardPageResponse = { generated_at: string, snapshot_id: string | null, snapshot_status: string, page: number, page_size: number, total: number, latest_total: number, counts: DashboardCounts, rows: Array<DashboardWorkRow>, expanded: Array<DashboardChildrenPage>, has_updates: boolean, issues: Array<DashboardIssue>, projects: Array<DashboardNamedRef>, providers: Array<string>, };
+
+export type DashboardGitRemote = { name: string, url: string, web_url: string | null, };
+
+export type DashboardGitRepository = { path: string,
+/**
+ * git, not_git, missing, or unreadable.
+ */
+status: string, branch: string | null, commit: string | null, remotes: Array<DashboardGitRemote>, issue: string | null, };
+
+export type DashboardSessionContext = { session_id: string, workspace_id: string, agent_run_id: string | null, directory: DashboardDirectorySummary, agent: DashboardAgent | null, started_at: string | null, finished_at: string | null, };
+
+export type DashboardContext = { work: DashboardWorkRef, generated_at: string, sessions: Array<DashboardSessionContext>, repositories: Array<DashboardGitRepository>, issues: Array<DashboardIssue>, };
+
 export type ExternalIntegration = { id: string, name: string, enabled: boolean, created_at: string, };
 
 export type IntegrationSettings = { project_ids: Array<string>, id: string, name: string, enabled: boolean, created_at: string, };

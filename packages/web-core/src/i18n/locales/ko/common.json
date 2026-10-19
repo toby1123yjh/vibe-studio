@@ -903,23 +903,6 @@
       "projectsDescription": "사이드바에서 프로젝트를 선택하여 기존 Kanban 보기를 엽니다.",
       "workflowsDescription": "워크플로 작성은 프로젝트 단위입니다. 프로젝트를 연 다음 워크플로 화면을 선택하세요.",
       "agentsDescription": "에이전트 가용성은 연결된 호스트에서 가져옵니다. 설정 페이지도 동일한 어댑터 기능을 사용합니다."
-    },
-    "dashboard": {
-      "eyebrow": "개요",
-      "title": "대시보드",
-      "subtitle": "현재 프로젝트, 세션 및 런타임 가용성입니다.",
-      "sections": {
-        "globalStatistics": "전체 통계",
-        "attention": "주의 필요",
-        "activeRuns": "활성 실행",
-        "agentConfiguration": "에이전트 구성"
-      },
-      "unavailable": {
-        "globalStatistics": "정식 프로젝트, 작업 및 에이전트 실행 합계는 아직 공개되지 않았습니다. 사이드바의 페이지 항목은 전체 통계로 표시하지 않습니다.",
-        "attention": "정식 주의 프로젝션을 아직 사용할 수 없습니다. 이 섹션은 독립적으로 유지되며 로그 텍스트에서 경고를 추론하지 않습니다.",
-        "activeRuns": "세션 목록에는 런타임 상태가 없습니다. 정식 런타임 프로젝션이 제공되면 활성 실행이 표시됩니다.",
-        "agentConfiguration": "정식 연결, 기본 모델, API 엔드포인트 및 실행 수 요약은 아직 공개되지 않았습니다. 런타임 API 기능을 구성 데이터로 대체하지 않습니다."
-      }
     }
   },
   "agentCenter": {

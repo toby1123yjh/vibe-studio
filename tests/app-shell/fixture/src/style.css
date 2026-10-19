@@ -17,6 +17,8 @@ body,
   background: var(--vk-surface-primary);
 }
 
+.fixture-dashboard-page { height: 100%; min-height: 0; min-width: 0; }
+
 .fixture-page h1,
 .fixture-page p {
   margin: 0;

@@ -60,7 +60,7 @@ test("search supports pointer navigation and reduced motion", async ({
   await option.click();
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId("current-route")).toHaveText(
-    "/agents?provider=Claude%20Code",
+    "/agents?provider=claude_code",
   );
   await expect(page.locator("#main-content")).toBeFocused();
 });

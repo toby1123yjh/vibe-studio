@@ -16,6 +16,7 @@ use relay_hosts::RelayHosts;
 use relay_webrtc::WebRtcHost;
 use remote_info::RemoteInfo;
 use services::services::{
+    agent_run_preview::AgentRunPreviewService,
     analytics::{AnalyticsConfig, AnalyticsContext, AnalyticsService, generate_user_id},
     approvals::Approvals,
     auth::AuthContext,
@@ -154,6 +155,7 @@ impl Deployment for LocalDeployment {
         };
 
         let file = FileService::new(db.clone().pool)?;
+        AgentRunPreviewService::spawn(db.pool.clone(), shutdown.child_token());
         {
             let file_service = file.clone();
             tokio::spawn(async move {

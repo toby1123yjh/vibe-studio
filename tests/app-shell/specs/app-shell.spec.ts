@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mockEmptyDashboard } from "../support/dashboard-api";
+
+test.beforeEach(async ({ page }) => mockEmptyDashboard(page));
 
 const UNAVAILABLE_WORKFLOW_REASON =
   "Workflow service is unavailable in this environment.";
@@ -225,7 +228,7 @@ test("search preserves the background route and provides grouped keyboard intera
   await page.keyboard.press("Enter");
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId("current-route")).toHaveText(
-    "/agents?provider=Claude%20Code",
+    "/agents?provider=claude_code",
   );
   await expect(page.locator("#main-content")).toBeFocused();
 
@@ -235,7 +238,7 @@ test("search preserves the background route and provides grouped keyboard intera
   expect(await dialog.getByRole("option").count()).toBe(0);
   await expect(dialog.getByText("No matching destination")).toBeVisible();
   await expect(page.getByTestId("current-route")).toHaveText(
-    "/agents?provider=Claude%20Code",
+    "/agents?provider=claude_code",
   );
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -348,7 +351,7 @@ test("search reports initial and cached source failures without hiding static re
   await expect(dialog.locator('[data-state="degraded"]')).toHaveCount(0);
 });
 
-test("Dashboard keeps all projection-owned sections explicitly unavailable", async ({
+test("Dashboard displays its live table filters and an honest empty result", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -357,18 +360,15 @@ test("Dashboard keeps all projection-owned sections explicitly unavailable", asy
     .getByRole("button", { name: "Show dashboard state contract" })
     .click();
 
-  const dashboard = page.locator(".vk-dashboard");
-  await expect(dashboard.locator('[data-state="unavailable"]')).toHaveCount(4);
-  for (const section of [
-    "Global statistics",
-    "Attention",
-    "Active runs",
-    "Agent configuration",
-  ]) {
-    await expect(
-      dashboard.getByRole("heading", { name: section }).locator("../.."),
-    ).toContainText(/Canonical|canonical|Session list/);
-  }
+  const dashboard = page.getByTestId("dashboard-page");
+  await expect(
+    dashboard.getByRole("table", { name: "Agent work monitoring" }),
+  ).toBeVisible();
+  await expect(dashboard.locator(".session-dashboard__tabs")).toHaveCount(0);
+  await expect(
+    dashboard.getByRole("heading", { name: "No work matches this view" }),
+  ).toBeVisible();
+  await expect(dashboard.locator('[data-state="unavailable"]')).toHaveCount(0);
 });
 
 test("tablet object drawer reaches every object and restores focus on Escape", async ({

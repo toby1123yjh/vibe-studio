@@ -6,9 +6,11 @@
 //! a task. If SQLite commit fails afterwards, the file remains authoritative and
 //! reopening repairs the projection; it is never overwritten with stale SQL.
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+    time::SystemTime,
 };
 
 use api_types::{
@@ -292,6 +294,68 @@ fn read_path(path: &Path) -> Result<ProjectDocument, ApiError> {
     Ok(document)
 }
 
+struct ReadSnapshot {
+    version: (Option<SystemTime>, u64),
+    document: Arc<ProjectDocument>,
+}
+
+fn read_snapshots() -> &'static Mutex<HashMap<PathBuf, ReadSnapshot>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, ReadSnapshot>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Pure authority read for monitoring. Deliberately does not adopt a project,
+/// start a write transaction, or repair its derived SQL business projection.
+pub(crate) async fn read_snapshot(
+    pool: &SqlitePool,
+    project_id: Uuid,
+    force: bool,
+) -> Result<Arc<ProjectDocument>, ApiError> {
+    let root: Option<String> =
+        sqlx::query_scalar("SELECT directory_path FROM project_task_mounts WHERE project_id=?")
+            .bind(project_id)
+            .fetch_optional(pool)
+            .await?;
+    let root = root.ok_or_else(|| invalid("Project metadata is not mounted on this host"))?;
+    tokio::task::spawn_blocking(move || {
+        let root = std::fs::canonicalize(root)?;
+        let path = metadata_path(&root, false)?;
+        let metadata = std::fs::metadata(&path)?;
+        let version = (metadata.modified().ok(), metadata.len());
+        if !force
+            && let Some(cached) = read_snapshots()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&path)
+            && cached.version == version
+            && cached.document.project.id == project_id
+        {
+            return Ok(cached.document.clone());
+        }
+        let document = Arc::new(read_path(&path)?);
+        if document.project.id != project_id {
+            return Err(invalid(
+                "Project identity does not match its registered directory",
+            ));
+        }
+        let mut cache = read_snapshots().lock().unwrap_or_else(|e| e.into_inner());
+        // Documents can be large. Keep only a small number of reusable authority reads.
+        if cache.len() >= 32 && !cache.contains_key(&path) {
+            cache.clear();
+        }
+        cache.insert(
+            path,
+            ReadSnapshot {
+                version,
+                document: document.clone(),
+            },
+        );
+        Ok(document)
+    })
+    .await
+    .map_err(|e| ApiError::Conflict(format!("Project metadata read interrupted: {e}")))?
+}
+
 pub(crate) struct PreparedDocument {
     temporary: tempfile::NamedTempFile,
     destination: PathBuf,
@@ -300,6 +364,7 @@ pub(crate) struct PreparedDocument {
 
 impl PreparedDocument {
     pub fn publish(self) -> Result<(), ApiError> {
+        let cache_path = self.destination.clone();
         if let Some(revision) = self.expected_revision {
             if read_path(&self.destination)?.revision != revision {
                 return Err(invalid("Project changed during this operation; retry"));
@@ -312,6 +377,10 @@ impl PreparedDocument {
                 .persist_noclobber(&self.destination)
                 .map_err(|e| ApiError::Io(e.error))?;
         }
+        read_snapshots()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&cache_path);
         Ok(())
     }
 }
@@ -1094,6 +1163,80 @@ mod tests {
             parent_issue_sort_order: None,
             extension_metadata: Value::Null,
         }
+    }
+
+    #[tokio::test]
+    async fn read_snapshot_follows_file_changes_without_repairing_sql() {
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        let first = read_snapshot(&pool, project.id, false).await.unwrap();
+        let cached = read_snapshot(&pool, project.id, false).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &cached));
+
+        let root = directory.path().canonicalize().unwrap();
+        let path = root.join(METADATA).join(DOCUMENT);
+        let mut changed = first.as_ref().clone();
+        changed.project.name = "External authoritative title with different length".into();
+        changed.revision += 1;
+        std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        let external = read_snapshot(&pool, project.id, false).await.unwrap();
+        assert_eq!(external.project.name, changed.project.name);
+        assert_eq!(external.revision, changed.revision);
+        let (sql_name, indexed_revision): (String, i64) = sqlx::query_as(
+            "SELECT p.name,m.indexed_revision FROM projects p JOIN project_task_mounts m ON m.project_id=p.id WHERE p.id=?",
+        ).bind(project.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(sql_name, first.project.name);
+        assert_eq!(indexed_revision, first.revision);
+
+        // A corrupt authority cannot be hidden by a previously cached document.
+        std::fs::write(&path, b"{broken").unwrap();
+        assert!(read_snapshot(&pool, project.id, false).await.is_err());
+        assert!(read_snapshot(&pool, project.id, true).await.is_err());
+        std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(read_snapshot(&pool, project.id, false).await.is_ok());
+
+        // Platform publication actively evicts the shared pure-read cache.
+        changed.revision += 1;
+        changed.project.name = "Published title".into();
+        stage(&root, &changed, Some(external.revision))
+            .unwrap()
+            .publish()
+            .unwrap();
+        assert_eq!(
+            read_snapshot(&pool, project.id, false)
+                .await
+                .unwrap()
+                .project
+                .name,
+            "Published title"
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(read_snapshot(&pool, project.id, false).await.is_err());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn read_snapshot_reports_windows_file_access_failure_without_stale_fallback() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        read_snapshot(&pool, project.id, false).await.unwrap();
+        let path = directory.path().join(METADATA).join(DOCUMENT);
+        let exclusive = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        assert!(read_snapshot(&pool, project.id, true).await.is_err());
+        drop(exclusive);
+        assert!(read_snapshot(&pool, project.id, true).await.is_ok());
     }
 
     #[tokio::test]

@@ -903,23 +903,6 @@
       "projectsDescription": "Choisissez un projet dans la barre latérale pour ouvrir sa vue Kanban.",
       "workflowsDescription": "La création de flux reste liée au projet. Ouvrez un projet, puis choisissez son espace de flux de travail.",
       "agentsDescription": "La disponibilité des agents provient de l’hôte connecté. Les pages de configuration utilisent les mêmes capacités d’adaptateur."
-    },
-    "dashboard": {
-      "eyebrow": "Aperçu",
-      "title": "Tableau de bord",
-      "subtitle": "Projets, sessions et disponibilité du runtime actuels.",
-      "sections": {
-        "globalStatistics": "Statistiques globales",
-        "attention": "Attention",
-        "activeRuns": "Exécutions actives",
-        "agentConfiguration": "Configuration de l'agent"
-      },
-      "unavailable": {
-        "globalStatistics": "Les totaux canoniques des projets, problèmes et exécutions d'agents ne sont pas encore exposés. Les lignes paginées de la barre latérale ne sont pas présentées comme des statistiques globales.",
-        "attention": "Aucune projection canonique d'attention n'est disponible. Cette section reste indépendante et ne déduit pas d'alertes du texte des journaux.",
-        "activeRuns": "La liste des sessions n'expose pas l'état du runtime. Les exécutions actives apparaîtront lorsque la projection canonique sera disponible.",
-        "agentConfiguration": "Les résumés canoniques de connexion, modèle par défaut, endpoint API et nombre d'exécutions ne sont pas encore exposés. Les capacités de l'API ne remplacent pas les données de configuration."
-      }
     }
   },
   "agentCenter": {

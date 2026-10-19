@@ -63,6 +63,7 @@ interface WorkflowConversationPanelProps {
   projectId: string;
   taskId: string;
   agentLabel?: string;
+  headerMetadata?: ReactNode;
   returnLabel?: string;
   onReturn?: () => void;
   onClose: () => void;
@@ -91,6 +92,7 @@ function WorkflowConversationPanelForScope({
   projectId,
   taskId,
   agentLabel,
+  headerMetadata,
   returnLabel,
   onReturn,
   onClose,
@@ -386,6 +388,7 @@ function WorkflowConversationPanelForScope({
           {agentLabel && !resolved.readOnly ? `${agentLabel} · ` : ''}
           {t(conversationStatusKey(resolved))}
         </FloatingPanelDescription>
+        {headerMetadata}
         {resolved.kind === 'source' ? (
           <p className="mt-half text-xs text-brand">
             {t('workflow.conversation.sourceReadOnly', {

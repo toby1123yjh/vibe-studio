@@ -903,23 +903,6 @@
       "projectsDescription": "Elige un proyecto de la barra lateral para abrir su vista Kanban.",
       "workflowsDescription": "La creación de flujos de trabajo pertenece a cada proyecto. Abre un proyecto y selecciona su área de flujos.",
       "agentsDescription": "La disponibilidad de agentes procede del host conectado. Las páginas de configuración usan las mismas capacidades del adaptador."
-    },
-    "dashboard": {
-      "eyebrow": "Resumen",
-      "title": "Panel",
-      "subtitle": "Proyectos, sesiones y disponibilidad del tiempo de ejecución actuales.",
-      "sections": {
-        "globalStatistics": "Estadísticas globales",
-        "attention": "Atención",
-        "activeRuns": "Ejecuciones activas",
-        "agentConfiguration": "Configuración del agente"
-      },
-      "unavailable": {
-        "globalStatistics": "Los totales canónicos de proyectos, tareas y ejecuciones de agentes aún no están disponibles. Las filas paginadas de la barra lateral no se muestran como estadísticas globales.",
-        "attention": "Aún no hay una proyección canónica de atención. Esta sección es independiente y no infiere alertas del texto de los registros.",
-        "activeRuns": "La lista de sesiones no expone el estado de ejecución. Las ejecuciones activas aparecerán cuando la proyección canónica esté disponible.",
-        "agentConfiguration": "Aún no se exponen los resúmenes canónicos de conexión, modelo predeterminado, punto final de API y ejecuciones activas. Las capacidades de la API no sustituyen los datos de configuración."
-      }
     }
   },
   "agentCenter": {

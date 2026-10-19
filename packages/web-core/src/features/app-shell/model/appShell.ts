@@ -143,7 +143,6 @@ export function deriveActiveShellModule(pathname: string): ShellModule | null {
 export function derivePageCanvasMode(pathname: string): PageCanvasMode {
   const normalizedPath = normalizePathname(pathname);
   if (
-    normalizedPath === '/dashboard' ||
     normalizedPath === '/projects' ||
     normalizedPath === '/workflows' ||
     normalizedPath === '/settings' ||

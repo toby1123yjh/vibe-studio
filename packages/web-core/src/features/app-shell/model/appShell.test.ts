@@ -86,7 +86,7 @@ test.describe('App Shell model', () => {
   });
 
   test('uses contained templates only for module landing pages', () => {
-    expect(derivePageCanvasMode('/dashboard')).toBe('contained');
+    expect(derivePageCanvasMode('/dashboard')).toBe('full-bleed');
     expect(derivePageCanvasMode('/projects/')).toBe('contained');
     expect(derivePageCanvasMode('/agents/codex')).toBe('contained');
     expect(derivePageCanvasMode('/projects/p-1')).toBe('full-bleed');

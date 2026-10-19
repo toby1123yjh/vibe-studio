@@ -2509,11 +2509,19 @@ fn build_workflow_node_work_view(
 }
 
 fn workflow_node_work_status(node: &WorkflowNodeExecutionResponse) -> WorkflowNodeWorkStatus {
-    match node.status {
+    workflow_node_status_from_binding(node.status, &node.node_type, node.agent_run_id)
+}
+
+/// Shared read-only mapping used by workflow views and the global monitor.
+pub(crate) fn workflow_node_status_from_binding(
+    status: NodeExecutionStatus,
+    node_type: &str,
+    agent_run_id: Option<Uuid>,
+) -> WorkflowNodeWorkStatus {
+    match status {
         NodeExecutionStatus::Pending => WorkflowNodeWorkStatus::Pending,
         NodeExecutionStatus::Running
-            if matches!(node.node_type.as_str(), "agent" | "condition")
-                && node.agent_run_id.is_none() =>
+            if matches!(node_type, "agent" | "condition") && agent_run_id.is_none() =>
         {
             WorkflowNodeWorkStatus::Starting
         }

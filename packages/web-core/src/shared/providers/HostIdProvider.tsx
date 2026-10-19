@@ -20,6 +20,19 @@ export function useHostId(): string | null {
   return useContext(HostIdContext);
 }
 
+/** Bind an embedded surface without changing route/global transport identity. */
+export function HostIdScopeProvider({
+  hostId,
+  children,
+}: {
+  hostId: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <HostIdContext.Provider value={hostId}>{children}</HostIdContext.Provider>
+  );
+}
+
 export function HostIdProvider({ children }: { children: ReactNode }) {
   const destination = useCurrentAppDestination();
   const hostId = useMemo(

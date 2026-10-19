@@ -14,6 +14,7 @@ pub mod agent_tools;
 pub mod approvals;
 pub mod config;
 pub mod containers;
+pub mod dashboard;
 pub mod filesystem;
 // pub mod github;
 pub mod attachments;
@@ -60,6 +61,7 @@ pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
         .merge(agent_runs::router(&deployment))
         .merge(execution_processes::router(&deployment))
         .merge(execution_data::router())
+        .merge(dashboard::router())
         .merge(tags::router(&deployment))
         .merge(oauth::router())
         .merge(organizations::router())

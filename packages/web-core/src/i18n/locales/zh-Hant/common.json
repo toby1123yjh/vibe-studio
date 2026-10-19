@@ -1755,23 +1755,6 @@
       "projectsDescription": "從側邊欄選取專案，開啟現有的看板檢視。",
       "workflowsDescription": "工作流程編排歸屬於專案。請先開啟專案，再進入對應的工作流程介面。",
       "agentsDescription": "智能體可用性來自目前連線的主機，設定頁面使用相同的適配器能力。"
-    },
-    "dashboard": {
-      "eyebrow": "概覽",
-      "title": "儀表板",
-      "subtitle": "目前的專案、工作階段與執行階段可用性。",
-      "sections": {
-        "globalStatistics": "全域統計",
-        "attention": "需要注意",
-        "activeRuns": "使用中的執行",
-        "agentConfiguration": "智能體設定"
-      },
-      "unavailable": {
-        "globalStatistics": "專案、Task 與智能體執行的規範總數尚未提供。側邊欄分頁資料不會作為全域統計顯示。",
-        "attention": "規範的注意事項投影尚未提供。此區域保持獨立，不會從記錄文字推斷警示。",
-        "activeRuns": "工作階段清單不包含執行階段狀態。規範執行階段投影提供後，這裡才會顯示使用中的執行。",
-        "agentConfiguration": "連線、預設模型、API 位址和執行數量的規範摘要尚未提供。執行階段 API 能力不會取代設定資料。"
-      }
     }
   },
   "agentCenter": {

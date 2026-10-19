@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProjectListItem, SessionListItem } from 'shared/types';
 import { deriveActiveShellModule } from '../../../../packages/web-core/src/features/app-shell/model/appShell';
 import type { AppShellCapabilityAdapter } from '../../../../packages/web-core/src/features/app-shell/model/appShell';
@@ -294,8 +295,8 @@ function AppShellHarness() {
           onDeleteSession={() => undefined}
         />
         <div className="vk-page-stack">
-          <PageCanvas ref={pageCanvasRef} mode={canvasMode}>
-            <section className="fixture-page">
+          <PageCanvas ref={pageCanvasRef} mode={dashboardOnly ? 'full-bleed' : canvasMode}>
+            <section className={dashboardOnly ? 'fixture-dashboard-page' : 'fixture-page'}>
               {dashboardOnly ? (
                 <DashboardPage />
               ) : (
@@ -430,4 +431,4 @@ function AppShellHarness() {
 
 const root = document.getElementById('root');
 if (!root) throw new Error('App Shell fixture root is missing');
-createRoot(root).render(<AppShellHarness />);
+createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AppShellHarness /></QueryClientProvider>);
