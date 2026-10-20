@@ -1,4 +1,11 @@
-import type { ReactElement, Ref } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactElement,
+  type Ref,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { CaretDownIcon } from '@phosphor-icons/react';
 import { cn } from '../lib/cn';
@@ -16,7 +23,11 @@ import {
   AccordionTrigger,
 } from './Accordion';
 import { ModelProviderIcon } from './ModelProviderIcon';
-import { ModelList, type ModelListModel } from './ModelList';
+import {
+  ModelList,
+  matchesModelSearch,
+  type ModelListModel,
+} from './ModelList';
 
 interface ModelSelectorProvider {
   id: string;
@@ -35,6 +46,9 @@ export interface ModelSelectorPopoverProps {
   trigger: ReactElement;
   config: ModelSelectorConfigLike;
   error?: string | null;
+  onRetry?: () => void;
+  refreshing?: boolean;
+  onManualModelSelect?: (id: string) => void;
   selectedProviderId: string | null;
   selectedModelId: string | null;
   selectedReasoningId: string | null;
@@ -60,7 +74,7 @@ function getModelKey(model: ModelListModel): string {
 }
 
 function getModelSortLabel(model: ModelListModel): string {
-  return model.name || model.id;
+  return model.display_name ?? (model.name || model.id);
 }
 
 function sortModelsAlphabetically(models: ModelListModel[]): ModelListModel[] {
@@ -105,12 +119,6 @@ function getPopoverWidth(hasProviders: boolean, hasReasoning: boolean): string {
   if (hasProviders) return 'w-[280px]';
   if (hasReasoning) return 'w-[230px]';
   return 'w-[200px]';
-}
-
-function matchesSearch(model: ModelListModel, query: string): boolean {
-  const name = model.name?.toLowerCase() ?? '';
-  const id = model.id?.toLowerCase() ?? '';
-  return name.includes(query) || id.includes(query);
 }
 
 interface ProviderAccordionProps {
@@ -190,7 +198,7 @@ function ProviderAccordion({
             if (
               normalizedSearch &&
               !providerModels.some((model) =>
-                matchesSearch(model, normalizedSearch)
+                matchesModelSearch(model, normalizedSearch)
               )
             ) {
               return null;
@@ -294,6 +302,9 @@ export function ModelSelectorPopover({
   trigger,
   config,
   error,
+  onRetry,
+  refreshing = false,
+  onManualModelSelect,
   selectedProviderId,
   selectedModelId,
   selectedReasoningId,
@@ -311,12 +322,48 @@ export function ModelSelectorPopover({
   resolvedTheme = 'light',
 }: ModelSelectorPopoverProps) {
   const { t } = useTranslation('common');
+  const manualId = useId();
+  const manualToggleRef = useRef<HTMLButtonElement>(null);
+  const manualInputRef = useRef<HTMLInputElement>(null);
+  const [isManualOpen, setIsManualOpen] = useState(false);
+  const [manualModelId, setManualModelId] = useState('');
+  const [manualError, setManualError] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) return;
+    setIsManualOpen(false);
+    setManualModelId('');
+    setManualError(false);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isManualOpen) manualInputRef.current?.focus();
+  }, [isManualOpen]);
+
+  const closeManualEntry = () => {
+    setIsManualOpen(false);
+    setManualModelId('');
+    setManualError(false);
+    manualToggleRef.current?.focus();
+  };
+  const applyManualModel = () => {
+    if (!manualModelId.trim()) {
+      setManualError(true);
+      manualInputRef.current?.focus();
+      return;
+    }
+    // Only reject blank input. Provider-owned executable IDs stay verbatim.
+    onManualModelSelect?.(manualModelId);
+    onOpenChange(false);
+  };
   const models = config.models;
   const hasProviders = config.providers.length > 1;
   const hasReasoning = models.some(
     (model) => model.reasoning_options.length > 0
   );
-  const popoverWidth = getPopoverWidth(hasProviders, hasReasoning);
+  const popoverWidth = onManualModelSelect
+    ? 'w-[280px] max-w-[calc(100vw-24px)]'
+    : getPopoverWidth(hasProviders, hasReasoning);
   const popoverHeightClass = hasProviders ? 'h-[280px]' : '';
 
   let showSearch = true;
@@ -389,17 +436,45 @@ export function ModelSelectorPopover({
             event.preventDefault();
           }
         }}
+        onEscapeKeyDown={(event) => {
+          // Escape belongs to this picker, never to the surrounding chat.
+          event.stopPropagation();
+          if (isManualOpen) {
+            event.preventDefault();
+            closeManualEntry();
+          }
+        }}
       >
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
           {error && (
-            <div className="px-base py-half bg-red-500/10 border-b border-red-500/20">
-              <span className="text-sm text-red-600">{error}</span>
+            <div className="shrink-0 border-b border-border bg-error/10 px-base py-half">
+              <p
+                role="alert"
+                className="text-sm text-error whitespace-normal [overflow-wrap:anywhere]"
+              >
+                {error}
+              </p>
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  disabled={refreshing}
+                  className="mt-half rounded-sm text-sm text-normal underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand disabled:opacity-50"
+                >
+                  {t('modelSelector.refreshDiscovery')}
+                </button>
+              )}
             </div>
           )}
           <DropdownMenuLabel>{t('modelSelector.model')}</DropdownMenuLabel>
           {config.catalog_source === 'builtin' && (
             <p role="status" className="px-base pb-half text-sm text-low">
               {t('modelSelector.builtinCatalog')}
+            </p>
+          )}
+          {config.catalog_source === 'configured' && (
+            <p role="status" className="px-base pb-half text-sm text-low">
+              {t('modelSelector.configuredCatalog')}
             </p>
           )}
           <div className="flex flex-col flex-1 min-h-0 min-w-0">
@@ -411,6 +486,103 @@ export function ModelSelectorPopover({
                   value={searchQuery}
                   onValueChange={onSearchChange}
                 />
+              </div>
+            )}
+            {onManualModelSelect && (
+              <div className="shrink-0 border-t border-border px-base py-half">
+                <button
+                  ref={manualToggleRef}
+                  type="button"
+                  aria-expanded={isManualOpen}
+                  aria-controls={`${manualId}-entry`}
+                  onClick={() => {
+                    setIsManualOpen((open) => !open);
+                    setManualModelId(
+                      selectedProviderId
+                        ? `${selectedProviderId}/${selectedModelId ?? ''}`
+                        : (selectedModelId ?? '')
+                    );
+                    setManualError(false);
+                  }}
+                  className="rounded-sm text-sm text-normal focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+                >
+                  {t('modelSelector.enterModelId')}
+                </button>
+                {isManualOpen && (
+                  <div
+                    id={`${manualId}-entry`}
+                    role="group"
+                    aria-labelledby={`${manualId}-label`}
+                    className="mt-half flex flex-col gap-half"
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Tab') event.stopPropagation();
+                    }}
+                  >
+                    <label
+                      id={`${manualId}-label`}
+                      htmlFor={manualId}
+                      className="text-sm text-normal"
+                    >
+                      {t('modelSelector.modelId')}
+                    </label>
+                    <input
+                      ref={manualInputRef}
+                      id={manualId}
+                      type="text"
+                      value={manualModelId}
+                      onChange={(event) => {
+                        setManualModelId(event.target.value);
+                        setManualError(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' &&
+                          !event.nativeEvent.isComposing
+                        ) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          applyManualModel();
+                        }
+                      }}
+                      aria-invalid={manualError || undefined}
+                      aria-describedby={`${manualId}-help${manualError ? ` ${manualId}-error` : ''}`}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="min-w-0 rounded-sm border border-border bg-secondary px-half py-half text-sm text-normal focus:outline-none focus:ring-1 focus:ring-brand"
+                    />
+                    <p
+                      id={`${manualId}-help`}
+                      className="text-sm text-low whitespace-normal"
+                    >
+                      {t('modelSelector.manualModelHint')}
+                    </p>
+                    {manualError && (
+                      <p
+                        id={`${manualId}-error`}
+                        role="alert"
+                        className="text-sm text-error"
+                      >
+                        {t('modelSelector.modelIdRequired')}
+                      </p>
+                    )}
+                    <div className="flex justify-end gap-base">
+                      <button
+                        type="button"
+                        onClick={closeManualEntry}
+                        className="rounded-sm text-sm text-low focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+                      >
+                        {t('buttons.cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applyManualModel}
+                        className="rounded-sm px-half py-half text-sm text-normal bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+                      >
+                        {t('modelSelector.useModel')}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

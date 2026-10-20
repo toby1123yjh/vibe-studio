@@ -10,6 +10,7 @@ import {
   resolveReasoningOverrideState,
   resolveReasoningIdForOptions,
   getModelDisplayId,
+  isUnresolvedClaudeModelAlias,
   getReasoningDisplayLabel,
   resolveModelDisplayId,
   resolveNativeModelId,
@@ -242,6 +243,57 @@ describe('native configured model and reasoning display', () => {
   it('does not infer a full model ID from an unadvertised alias', () => {
     expect(getModelDisplayId(null, 'opus')).toBe('opus');
     expect(resolveNativeReasoningId(aliasConfig, 'claude-opus-4-7')).toBeNull();
+  });
+
+  it('uses Claude native display names when the exact resolved ID is not advertised', () => {
+    const model: ModelInfo = {
+      id: 'opus',
+      name: 'Opus 4.6',
+      reasoning_options: [],
+    };
+    expect(getModelDisplayId(model, 'opus', 'CLAUDE_CODE')).toBe('Opus 4.6');
+    expect(isUnresolvedClaudeModelAlias(model, 'opus', 'CLAUDE_CODE')).toBe(
+      true
+    );
+    expect(buildModelSelectionOverride([model], model.id)).toEqual({
+      model_id: 'opus',
+    });
+  });
+
+  it('distinguishes unresolved Claude aliases from advertised concrete IDs and other agents', () => {
+    expect(isUnresolvedClaudeModelAlias(null, 'opus', 'CLAUDE_CODE')).toBe(
+      true
+    );
+    expect(isUnresolvedClaudeModelAlias(null, 'opus[1m]', 'CLAUDE_CODE')).toBe(
+      true
+    );
+    expect(
+      isUnresolvedClaudeModelAlias(null, 'claude-opus-4-6', 'CLAUDE_CODE')
+    ).toBe(false);
+    expect(isUnresolvedClaudeModelAlias(null, 'opus', 'OPENCODE')).toBe(false);
+    expect(
+      isUnresolvedClaudeModelAlias(aliasConfig.models[0], 'opus', 'CLAUDE_CODE')
+    ).toBe(false);
+    expect(
+      getModelDisplayId(aliasConfig.models[0], 'opus', 'CLAUDE_CODE')
+    ).toBe('claude-opus-4-6');
+  });
+
+  it('keeps other providers IDs verbatim even when the native display name differs', () => {
+    const model: ModelInfo = {
+      id: 'Family/Exact:ID',
+      provider_id: 'Vendor',
+      name: 'Friendly name',
+      reasoning_options: [],
+    };
+    expect(getModelDisplayId(model, 'Vendor/Family/Exact:ID', 'OPENCODE')).toBe(
+      'Vendor/Family/Exact:ID'
+    );
+    expect(
+      buildModelSelectionOverride([model], model.id, model.provider_id!)
+    ).toEqual({
+      model_id: 'Vendor/Family/Exact:ID',
+    });
   });
 
   it('uses only a unique native resolved default alias when no model is configured', () => {

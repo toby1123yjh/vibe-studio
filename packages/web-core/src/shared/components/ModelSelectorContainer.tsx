@@ -9,7 +9,12 @@ import {
   SlidersHorizontalIcon,
   type Icon,
 } from '@phosphor-icons/react';
-import type { BaseCodingAgent, ExecutorConfig, ModelInfo } from 'shared/types';
+import type {
+  BaseCodingAgent,
+  ExecutorConfig,
+  ModelInfo,
+  ModelSelectorConfig,
+} from 'shared/types';
 import { PermissionPolicy } from 'shared/types';
 import { useOptionalAgentRunSession } from '@/features/agent-runtime/model/AgentRunSessionContext';
 import { ProviderRunOptionsMenu } from './ProviderRunOptionsMenu';
@@ -33,6 +38,7 @@ import {
   resolveModelDisplayId,
   resolveNativeModelId,
   getModelDisplayId,
+  isUnresolvedClaudeModelAlias,
   getReasoningLabel,
   resolveNativeReasoningId,
   getCurrentObservedConfiguration,
@@ -40,6 +46,7 @@ import {
 import { profilesApi } from '@/shared/lib/api';
 import { resolveModelDiscoveryVariant } from '@/shared/lib/executorDiscovery';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 import { getResolvedTheme, useTheme } from '@/shared/hooks/useTheme';
 import { useModelSelectorConfig } from '@/shared/hooks/useExecutorDiscovery';
 import { ModelSelectorPopover } from '@vibe/ui/components/ModelSelectorPopover';
@@ -68,6 +75,13 @@ interface ModelSelectorContainerProps {
 }
 
 const EMPTY_REASONING_OPTIONS: ModelInfo['reasoning_options'] = [];
+const EMPTY_MODEL_CONFIG: ModelSelectorConfig = {
+  models: [],
+  providers: [],
+  default_model: null,
+  agents: [],
+  permissions: [],
+};
 
 type PendingReasoningSelection = {
   reasoningId: string | null;
@@ -88,6 +102,7 @@ export function ModelSelectorContainer({
   onInputModalitiesChange,
 }: ModelSelectorContainerProps) {
   const { t } = useTranslation('common');
+  const hostId = useHostId();
   const runSession = useOptionalAgentRunSession();
   const { theme } = useTheme();
   const resolvedTheme = getResolvedTheme(theme);
@@ -120,6 +135,14 @@ export function ModelSelectorContainer({
   const resolvedPreset =
     selectedPreset ??
     (presets.includes('DEFAULT') ? 'DEFAULT' : (presets[0] ?? null));
+  const selectionScope = JSON.stringify([
+    agent,
+    hostId,
+    workspaceId,
+    sessionId,
+    resolvedPreset,
+  ]);
+  const supportsManualModel = agent === 'GEMINI';
 
   const {
     config: streamConfig,
@@ -139,9 +162,14 @@ export function ModelSelectorContainer({
   }, [streamError]);
 
   const baseConfig = streamConfig;
+  // A failed/empty catalog is unknown, not a reason to hide native selection.
+  // This UI-only shell never advertises model capabilities.
+  const editableConfig =
+    baseConfig ??
+    (supportsManualModel || streamError ? EMPTY_MODEL_CONFIG : null);
   const config = appendPresetModel(
     appendPresetModel(
-      appendPresetModel(baseConfig, baseConfig?.native_defaults?.model_id),
+      appendPresetModel(editableConfig, baseConfig?.native_defaults?.model_id),
       presetOptions?.model_id
     ),
     executorConfig?.model_id
@@ -251,8 +279,20 @@ export function ModelSelectorContainer({
   const recentModelEntries = getRecentModelEntries(profiles, agent);
   const pendingModelRef = useRef<ModelInfo | null>(null);
   const pendingReasoningRef = useRef<PendingReasoningSelection | null>(null);
+  const pendingScopeRef = useRef(selectionScope);
+
+  useEffect(() => {
+    if (pendingScopeRef.current === selectionScope) return;
+    pendingScopeRef.current = selectionScope;
+    pendingModelRef.current = null;
+    pendingReasoningRef.current = null;
+    setIsOpen(false);
+    setSearchQuery('');
+    setExpandedProviderId('');
+  }, [selectionScope]);
 
   const persistPendingSelections = useCallback(() => {
+    if (pendingScopeRef.current !== selectionScope) return;
     if (!profiles || !agent) return;
     if (!pendingModelRef.current && pendingReasoningRef.current === null) {
       return;
@@ -300,6 +340,7 @@ export function ModelSelectorContainer({
     reloadSystem,
     selectedModelId,
     selectedProviderId,
+    selectionScope,
     setProfiles,
   ]);
 
@@ -394,7 +435,29 @@ export function ModelSelectorContainer({
     ? toPrettyCase(resolvedPreset)
     : defaultLabel;
 
-  const displayModelId = getModelDisplayId(selectedModel, requestedModelId);
+  const getModelLabel = (model: ModelInfo | null, modelId: string | null) => {
+    const label = getModelDisplayId(model, modelId, agent);
+    return label && isUnresolvedClaudeModelAlias(model, modelId, agent)
+      ? t('modelSelector.aliasModel', { model: label })
+      : label;
+  };
+  const displayModelId = getModelLabel(selectedModel, requestedModelId);
+  const displayConfig = config && {
+    ...config,
+    models: config.models.map((model) => {
+      const modelKey = getModelKey(model);
+      const displayName = getModelLabel(model, modelKey) ?? modelKey;
+      return {
+        ...model,
+        display_name: displayName,
+        description: isUnresolvedClaudeModelAlias(model, modelKey, agent)
+          ? t('modelSelector.unresolvedAlias', { alias: modelKey })
+          : displayName !== modelKey
+            ? t('modelSelector.nativeModelId', { id: modelKey })
+            : undefined,
+      };
+    }),
+  };
 
   if (!config) {
     return (
@@ -424,20 +487,27 @@ export function ModelSelectorContainer({
     );
   }
 
-  const showModelSelector = loadingModels || config.models.length > 0;
-  const showDefaultOption = config.models.length > 0;
-  const reasoningLabel = loadingModels
-    ? null
-    : getReasoningDisplayLabel(
-        selectedReasoningOptions,
-        configuredReasoningId,
-        hasConfiguredReasoning,
-        t('modelSelector.followCliConfig'),
-        inheritedReasoningId
-      );
-  const modelLabelBase = loadingModels
-    ? loadingLabel
-    : (displayModelId ?? unspecifiedModelLabel);
+  const showModelSelector =
+    loadingModels ||
+    config.models.length > 0 ||
+    supportsManualModel ||
+    Boolean(streamError);
+  const showDefaultOption =
+    config.models.length > 0 || supportsManualModel || Boolean(streamError);
+  const reasoningLabel =
+    loadingModels && !streamError
+      ? null
+      : getReasoningDisplayLabel(
+          selectedReasoningOptions,
+          configuredReasoningId,
+          hasConfiguredReasoning,
+          t('modelSelector.followCliConfig'),
+          inheritedReasoningId
+        );
+  const modelLabelBase =
+    loadingModels && !streamError && !displayModelId
+      ? loadingLabel
+      : (displayModelId ?? unspecifiedModelLabel);
   const modelLabel = reasoningLabel
     ? `${modelLabelBase} · ${reasoningLabel}`
     : modelLabelBase;
@@ -481,6 +551,14 @@ export function ModelSelectorContainer({
       <DropdownMenu>
         <DropdownMenuTriggerButton size="sm" label={modelLabel} wrapLabel />
         <DropdownMenuContent align="start">
+          {streamError && (
+            <p
+              role="alert"
+              className="max-w-72 break-words px-base pb-half text-sm text-error"
+            >
+              {streamError}
+            </p>
+          )}
           {observationDetails}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -581,8 +659,9 @@ export function ModelSelectorContainer({
         </button>
       )}
 
-      {showModelSelector && (
+      {showModelSelector && displayConfig && (
         <ModelSelectorPopover
+          key={selectionScope}
           isOpen={isOpen}
           onOpenChange={handleOpenChange}
           trigger={
@@ -591,16 +670,21 @@ export function ModelSelectorContainer({
               label={modelLabel}
               title={modelLabel}
               wrapLabel
-              disabled={loadingModels}
+              disabled={loadingModels && !streamError && !supportsManualModel}
             />
           }
-          config={config}
+          config={displayConfig}
           error={streamError}
+          onRetry={refresh}
+          refreshing={loadingModels && !streamError}
+          onManualModelSelect={
+            supportsManualModel ? (id) => handleModelSelect(id) : undefined
+          }
           selectedProviderId={selectedProviderId}
           selectedModelId={selectedModelId}
           selectedReasoningId={selectedReasoningId}
           followCliReasoningLabel={followCliReasoningLabel}
-          inheritedModelLabel={getModelDisplayId(nativeModel, nativeModelId)}
+          inheritedModelLabel={getModelLabel(nativeModel, nativeModelId)}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onModelSelect={handleModelSelect}

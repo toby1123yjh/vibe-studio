@@ -119,6 +119,17 @@ mod tests {
     }
 
     #[test]
+    fn forwards_custom_model_id_verbatim() {
+        let model = "custom/future-model";
+        let agent: Gemini = serde_json::from_value(serde_json::json!({
+            "model": model
+        }))
+        .unwrap();
+        let builder = GeminiCommandAdapter::new(&agent).build().unwrap();
+        assert_eq!(builder.params.unwrap(), vec!["--model", model, "--acp"]);
+    }
+
+    #[test]
     fn applies_gemini_command_overrides_after_native_args() {
         let agent: Gemini = serde_json::from_value(serde_json::json!({
             "additional_params": ["--profile-flag"]

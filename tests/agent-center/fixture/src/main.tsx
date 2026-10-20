@@ -9,6 +9,10 @@ import {
 } from 'shared/types';
 import { AgentCenterPage } from '../../../../packages/web-core/src/features/agent-center/ui/AgentCenterPage';
 import { ModelSelectorContainer } from '../../../../packages/web-core/src/shared/components/ModelSelectorContainer';
+import {
+  PriorityIcon,
+  type PriorityLevel,
+} from '../../../../packages/ui/src/components/PriorityIcon';
 import { useAgentProviderOptions } from '../../../../packages/web-core/src/shared/hooks/useAgentProviderPolicy';
 import { WorkflowAgentExecutorField } from '../../../../packages/web-core/src/features/workflow/ui/WorkflowAgentExecutorField';
 import { SettingsDirtyProvider } from '../../../../packages/web-core/src/shared/dialogs/settings/settings/SettingsDirtyContext';
@@ -45,6 +49,19 @@ const SESSION_CAPABILITIES = [AgentProviderCapability.INITIAL_RUN] as const;
 function SelectorsFixture() {
   const params = new URLSearchParams(window.location.search);
   const [overrides, setOverrides] = useState<Partial<ExecutorConfig>[]>([]);
+  const [priorityClicks, setPriorityClicks] = useState(0);
+  const [submitCount, setSubmitCount] = useState(0);
+  const [outerEscapes, setOuterEscapes] = useState(0);
+  const [, setHostVersion] = useState(0);
+  const [workspaceId, setWorkspaceId] = useState<string | undefined>(
+    params.has('scopeControls') ? 'fixture-workspace-a' : undefined
+  );
+  const [sessionId, setSessionId] = useState<string | undefined>(
+    params.has('scopeControls') ? 'fixture-session-a' : undefined
+  );
+  const [inputModalities, setInputModalities] = useState<
+    string[] | undefined
+  >();
   const [executorConfig, setExecutorConfig] = useState<ExecutorConfig>({
     executor: BaseCodingAgent.OPENCODE,
     variant: null,
@@ -58,42 +75,117 @@ function SelectorsFixture() {
 
   return (
     <>
-      <section aria-label="Session agent selector">
+      <section
+        aria-label="Session agent selector"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOuterEscapes((count) => count + 1);
+        }}
+      >
         {options.map((option) => (
           <button
             key={option.executor}
             disabled={!option.enabled}
             onClick={() =>
-              setExecutorConfig({ executor: option.executor, variant: null })
+              setExecutorConfig({
+                executor: option.executor,
+                variant: null,
+                ...(option.executor === BaseCodingAgent.CODEX &&
+                params.has('codexExplicitEffort')
+                  ? { model_id: 'gpt-6.1-sol', reasoning_id: 'xhigh' }
+                  : {}),
+              })
             }
           >
             {option.executor}
           </button>
         ))}
-        <ModelSelectorContainer
-          key={executorConfig.executor}
-          agent={executorConfig.executor}
-          workspaceId={undefined}
-          onAdvancedSettings={() => undefined}
-          presets={['DEFAULT']}
-          selectedPreset={null}
-          onPresetSelect={() => undefined}
-          onOverrideChange={(change) => {
-            setOverrides((previous) => [...previous, change]);
-            setExecutorConfig((previous) => ({ ...previous, ...change }));
+        {params.has('scopeControls') && (
+          <>
+            <button
+              data-fixture-scope="host"
+              onClick={() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('host', 'remote-fixture');
+                window.history.replaceState(null, '', url);
+                setHostVersion((count) => count + 1);
+              }}
+            >
+              Switch host
+            </button>
+            <button
+              data-fixture-scope="profile"
+              onClick={() =>
+                setExecutorConfig((previous) => ({
+                  ...previous,
+                  variant: 'ALT',
+                }))
+              }
+            >
+              Switch profile
+            </button>
+            <button
+              data-fixture-scope="workspace"
+              onClick={() => setWorkspaceId('fixture-workspace-b')}
+            >
+              Switch workspace
+            </button>
+            <button
+              data-fixture-scope="session"
+              onClick={() => setSessionId('fixture-session-b')}
+            >
+              Switch session
+            </button>
+          </>
+        )}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setSubmitCount((count) => count + 1);
           }}
-          executorConfig={executorConfig}
-          presetOptions={
-            params.has('preset') &&
-            executorConfig.executor === BaseCodingAgent.CODEX
-              ? {
-                  executor: BaseCodingAgent.CODEX,
-                  model_id: 'gpt-6.0',
-                  reasoning_id: 'high',
-                }
-              : null
-          }
-        />
+        >
+          <ModelSelectorContainer
+            key={executorConfig.executor}
+            agent={executorConfig.executor}
+            workspaceId={workspaceId}
+            sessionId={sessionId}
+            onAdvancedSettings={() => undefined}
+            presets={
+              params.has('scopeControls') ? ['DEFAULT', 'ALT'] : ['DEFAULT']
+            }
+            selectedPreset={executorConfig.variant ?? null}
+            onPresetSelect={(variant) =>
+              setExecutorConfig((previous) => ({ ...previous, variant }))
+            }
+            onOverrideChange={(change) => {
+              setOverrides((previous) => [...previous, change]);
+              setExecutorConfig((previous) => ({ ...previous, ...change }));
+            }}
+            executorConfig={executorConfig}
+            readOnly={params.has('readonly')}
+            onInputModalitiesChange={setInputModalities}
+            presetOptions={
+              params.has('preset') &&
+              executorConfig.executor === BaseCodingAgent.CODEX
+                ? {
+                    executor: BaseCodingAgent.CODEX,
+                    model_id: 'gpt-6.0',
+                    reasoning_id: 'high',
+                  }
+                : params.has('geminiPreset') &&
+                    executorConfig.executor === BaseCodingAgent.GEMINI
+                  ? {
+                      executor: BaseCodingAgent.GEMINI,
+                      model_id: 'gemini-preset',
+                    }
+                  : null
+            }
+          />
+        </form>
+        <output data-testid="session-submit-count">{submitCount}</output>
+        <output data-testid="outer-escape-count">{outerEscapes}</output>
+        <output data-testid="input-modalities">
+          {JSON.stringify(inputModalities ?? null)}
+        </output>
         <output data-testid="session-selection">
           {JSON.stringify(executorConfig)}
         </output>
@@ -110,6 +202,22 @@ function SelectorsFixture() {
           {JSON.stringify(workflowConfig)}
         </output>
       </section>
+      {params.has('priorities') && (
+        <section aria-label="Task priorities">
+          {(['urgent', 'high', 'medium', 'low'] as PriorityLevel[]).map(
+            (priority) => (
+              <button
+                key={priority}
+                onClick={() => setPriorityClicks((count) => count + 1)}
+              >
+                <PriorityIcon priority={priority} /> TASK-2
+              </button>
+            )
+          )}
+          <PriorityIcon priority={null} />
+          <output data-testid="priority-clicks">{priorityClicks}</output>
+        </section>
+      )}
     </>
   );
 }

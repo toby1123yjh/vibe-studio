@@ -184,19 +184,15 @@ pub(crate) async fn apply_legacy_configuration(
     model: Option<&str>,
     mode: Option<&str>,
 ) -> Result<LegacySessionConfiguration, ExecutorError> {
-    // Validate both selections before sending either request. An absent
-    // catalog means unknown support, not permission to silently ignore input.
+    // Validate support for both selectors before sending either request. Gemini's
+    // available_models is a suggested list, not a whitelist: native --model and
+    // session/set_model also accept exact custom/future model IDs.
     if let Some(model) = model {
-        let models = state
-            .models
-            .as_ref()
-            .ok_or_else(|| config_error("Gemini did not advertise model selection"))?;
-        if !models
-            .available_models
-            .iter()
-            .any(|candidate| candidate.model_id.0.as_ref() == model)
-        {
-            return Err(config_error("Gemini did not advertise the selected model"));
+        if state.models.is_none() {
+            return Err(config_error("Gemini did not advertise model selection"));
+        }
+        if model.trim().is_empty() {
+            return Err(config_error("Gemini requires a nonempty model ID"));
         }
     }
     if let Some(mode) = mode {
@@ -212,7 +208,16 @@ pub(crate) async fn apply_legacy_configuration(
             return Err(config_error("Gemini did not advertise the selected mode"));
         }
     }
-    if let Some(model) = model {
+    if let Some(model) = model
+        && !state
+            .models
+            .as_ref()
+            .is_some_and(|models| models.current_model_id.0.as_ref() == model)
+    {
+        // Initial --model may already be confirmed by the native session state,
+        // including a model absent from the suggested catalog. On restoration or
+        // a mismatch, require the native setter acknowledgement before prompting;
+        // never treat catalog membership or a launch flag alone as confirmation.
         connection
             .set_session_model(proto::SetSessionModelRequest::new(
                 session_id.to_owned(),

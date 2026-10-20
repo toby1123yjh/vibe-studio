@@ -839,6 +839,14 @@ impl Codex {
         let child_stdin = child.inner().stdin.take().ok_or_else(|| {
             ExecutorError::Io(std::io::Error::other("Codex app server missing stdin"))
         })?;
+        // Native startup/config warnings can fill stderr before the handshake
+        // is written. Drain without retaining or exposing potentially private
+        // diagnostic bytes, and stop the reader when this request is dropped.
+        let stderr_drain = child.inner().stderr.take().map(|mut stderr| {
+            tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+                let _ = tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await;
+            }))
+        });
 
         let cancel = tokio_util::sync::CancellationToken::new();
         let (exit_signal_tx, _exit_signal_rx) = tokio::sync::oneshot::channel();
@@ -877,6 +885,10 @@ impl Codex {
 
         cancel.cancel();
         let _ = child.kill().await;
+        if let Some(stderr_drain) = stderr_drain {
+            stderr_drain.abort();
+            let _ = stderr_drain.await;
+        }
 
         result
     }
@@ -1477,12 +1489,14 @@ mod tests {
         std::fs::write(&script, r#"
 const fs = require('node:fs');
 const readline = require('node:readline');
+// A synchronous write larger than a pipe must be drained before initialize.
+fs.writeSync(2, 'private-fixture-stderr'.repeat(16384));
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   fs.appendFileSync(process.env.VK_FIXTURE_TRACE, JSON.stringify({ method: request.method, params: request.params, pid: process.pid, cwd: process.cwd(), scope: process.env.VK_FIXTURE_SCOPE }) + '\n');
   if (!Object.hasOwn(request, 'id')) return;
   let result;
-  if (request.method === 'initialize') result = { userAgent: 'codex/0.144.1', codexHome: process.cwd(), platformFamily: process.platform === 'win32' ? 'windows' : 'unix', platformOs: process.platform };
+  if (request.method === 'initialize') result = { userAgent: 'codex/0.115.0', platformFamily: process.platform === 'win32' ? 'windows' : 'unix', platformOs: process.platform };
   else if (request.method === 'config/read') result = { config: { model: 'unlisted-native-model', model_reasoning_effort: 'future-effort', api_key: 'private-fixture-token' } };
   else if (request.method === 'model/list') {
     if (process.env.VK_FIXTURE_FAIL_CATALOG === '1') { process.stdout.write(JSON.stringify({ id: request.id, error: { code: -32000, message: 'catalog unavailable' } }) + '\n'); return; }
@@ -1531,6 +1545,11 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
                 !serde_json::to_string(&options)
                     .unwrap()
                     .contains("private-fixture-token")
+            );
+            assert!(
+                !serde_json::to_string(&options)
+                    .unwrap()
+                    .contains("private-fixture-stderr")
             );
             assert_eq!(executor.get_preset_options().model_id, None);
             assert_eq!(executor.get_preset_options().reasoning_id, None);

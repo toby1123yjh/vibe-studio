@@ -5,6 +5,40 @@ import test from "node:test";
 const namespaces = ["common", "projects", "tasks", "settings", "organization"];
 const chineseLocales = ["zh-Hans", "zh-Hant"];
 
+test("model aliases and priority explanations are translated with matching parameters", () => {
+  const english = catalog("en", "common");
+  const keys = [
+    "modelSelector.aliasModel",
+    "modelSelector.unresolvedAlias",
+    "modelSelector.nativeModelId",
+    "modelSelector.configuredCatalog",
+    "modelSelector.enterModelId",
+    "modelSelector.modelId",
+    "modelSelector.manualModelHint",
+    "modelSelector.modelIdRequired",
+    "modelSelector.useModel",
+    "kanban.priorityUrgent",
+    "kanban.priorityHigh",
+    "kanban.priorityMedium",
+    "kanban.priorityLow",
+  ];
+  for (const locale of ["en", "zh-Hans", "zh-Hant", "fr", "ja", "es", "ko"]) {
+    const translated = catalog(locale, "common");
+    for (const key of keys) {
+      const message = translated[key];
+      assert.ok(typeof message === "string" && message.trim(), `${locale}/${key}`);
+      assert.deepEqual(
+        (message.match(/{{.*?}}/g) ?? []).sort(),
+        (english[key].match(/{{.*?}}/g) ?? []).sort(),
+        `${locale}/${key}`,
+      );
+      if (chineseLocales.includes(locale)) {
+        assert.notEqual(message, english[key], `${locale}/${key}`);
+      }
+    }
+  }
+});
+
 test("Discuss column title stays English in every supported locale", () => {
   for (const locale of ["en", "zh-Hans", "zh-Hant", "fr", "ja", "es", "ko"]) {
     assert.equal(catalog(locale, "common")["projectSessions.column"], "Discuss");

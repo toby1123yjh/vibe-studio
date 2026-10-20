@@ -3,6 +3,7 @@ import type {
   ModelSelectorConfig,
   ReasoningOption,
   RunState,
+  BaseCodingAgent,
 } from 'shared/types';
 
 export function getCurrentObservedConfiguration(
@@ -154,11 +155,31 @@ export function resolveNativeReasoningId(
   return native.reasoning_id;
 }
 
-/** Resolve a provider-advertised alias for presentation without rewriting IDs. */
+/** Alias detection is presentation-only and never establishes capabilities. */
+export function isUnresolvedClaudeModelAlias(
+  model: ModelInfo | null,
+  requestedModelId: string | null,
+  agent?: BaseCodingAgent | null
+): boolean {
+  if (agent !== 'CLAUDE_CODE') return false;
+  const id =
+    model?.capabilities?.resolved_model ?? model?.id ?? requestedModelId;
+  return (
+    id != null && /^(default|opus|sonnet|haiku|opusplan)(\[1m\])?$/.test(id)
+  );
+}
+
+/** Resolve native presentation metadata without rewriting executable IDs. */
 export function getModelDisplayId(
   model: ModelInfo | null,
-  requestedModelId: string | null
+  requestedModelId: string | null,
+  agent?: BaseCodingAgent | null
 ): string | null {
+  if (isUnresolvedClaudeModelAlias(model, requestedModelId, agent)) {
+    // Claude can advertise a versioned displayName without a resolvedModel ID.
+    // Show that native name, but keep labelling the selection as an alias.
+    return model?.name || requestedModelId;
+  }
   return model?.capabilities?.resolved_model ?? requestedModelId;
 }
 

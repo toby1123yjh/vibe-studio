@@ -18,6 +18,9 @@ export interface ModelReasoningOption {
 export interface ModelListModel {
   id: string;
   name: string;
+  /** Presentation only. Selection, recency and keys always use id/provider_id. */
+  display_name?: string;
+  description?: string;
   provider_id?: string | null;
   reasoning_options: ModelReasoningOption[];
 }
@@ -42,6 +45,15 @@ function getReasoningLabel(
 
 function getModelKey(model: ModelListModel): string {
   return model.provider_id ? `${model.provider_id}/${model.id}` : model.id;
+}
+
+export function matchesModelSearch(
+  model: ModelListModel,
+  normalizedQuery: string
+): boolean {
+  return [model.display_name, model.name, getModelKey(model)].some((value) =>
+    value?.toLowerCase().includes(normalizedQuery)
+  );
 }
 
 interface ReasoningDropdownProps {
@@ -150,11 +162,7 @@ export function ModelList({
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
   const filteredModels = normalizedSearch
-    ? models.filter((model) => {
-        const name = model.name?.toLowerCase() ?? '';
-        const id = model.id?.toLowerCase() ?? '';
-        return name.includes(normalizedSearch) || id.includes(normalizedSearch);
-      })
+    ? models.filter((model) => matchesModelSearch(model, normalizedSearch))
     : models;
 
   const showEmptyState = filteredModels.length === 0 && !showDefaultOption;
@@ -215,6 +223,7 @@ export function ModelList({
         >
           {filteredModels.map((model) => {
             const modelKey = getModelKey(model);
+            const displayName = model.display_name ?? modelKey;
             const isSelected =
               selectedModelId !== null && model.id === selectedModelId;
             const isReasoningConfigurable = model.reasoning_options.length > 0;
@@ -253,10 +262,15 @@ export function ModelList({
                       'block text-sm whitespace-normal [overflow-wrap:anywhere]',
                       isSelected && 'font-semibold'
                     )}
-                    title={modelKey}
+                    title={displayName}
                   >
-                    {modelKey}
+                    {displayName}
                   </span>
+                  {model.description && (
+                    <span className="block text-sm text-low whitespace-normal [overflow-wrap:anywhere]">
+                      {model.description}
+                    </span>
+                  )}
                 </button>
                 <div className="flex items-center justify-end gap-half pr-base">
                   {showReasoningSelector && (

@@ -3,11 +3,12 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 
-const [scenario, tracePath] = process.argv.slice(2);
+const [scenario, tracePath, launchModel] = process.argv.slice(2);
 const sessionId = 'fixture-native-session';
 const baseModel = '["provider/name","base/model"]';
 const selectedModel = '["provider/name","selected/model"]';
-let currentModel = baseModel;
+const customModel = 'custom/gemini-future';
+let currentModel = launchModel || baseModel;
 let currentEffort = 'medium';
 let pendingPrompt;
 
@@ -42,7 +43,9 @@ function options() {
 function sessionState() {
   return {
     configOptions: options(),
-    models: { currentModelId: currentModel, availableModels: [baseModel, selectedModel].map(modelId => ({ modelId, name: modelId })) },
+    ...(scenario === 'gemini-missing-model-state' ? {} : {
+      models: { currentModelId: currentModel, availableModels: [baseModel, selectedModel].map(modelId => ({ modelId, name: modelId })) },
+    }),
     modes: { currentModeId: 'default', availableModes: ['default', 'auto_edit', 'yolo', 'plan'].map(id => ({ id, name: id })) },
   };
 }
@@ -58,6 +61,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   }
   const { method, params = {}, id } = request;
   trace({ method, ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    ...(method === 'session/set_model' ? { modelId: params.modelId } : {}),
     ...(method === 'session/set_config_option' ? { configId: params.configId, value: params.value } : {}),
     ...(params.mcpServers ? { forwardedTokenPresent: params.mcpServers.some(server =>
       (server.env || []).some(entry => entry.name === 'MCP_WORKFLOW_TOKEN' && entry.value === 'a'.repeat(64))) } : {}),
@@ -83,7 +87,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       setTimeout(() => message('old-native-history-tail'), 30);
       break;
     case 'session/set_model':
-      if (scenario === 'gemini-model-reject') reject(id);
+      if (['gemini-model-reject', 'gemini-initial-model'].includes(scenario)
+        || ![baseModel, selectedModel, ...(scenario === 'gemini-custom-model' ? [customModel] : [])].includes(params.modelId)) reject(id);
       else { currentModel = params.modelId; reply(id, {}); }
       break;
     case 'session/set_mode':

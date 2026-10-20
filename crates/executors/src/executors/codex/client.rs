@@ -16,19 +16,18 @@ use codex_app_server_protocol::{
     ConfigReadResponse, ConfigWriteResponse, CurrentTimeReadResponse,
     DynamicToolCallOutputContentItem, DynamicToolCallResponse, FileChangeApprovalDecision,
     FileChangeRequestApprovalResponse, GetAccountParams, GetAccountRateLimitsResponse,
-    GetAccountResponse, InitializeCapabilities, InitializeParams, InitializeResponse,
-    ItemCompletedNotification, JSONRPCError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse,
-    ListMcpServerStatusParams, ListMcpServerStatusResponse, McpServerElicitationAction,
-    McpServerElicitationRequestResponse, McpServerStatusDetail, ModelListParams, RequestId,
-    ReviewStartParams, ReviewStartResponse, ReviewTarget, ServerRequest, SkillsListParams,
-    SkillsListResponse, ThreadCompactStartParams, ThreadCompactStartResponse,
-    ThreadGoalClearParams, ThreadGoalClearResponse, ThreadGoalGetParams, ThreadGoalGetResponse,
-    ThreadGoalSetParams, ThreadGoalSetResponse, ThreadItem, ThreadReadParams, ThreadReadResponse,
-    ThreadResumeParams, ThreadResumeResponse, ThreadSettingsUpdateParams,
-    ThreadSettingsUpdateResponse, ThreadStartParams, ThreadStartResponse,
-    ToolRequestUserInputAnswer, ToolRequestUserInputQuestion, ToolRequestUserInputResponse,
-    TurnCompletedNotification, TurnInterruptParams, TurnStartParams, TurnStartResponse, TurnStatus,
-    TurnSteerParams, TurnSteerResponse, UserInput,
+    GetAccountResponse, InitializeCapabilities, InitializeParams, ItemCompletedNotification,
+    JSONRPCError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, ListMcpServerStatusParams,
+    ListMcpServerStatusResponse, McpServerElicitationAction, McpServerElicitationRequestResponse,
+    McpServerStatusDetail, ModelListParams, RequestId, ReviewStartParams, ReviewStartResponse,
+    ReviewTarget, ServerRequest, SkillsListParams, SkillsListResponse, ThreadCompactStartParams,
+    ThreadCompactStartResponse, ThreadGoalClearParams, ThreadGoalClearResponse,
+    ThreadGoalGetParams, ThreadGoalGetResponse, ThreadGoalSetParams, ThreadGoalSetResponse,
+    ThreadItem, ThreadReadParams, ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse,
+    ThreadSettingsUpdateParams, ThreadSettingsUpdateResponse, ThreadStartParams,
+    ThreadStartResponse, ToolRequestUserInputAnswer, ToolRequestUserInputQuestion,
+    ToolRequestUserInputResponse, TurnCompletedNotification, TurnInterruptParams, TurnStartParams,
+    TurnStartResponse, TurnStatus, TurnSteerParams, TurnSteerResponse, UserInput,
 };
 use codex_protocol::{
     config_types::{CollaborationMode, ModeKind, Settings},
@@ -56,6 +55,16 @@ use crate::{
 
 struct PendingPlan {
     item_id: String,
+}
+
+/// Only the negotiated observation used by this adapter is required here.
+/// Newer bindings require metadata such as `codexHome`, which older compatible
+/// app-servers do not return. Method responses, not unused handshake metadata,
+/// establish compatibility with the operations that we actually perform.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeObservation {
+    user_agent: String,
 }
 
 // Discovery is a forward-compatible projection. Unknown future reasoning or
@@ -279,7 +288,7 @@ impl AppServerClient {
         };
 
         let response = self
-            .send_request::<InitializeResponse>(request, "initialize")
+            .send_request::<InitializeObservation>(request, "initialize")
             .await?;
         // `app-server` is a JSON-RPC integration boundary. The CLI version
         // reported in the initialize response is useful audit information,
@@ -1667,6 +1676,44 @@ mod version_check_tests {
         parse_turn_completed_params, reasoning_update_from_thread_settings,
         turn_completion_control_flow,
     };
+
+    #[test]
+    fn initialize_accepts_compatible_native_metadata_across_versions() {
+        // Codex 0.115.0 returns platform fields but no `codexHome`. Even older
+        // handshakes expose only the user agent. Neither shape can satisfy the
+        // current binding's full InitializeResponse, but both contain all the
+        // initialization state consumed by this client.
+        for response in [
+            json!({"userAgent": "codex/0.100.0"}),
+            json!({
+                "userAgent": "codex/0.115.0",
+                "platformFamily": "windows",
+                "platformOs": "windows"
+            }),
+            json!({
+                "userAgent": "codex/0.163.0",
+                "codexHome": "/native/home",
+                "platformFamily": "unix",
+                "platformOs": "linux",
+                "futureMetadata": {"capability": "future-value"}
+            }),
+        ] {
+            let observation: super::InitializeObservation =
+                serde_json::from_value(response.clone()).unwrap();
+            assert_eq!(observation.user_agent, response["userAgent"]);
+        }
+    }
+
+    #[test]
+    fn initialize_still_rejects_missing_or_malformed_required_observation() {
+        for response in [
+            json!({}),
+            json!({"userAgent": null}),
+            json!({"userAgent": 1}),
+        ] {
+            assert!(serde_json::from_value::<super::InitializeObservation>(response).is_err());
+        }
+    }
 
     #[test]
     fn native_model_config_preserves_opaque_ids_without_projecting_other_fields() {

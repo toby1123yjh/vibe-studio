@@ -53,7 +53,8 @@ export const useAuth = () => ({
   isLoaded: true,
   isSignedIn: params.get('signedOut') !== 'true',
 });
-export const useHostId = () => params.get('host');
+export const useHostId = () =>
+  new URLSearchParams(window.location.search).get('host');
 const pairedHosts = [
   { host_id: 'remote-fixture', host_name: 'Remote fixture', paired_at: '' },
 ];
@@ -198,6 +199,13 @@ const modelConfigByExecutor: Partial<
       model_reasoning: { 'claude-opus-4-6': 'xhigh' },
     },
     catalog_source: 'native',
+    agents: [],
+    permissions: [],
+  },
+  [BaseCodingAgent.GEMINI]: {
+    providers: [],
+    models: [],
+    default_model: null,
     agents: [],
     permissions: [],
   },
@@ -508,6 +516,82 @@ export function useModelSelectorConfig(executor?: BaseCodingAgent | null) {
       })
     : null;
   const params = new URLSearchParams(window.location.search);
+  if (config && executor === BaseCodingAgent.GEMINI) {
+    if (params.has('geminiConfigured')) {
+      config = {
+        ...config,
+        catalog_source: 'configured',
+        native_defaults: {
+          model_id: refreshCount > 0 ? 'gemini-refreshed' : 'gemini-configured',
+          reasoning_id: null,
+          model_reasoning: {},
+        },
+      };
+    }
+    if (params.has('geminiCatalog')) {
+      config = {
+        ...config,
+        catalog_source: 'observed',
+        models: [
+          {
+            id: 'gemini-native-choice',
+            name: 'Native model choice',
+            reasoning_options: [],
+            capabilities: {
+              reasoning: 'unknown',
+              input_modalities: ['text', 'image'],
+              fast_mode: 'unknown',
+              auto_mode: 'unknown',
+              resolved_model: null,
+              is_default: false,
+              service_tiers: [],
+            },
+          },
+        ],
+      };
+    }
+  }
+  if (config && executor === BaseCodingAgent.CLAUDE_CODE) {
+    if (params.has('claudeAliasOnly') || params.has('claudeNativeName')) {
+      config = {
+        ...config,
+        native_defaults: {
+          model_id: 'opus',
+          reasoning_id: null,
+          model_reasoning: {},
+        },
+        models: config.models.map((model) => ({
+          ...model,
+          name:
+            model.id === 'opus' && params.has('claudeNativeName')
+              ? 'Opus 4.6'
+              : model.name,
+          capabilities: model.capabilities && {
+            ...model.capabilities,
+            resolved_model: null,
+          },
+        })),
+      };
+    }
+    if (params.has('claudeSearch')) {
+      config = {
+        ...config,
+        providers: [
+          { id: 'native', name: 'Native' },
+          { id: 'other', name: 'Other' },
+        ],
+        native_defaults: {
+          model_id: 'native/opus',
+          reasoning_id: null,
+          model_reasoning: {},
+        },
+        models: config.models.map((model) => ({
+          ...model,
+          provider_id: 'native',
+        })),
+      };
+    }
+  }
   if (
     config &&
     executor === BaseCodingAgent.CLAUDE_CODE &&
@@ -546,12 +630,23 @@ export function useModelSelectorConfig(executor?: BaseCodingAgent | null) {
       };
     }
   }
+  const discoveryError =
+    refreshCount === 0
+      ? executor === BaseCodingAgent.CODEX && params.has('codexError')
+        ? 'Codex model discovery failed: native request timed out.'
+        : executor === BaseCodingAgent.GEMINI && params.has('geminiError')
+          ? 'Gemini model discovery failed: host connection unavailable.'
+          : null
+      : null;
+  if (discoveryError && params.has('noDiscoveryConfig')) config = null;
   return {
     config,
     refresh: () => setRefreshCount((count) => count + 1),
-    loadingModels: false,
+    loadingModels: Boolean(
+      discoveryError && params.has('discoveryLoadingError')
+    ),
     loadingAgents: false,
-    error: null,
+    error: discoveryError,
     isConnected: true,
     isInitialized: true,
   };

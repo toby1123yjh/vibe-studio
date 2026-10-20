@@ -1119,14 +1119,15 @@ mod tests {
         let trace = directory.path().join("native-methods.jsonl");
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp_agent.mjs");
-        let parts = CommandParts::new(
-            "node".to_string(),
-            vec![
-                fixture.to_string_lossy().into_owned(),
-                scenario.to_string(),
-                trace.to_string_lossy().into_owned(),
-            ],
-        );
+        let mut params = vec![
+            fixture.to_string_lossy().into_owned(),
+            scenario.to_string(),
+            trace.to_string_lossy().into_owned(),
+        ];
+        if scenario == "gemini-initial-model" {
+            params.push(model.expect("initial native model is required").to_owned());
+        }
+        let parts = CommandParts::new("node".to_string(), params);
         let env = ExecutionEnv::new(RepoContext::default(), false, String::new());
         let overrides = CmdOverrides::default();
         let approvals: Option<Arc<dyn crate::approvals::ExecutorApprovalService>> =
@@ -1374,8 +1375,12 @@ mod tests {
     async fn gemini_failed_selection_never_sends_business_prompt() {
         for (scenario, model) in [
             ("gemini-model-reject", Some(SELECTED_MODEL)),
+            ("gemini-model-reject", Some("custom/gemini-future")),
             ("gemini-mode-reject", None),
             ("complete", Some("unadvertised-model")),
+            ("complete", Some("")),
+            ("complete", Some(" \t")),
+            ("gemini-missing-model-state", Some(SELECTED_MODEL)),
         ] {
             let (result, trace, logs) =
                 fake_run(scenario, AcpDialect::Gemini, false, model, None, false)
@@ -1390,6 +1395,86 @@ mod tests {
             );
             assert!(trace.iter().any(|event| event["method"] == "close_flushed"));
             assert!(!logs.contains("native-private-value"));
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_unlisted_model_requires_native_acceptance_before_new_and_restored_prompts() {
+        for restore in [false, true] {
+            let (result, trace, logs) = fake_run(
+                "gemini-custom-model",
+                AcpDialect::Gemini,
+                restore,
+                Some("custom/gemini-future"),
+                None,
+                false,
+            )
+            .await
+            .finish()
+            .await;
+            assert!(matches!(result, ExecutorExitResult::Success));
+            let selected = trace
+                .iter()
+                .position(|event| event["method"] == "session/set_model")
+                .expect("an unconfirmed model requires native acceptance");
+            let prompted = trace
+                .iter()
+                .position(|event| event["method"] == "session/prompt")
+                .unwrap();
+            assert!(selected < prompted);
+            assert_eq!(trace[selected]["modelId"], "custom/gemini-future");
+            assert!(trace.iter().any(|event| event["method"]
+                == if restore {
+                    "session/load"
+                } else {
+                    "session/new"
+                }));
+            let observed = logs
+                .lines()
+                .find_map(|line| match serde_json::from_str::<AcpEvent>(line).ok()? {
+                    AcpEvent::ConfigurationObserved(observed) => Some(observed),
+                    _ => None,
+                })
+                .unwrap();
+            // An empty native acknowledgement accepts the request but does not
+            // prove which concrete model eventually serves it.
+            assert!(observed.model_id.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_native_current_model_confirms_initial_flag_without_redundant_setter() {
+        for model in [SELECTED_MODEL, "custom/gemini-future"] {
+            let (result, trace, logs) = fake_run(
+                "gemini-initial-model",
+                AcpDialect::Gemini,
+                false,
+                Some(model),
+                None,
+                false,
+            )
+            .await
+            .finish()
+            .await;
+            assert!(matches!(result, ExecutorExitResult::Success));
+            assert!(
+                !trace
+                    .iter()
+                    .any(|event| event["method"] == "session/set_model")
+            );
+            assert!(
+                trace
+                    .iter()
+                    .any(|event| event["method"] == "session/prompt")
+            );
+            let observed = logs
+                .lines()
+                .find_map(|line| match serde_json::from_str::<AcpEvent>(line).ok()? {
+                    AcpEvent::ConfigurationObserved(observed) => Some(observed),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(observed.model_id.as_deref(), Some(model));
         }
     }
 
