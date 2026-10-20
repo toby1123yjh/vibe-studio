@@ -13,6 +13,7 @@ import { Loader2 } from 'lucide-react';
 import { create, useModal } from '@ebay/nice-modal-react';
 import { useTranslation } from 'react-i18next';
 import { defineModal } from '@/shared/lib/modals';
+import { isLocalRemoteApiEnabled } from '@/shared/lib/remoteApi';
 
 export interface DeleteRemoteProjectDialogProps {
   projectName: string;
@@ -28,6 +29,7 @@ const DeleteRemoteProjectDialogImpl = create<DeleteRemoteProjectDialogProps>(
     const [isDeleting, setIsDeleting] = useState(false);
     const deletingRef = useRef(false);
     const [error, setError] = useState<string | null>(null);
+    const isLocalProject = isLocalRemoteApiEnabled();
 
     const handleDelete = async () => {
       if (deletingRef.current) return;
@@ -80,8 +82,12 @@ const DeleteRemoteProjectDialogImpl = create<DeleteRemoteProjectDialogProps>(
             </DialogTitle>
             <DialogDescription>
               {t(
-                'deleteProjectDialog.description',
-                'This will permanently delete "{{name}}" and all its tasks. This action cannot be undone.',
+                isLocalProject
+                  ? 'deleteProjectDialog.description'
+                  : 'deleteProjectDialog.cloudDescription',
+                isLocalProject
+                  ? 'Remove "{{name}}" from this device? Its directory, files, and task data will be kept. It will only return if you explicitly reopen its directory.'
+                  : 'This will permanently delete "{{name}}" and all its tasks. This action cannot be undone.',
                 { name: projectName }
               )}
             </DialogDescription>

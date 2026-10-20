@@ -463,6 +463,16 @@ pub(crate) async fn load_in(
     conn: &mut SqliteConnection,
     project_id: Uuid,
 ) -> Result<(PathBuf, ProjectDocument), ApiError> {
+    // A portable file is not permission to resurrect a detached registration.
+    // Keep this guard inside the caller's immediate transaction, before even
+    // legacy adoption can inspect an orphaned workspace-defaults scratch row.
+    let registered: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
+        .bind(project_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    if !registered {
+        return Err(ApiError::BadRequest("Project not found".into()));
+    }
     let path: Option<String> =
         sqlx::query_scalar("SELECT directory_path FROM project_task_mounts WHERE project_id=?")
             .bind(project_id)
@@ -616,6 +626,55 @@ pub(crate) async fn read(pool: &SqlitePool, project_id: Uuid) -> Result<ProjectD
     Ok(document)
 }
 
+/// Detach this host's registration without deleting the portable document or
+/// any user files. Serialize with load/adopt/mutate so stale reads cannot race
+/// deletion, and clear only the workspace defaults belonging to this project.
+pub(crate) async fn delete(pool: &SqlitePool, project_id: Uuid) -> Result<(), ApiError> {
+    if project_id == DEFAULT_PROJECT_ID {
+        return Err(ApiError::BadRequest(
+            "The default project cannot be deleted".into(),
+        ));
+    }
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let has_sessions: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM session_project_memberships WHERE project_id=?)",
+    )
+    .bind(project_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if has_sessions {
+        return Err(ApiError::Conflict(
+            "This project contains sessions. Delete its sessions before deleting the project; session ownership cannot be changed.".into(),
+        ));
+    }
+    sqlx::query("DELETE FROM projects WHERE id=?")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| {
+            // SQLite's ON DELETE RESTRICT can report trigger code 1811.
+            if error.as_database_error().is_some_and(|error| {
+                error.is_foreign_key_violation()
+                    || (error.code().as_deref() == Some("1811")
+                        && error.message() == "FOREIGN KEY constraint failed")
+            }) {
+                ApiError::Conflict("This project still contains sessions or tasks. Delete them before deleting the project.".into())
+            } else {
+                ApiError::from(error)
+            }
+        })?;
+    sqlx::query("DELETE FROM scratch WHERE id=? AND scratch_type='PROJECT_REPO_DEFAULTS'")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    read_snapshots()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, snapshot| snapshot.document.project.id != project_id);
+    Ok(())
+}
+
 /// New work must resolve its business task from the file, never just its FK index.
 /// Historical runs and cancellation deliberately do not use this guard.
 pub(crate) async fn require_task(
@@ -733,10 +792,11 @@ pub(crate) async fn owner(pool: &SqlitePool, table: &str, id: Uuid) -> Result<Uu
         .ok_or_else(|| ApiError::BadRequest("Record not found".into()))
 }
 
-pub(crate) async fn open(
+pub(crate) async fn open_with_confirmation(
     pool: &SqlitePool,
     directory: &str,
     request: CreateProjectRequest,
+    confirmed_project_id: Option<Uuid>,
 ) -> Result<Project, ApiError> {
     let path = Path::new(directory);
     if !path.is_absolute() {
@@ -749,7 +809,15 @@ pub(crate) async fn open(
         return Err(ApiError::BadRequest("Select a project directory".into()));
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let target = metadata_path(&root, true)?;
+    // Inspect before staging, registration or version upgrades. A rejected
+    // create/open request must not change the directory or its SQL projection.
+    let target = match metadata_path(&root, false) {
+        Ok(target) => target,
+        Err(ApiError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            root.join(METADATA).join(DOCUMENT)
+        }
+        Err(error) => return Err(error),
+    };
     let existing = target.try_exists()?;
     let mounted: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM project_task_mounts WHERE directory_path=?)",
@@ -763,7 +831,15 @@ pub(crate) async fn open(
         ));
     }
     let mut document = if existing {
-        read_path(&target)?
+        let document = read_path(&target)?;
+        if confirmed_project_id != Some(document.project.id) {
+            return Err(ApiError::ProjectDirectoryExists(Box::new(document.project)));
+        }
+        document
+    } else if confirmed_project_id.is_some() {
+        return Err(ApiError::Conflict(
+            "The project document changed or was removed; choose the directory again before opening it".into(),
+        ));
     } else if let Some(id) = request.id {
         let registered: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
@@ -786,6 +862,22 @@ pub(crate) async fn open(
     }
     tx.commit().await?;
     Ok(document.project)
+}
+
+/// Tests that intentionally open existing portable projects still pass through
+/// the same confirmation boundary used by the create dialog.
+#[cfg(test)]
+pub(crate) async fn open(
+    pool: &SqlitePool,
+    directory: &str,
+    request: CreateProjectRequest,
+) -> Result<Project, ApiError> {
+    match open_with_confirmation(pool, directory, request.clone(), None).await {
+        Err(ApiError::ProjectDirectoryExists(project)) => {
+            open_with_confirmation(pool, directory, request, Some(project.id)).await
+        }
+        result => result,
+    }
 }
 
 pub(crate) async fn create_in(
@@ -1216,6 +1308,327 @@ mod tests {
             parent_issue_sort_order: None,
             extension_metadata: Value::Null,
         }
+    }
+
+    async fn project_exists(pool: &SqlitePool, project_id: Uuid) -> bool {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn workspace_defaults(pool: &SqlitePool, project_id: Uuid) -> Option<String> {
+        sqlx::query_scalar(
+            "SELECT payload FROM scratch WHERE id=? AND scratch_type='PROJECT_REPO_DEFAULTS'",
+        )
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn deleted_project_cannot_be_readopted_by_stale_reads_or_writes() {
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        let document = read(&pool, project.id).await.unwrap();
+        let request = task_request(&document);
+        let scratch = workspace_defaults(&pool, project.id).await.unwrap();
+        let path = directory.path().join(METADATA).join(DOCUMENT);
+        let before = std::fs::read(&path).unwrap();
+        let user_file = directory.path().join("keep-user-content.txt");
+        std::fs::write(&user_file, "User-owned data").unwrap();
+        sqlx::query(
+            "INSERT INTO scratch(id,scratch_type,payload) VALUES (?,'UI_PREFERENCES','{}')",
+        )
+        .bind(project.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        read_snapshot(&pool, project.id, false).await.unwrap();
+
+        delete(&pool, project.id).await.unwrap();
+        delete(&pool, project.id).await.unwrap();
+        assert!(!project_exists(&pool, project.id).await);
+        assert!(workspace_defaults(&pool, project.id).await.is_none());
+        assert!(read(&pool, project.id).await.is_err());
+        assert!(read_snapshot(&pool, project.id, false).await.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        // beta.5 could leave these defaults behind after deleting only projects.
+        // The existence guard must reject even this exact old database state.
+        sqlx::query(
+            "INSERT INTO scratch(id,scratch_type,payload) VALUES (?,'PROJECT_REPO_DEFAULTS',?)",
+        )
+        .bind(project.id)
+        .bind(&scratch)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for _ in 0..3 {
+            assert!(matches!(
+                read(&pool, project.id).await,
+                Err(ApiError::BadRequest(message)) if message == "Project not found"
+            ));
+            assert!(
+                mutate(&pool, project.id, |_| -> Result<(), ApiError> {
+                    panic!("A detached project's mutation must never run")
+                })
+                .await
+                .is_err()
+            );
+        }
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        assert!(insert_task_in(&mut tx, request).await.is_err());
+        tx.rollback().await.unwrap();
+
+        // Creating a different project does not turn old workspace defaults
+        // into permission to rediscover a previously deleted project.
+        let unrelated = tempfile::tempdir().unwrap();
+        let created = open_with_confirmation(
+            &pool,
+            unrelated.path().to_str().unwrap(),
+            project_request(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(project_exists(&pool, created.id).await);
+        assert!(!project_exists(&pool, project.id).await);
+        assert!(read(&pool, project.id).await.is_err());
+        assert_eq!(workspace_defaults(&pool, project.id).await, Some(scratch));
+        let mounts: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM project_task_mounts WHERE project_id=?")
+                .bind(project.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mounts, 0);
+        let unrelated_scratch: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM scratch WHERE id=? AND scratch_type='UI_PREFERENCES')",
+        )
+        .bind(project.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(unrelated_scratch);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            std::fs::read_to_string(&user_file).unwrap(),
+            "User-owned data"
+        );
+
+        // Retained portable data is recoverable only through an explicit reopen.
+        assert!(matches!(
+            open_with_confirmation(
+                &pool,
+                directory.path().to_str().unwrap(),
+                project_request(),
+                None
+            )
+            .await,
+            Err(ApiError::ProjectDirectoryExists(existing)) if existing.id == project.id
+        ));
+        assert!(!project_exists(&pool, project.id).await);
+        let reopened = open_with_confirmation(
+            &pool,
+            directory.path().to_str().unwrap(),
+            project_request(),
+            Some(project.id),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reopened.id, project.id);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn blocked_project_deletion_preserves_defaults_mount_and_document() {
+        for blocker in ["session", "foreign_key"] {
+            let pool = pool().await;
+            let directory = tempfile::tempdir().unwrap();
+            let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+                .await
+                .unwrap();
+            let scratch = workspace_defaults(&pool, project.id).await;
+            let path = directory.path().join(METADATA).join(DOCUMENT);
+            let before = std::fs::read(&path).unwrap();
+            let snapshot = read_snapshot(&pool, project.id, false).await.unwrap();
+            if blocker == "session" {
+                let workspace_id = Uuid::new_v4();
+                let session_id = Uuid::new_v4();
+                sqlx::query("INSERT INTO workspaces(id,branch) VALUES (?,'main')")
+                    .bind(workspace_id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO sessions(id,workspace_id) VALUES (?,?)")
+                    .bind(session_id)
+                    .bind(workspace_id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                sqlx::query(
+                    "UPDATE session_project_memberships SET project_id=? WHERE session_id=?",
+                )
+                .bind(project.id)
+                .bind(session_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            } else {
+                sqlx::query("CREATE TABLE deletion_guard(project_id BLOB REFERENCES projects(id) ON DELETE RESTRICT)")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO deletion_guard(project_id) VALUES (?)")
+                    .bind(project.id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            assert!(matches!(
+                delete(&pool, project.id).await,
+                Err(ApiError::Conflict(_))
+            ));
+            assert!(project_exists(&pool, project.id).await);
+            assert_eq!(workspace_defaults(&pool, project.id).await, scratch);
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert!(Arc::ptr_eq(
+                &snapshot,
+                &read_snapshot(&pool, project.id, false).await.unwrap()
+            ));
+            assert!(delete(&pool, DEFAULT_PROJECT_ID).await.is_err());
+            assert!(project_exists(&pool, DEFAULT_PROJECT_ID).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_directory_requires_confirmation_before_registration_or_upgrade() {
+        use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let mut original = ProjectDocument::new(project_request());
+        original.schema_version = 1;
+        original.statuses.remove(0);
+        let task = task_request(&original);
+        original.insert_task(task).unwrap();
+        stage(&root, &original, None).unwrap().publish().unwrap();
+        let path = root.join(METADATA).join(DOCUMENT);
+        let before = std::fs::read(&path).unwrap();
+
+        for confirmation in [None, Some(Uuid::new_v4())] {
+            let error = open_with_confirmation(
+                &pool,
+                root.to_str().unwrap(),
+                project_request(),
+                confirmation,
+            )
+            .await
+            .unwrap_err();
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let bytes = to_bytes(response.into_body(), 8192).await.unwrap();
+            let payload: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(payload["success"], false);
+            assert!(payload["data"].is_null());
+            assert!(!payload["message"].as_str().unwrap().is_empty());
+            assert_eq!(payload["error_data"]["code"], "PROJECT_DIRECTORY_EXISTS");
+            assert_eq!(
+                payload["error_data"]["project"],
+                serde_json::to_value(&original.project).unwrap()
+            );
+            assert!(!project_exists(&pool, original.project.id).await);
+            assert!(
+                workspace_defaults(&pool, original.project.id)
+                    .await
+                    .is_none()
+            );
+            let mounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_task_mounts")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(mounts, 0);
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+
+        let mut draft = project_request();
+        draft.id = Some(Uuid::new_v4());
+        draft.name = "This must not rename the restored project".into();
+        draft.color = "1 2% 3%".into();
+        let restored = open_with_confirmation(
+            &pool,
+            root.to_str().unwrap(),
+            draft,
+            Some(original.project.id),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(&original.project).unwrap()
+        );
+        let document = read(&pool, original.project.id).await.unwrap();
+        assert_eq!(document.schema_version, FORMAT_VERSION);
+        assert_eq!(document.revision, original.revision + 1);
+        assert_eq!(document.statuses[0].name, "Discuss");
+        assert_eq!(
+            serde_json::to_value(document.tasks).unwrap(),
+            serde_json::to_value(original.tasks).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_confirmation_never_opens_a_replaced_or_missing_document() {
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let first = ProjectDocument::new(project_request());
+        stage(&root, &first, None).unwrap().publish().unwrap();
+        assert!(matches!(
+            open_with_confirmation(&pool, root.to_str().unwrap(), project_request(), None).await,
+            Err(ApiError::ProjectDirectoryExists(project)) if project.id == first.project.id
+        ));
+
+        let replacement = ProjectDocument::new(project_request());
+        let path = root.join(METADATA).join(DOCUMENT);
+        std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+        assert!(matches!(
+            open_with_confirmation(
+                &pool,
+                root.to_str().unwrap(),
+                project_request(),
+                Some(first.project.id)
+            ).await,
+            Err(ApiError::ProjectDirectoryExists(project)) if project.id == replacement.project.id
+        ));
+        assert!(!project_exists(&pool, first.project.id).await);
+        assert!(!project_exists(&pool, replacement.project.id).await);
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            open_with_confirmation(
+                &pool,
+                root.to_str().unwrap(),
+                project_request(),
+                Some(replacement.project.id)
+            )
+            .await,
+            Err(ApiError::Conflict(_))
+        ));
+        assert!(!path.exists());
+        assert!(!project_exists(&pool, replacement.project.id).await);
+        assert!(
+            workspace_defaults(&pool, replacement.project.id)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]

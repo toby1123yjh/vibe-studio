@@ -1223,13 +1223,14 @@ struct OpenProjectRequest {
     name: String,
     color: String,
     id: Option<Uuid>,
+    confirmed_project_id: Option<Uuid>,
 }
 
 async fn open_project(
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<OpenProjectRequest>,
 ) -> Result<ResponseJson<MutationResponse<Project>>, ApiError> {
-    let data = super::project_store::open(
+    let data = super::project_store::open_with_confirmation(
         &deployment.db().pool,
         &request.directory_path,
         CreateProjectRequest {
@@ -1238,6 +1239,7 @@ async fn open_project(
             name: request.name,
             color: request.color,
         },
+        request.confirmed_project_id,
     )
     .await?;
     Ok(ResponseJson(MutationResponse { data, txid: txid() }))
@@ -1284,39 +1286,7 @@ async fn delete_project(
     State(deployment): State<DeploymentImpl>,
     Path(project_id): Path<Uuid>,
 ) -> Result<ResponseJson<DeleteResponse>, ApiError> {
-    if project_id == db::models::project::DEFAULT_PROJECT_ID {
-        return Err(ApiError::BadRequest(
-            "The default project cannot be deleted".into(),
-        ));
-    }
-    let has_sessions: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM session_project_memberships WHERE project_id = ?)",
-    )
-    .bind(project_id)
-    .fetch_one(&deployment.db().pool)
-    .await?;
-    if has_sessions {
-        return Err(ApiError::Conflict(
-            "This project contains sessions. Delete its sessions before deleting the project; session ownership cannot be changed.".into(),
-        ));
-    }
-    sqlx::query("DELETE FROM projects WHERE id = ?")
-        .bind(project_id)
-        .execute(&deployment.db().pool)
-        .await
-        .map_err(|error| {
-            // SQLite's ON DELETE RESTRICT can report trigger code 1811.
-            if error.as_database_error().is_some_and(|error| {
-                error.is_foreign_key_violation()
-                    || (error.code().as_deref() == Some("1811")
-                        && error.message() == "FOREIGN KEY constraint failed")
-            }) {
-                ApiError::Conflict("This project still contains sessions or tasks. Delete them before deleting the project.".into())
-            } else {
-                ApiError::from(error)
-            }
-        })?;
-
+    super::project_store::delete(&deployment.db().pool, project_id).await?;
     Ok(ResponseJson(DeleteResponse { txid: txid() }))
 }
 
@@ -3408,6 +3378,84 @@ mod tests {
         assert_eq!(latest.agent_run_id, latest_run_id);
         assert_eq!(latest.session_id, latest_session_id);
         assert_eq!(latest.status, AgentRunStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn stale_project_scope_queries_cannot_restore_a_deleted_project() {
+        let pool = setup_pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let project = crate::routes::project_store::open(
+            &pool,
+            directory.path().to_str().unwrap(),
+            CreateProjectRequest {
+                id: None,
+                organization_id: super::local_org_id(),
+                name: "Detached project".into(),
+                color: "210 80% 52%".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let scratch: String = sqlx::query_scalar(
+            "SELECT payload FROM scratch WHERE id=? AND scratch_type='PROJECT_REPO_DEFAULTS'",
+        )
+        .bind(project.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let path = directory.path().join(".vibe-kanban").join("project.json");
+        let before = std::fs::read(&path).unwrap();
+        crate::routes::project_store::delete(&pool, project.id)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO scratch(id,scratch_type,payload) VALUES (?,'PROJECT_REPO_DEFAULTS',?)",
+        )
+        .bind(project.id)
+        .bind(scratch)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for _ in 0..2 {
+            // These are the same readers used by the old board's fallback GETs.
+            assert!(super::get_local_project(&pool, project.id).await.is_err());
+            assert!(
+                super::ensure_default_statuses(&pool, project.id)
+                    .await
+                    .is_err()
+            );
+            assert!(super::list_project_issues(&pool, project.id).await.is_err());
+            assert!(super::list_project_tags(&pool, project.id).await.is_err());
+            assert!(
+                super::list_project_issue_tags(&pool, project.id)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                super::list_project_issue_assignees(&pool, project.id)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                super::list_project_issue_followers(&pool, project.id)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                super::list_project_issue_relationships(&pool, project.id)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                super::list_local_projects(&pool)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .all(|row| row.id != project.id)
+            );
+        }
+        assert_eq!(std::fs::read(path).unwrap(), before);
     }
 
     #[tokio::test]

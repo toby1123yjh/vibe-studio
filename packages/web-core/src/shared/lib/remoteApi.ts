@@ -17,6 +17,7 @@ import { getAuthRuntime } from '@/shared/lib/auth/runtime';
 import { makeLocalApiRequest } from '@/shared/lib/localApiTransport';
 import { syncRelayApiBaseWithRemote } from '@/shared/lib/relayBackendApi';
 import { getCurrentHostId } from '@/shared/providers/HostIdProvider';
+import { z } from 'zod';
 
 const BUILD_TIME_API_BASE = import.meta.env.VITE_VK_SHARED_API_BASE || '';
 
@@ -33,9 +34,37 @@ export function isLocalRemoteApiEnabled(): boolean {
   return _localRemoteApiEnabled && !getRemoteApiUrl();
 }
 
-/** Open a directory's existing project identity, or create one if it is new. */
+const projectDirectoryConflictSchema = z.object({
+  success: z.literal(false),
+  error_data: z.object({
+    code: z.literal('PROJECT_DIRECTORY_EXISTS'),
+    project: z.object({
+      id: z.string().uuid(),
+      name: z.string().refine((name) => name.trim().length > 0),
+    }),
+  }),
+});
+
+export class ProjectDirectoryExistsError extends Error {
+  constructor(readonly project: Pick<Project, 'id' | 'name'>) {
+    super(
+      'This directory already contains a project. Confirm before opening it.'
+    );
+    this.name = 'ProjectDirectoryExistsError';
+  }
+}
+
+export interface OpenLocalProjectDirectoryInput {
+  directory_path: string;
+  name: string;
+  color: string;
+  id?: string;
+  confirmed_project_id?: string;
+}
+
+/** Create a directory project; existing identities require explicit confirmation. */
 export async function openLocalProjectDirectory(
-  input: { directory_path: string; name: string; color: string; id?: string },
+  input: OpenLocalProjectDirectoryInput,
   hostId: string | null
 ): Promise<Project> {
   const response = await makeLocalApiRequest('/api/local/v1/projects/open', {
@@ -46,6 +75,16 @@ export async function openLocalProjectDirectory(
     body: JSON.stringify(input),
   });
   if (!response.ok) {
+    if (response.status === 409) {
+      const body: unknown = await response
+        .clone()
+        .json()
+        .catch(() => null);
+      const conflict = projectDirectoryConflictSchema.safeParse(body);
+      if (conflict.success) {
+        throw new ProjectDirectoryExistsError(conflict.data.error_data.project);
+      }
+    }
     throw await parseErrorResponse(
       response,
       'Failed to open project directory'
