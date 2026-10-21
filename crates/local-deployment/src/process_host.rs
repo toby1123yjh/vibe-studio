@@ -1571,6 +1571,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_startup_error_survives_a_racing_executor_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = test_host(&directory.path().join("events.jsonl")).await;
+        let (mut spawned, mut output) =
+            executors::stdout_dup::spawn_local_output_process().unwrap();
+        let writer = test_audit_writer(directory.path(), &host);
+        let correlation_id = Uuid::new_v4();
+        let cancellation = CancellationToken::new();
+        let adapter_cancellation = cancellation.clone();
+        let diagnostic = "config/read request failed: invalid model_reasoning_effort";
+        let adapter = tokio::spawn(async move {
+            // The exit signal wins first. The final diagnostic reaches the
+            // output reader only during the monitor's post-exit drain.
+            adapter_cancellation.cancelled().await;
+            for payload in [
+                serde_json::json!({"id": 0, "result": {"userAgent": "codex/test"}}),
+                serde_json::json!({"LaunchError": {"error": diagnostic}}),
+            ] {
+                let mut bytes = serde_json::to_vec(&payload).unwrap();
+                bytes.push(b'\n');
+                output.write_all(&bytes).await.unwrap();
+            }
+            output.flush().await.unwrap();
+        });
+        let (notices_tx, notices_rx) = mpsc::unbounded_channel();
+        spawn_stdout_reader(
+            DirectProvider::Codex,
+            correlation_id,
+            spawned.child.inner().stdout.take().unwrap(),
+            writer.clone(),
+            notices_tx.clone(),
+        );
+        spawn_stderr_reader(
+            correlation_id,
+            spawned.child.inner().stderr.take().unwrap(),
+            writer.clone(),
+            notices_tx,
+        );
+        let (_commands_tx, commands_rx) = mpsc::channel(1);
+        let (exit_tx, exit_rx) = oneshot::channel();
+        exit_tx.send(ExecutorExitResult::Failure).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            monitor_process(
+                host.clone(),
+                DirectProvider::Codex,
+                correlation_id,
+                spawned.child,
+                None,
+                Some(cancellation),
+                Some(exit_rx),
+                None,
+                writer,
+                notices_rx,
+                commands_rx,
+            ),
+        )
+        .await
+        .unwrap();
+        adapter.await.unwrap();
+
+        let observations = host.response_after(0).await.unwrap();
+        assert!(observations.terminal);
+        let errors: Vec<_> = observations
+            .events
+            .iter()
+            .filter_map(|event| match &event.payload {
+                HostEventPayload::Mapped {
+                    event:
+                        AgentEventEnvelope {
+                            payload: executors::runtime::AgentEventPayload::Error { error },
+                            ..
+                        },
+                    ..
+                } => Some(error),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, diagnostic);
+        assert_eq!(errors[0].kind, AgentRuntimeErrorKind::StartupFailed);
+        assert!(observations.events.iter().any(|event| matches!(
+            &event.payload,
+            HostEventPayload::Terminal {
+                status: AgentRunStatus::Failed, error: None, audit_manifest, ..
+            } if audit_manifest.integrity_status == NativeAuditIntegrityStatus::Complete
+                && audit_manifest.frame_count == 2
+        )));
+        assert!(!observations.events.iter().any(|event| matches!(
+            &event.payload,
+            HostEventPayload::Mapped { event, .. }
+                if matches!(&event.payload, executors::runtime::AgentEventPayload::ProviderExtension { .. })
+        )));
+    }
+
+    #[tokio::test]
     async fn natural_process_exit_drains_adapter_tail_without_cancelling_it() {
         let directory = tempfile::tempdir().unwrap();
         let host = test_host(&directory.path().join("events.jsonl")).await;

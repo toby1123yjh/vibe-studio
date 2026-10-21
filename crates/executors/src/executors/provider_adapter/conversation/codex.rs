@@ -2,7 +2,8 @@ use serde_json::{Value, json};
 
 use super::{Decoder, TextChunk, is_terminal, string, tool_status};
 use crate::runtime::{
-    AgentEventPayload, AgentRuntimeMessageRole, ConversationBlockFields, ConversationBlockKind,
+    AgentEventPayload, AgentRunStatus, AgentRuntimeError, AgentRuntimeErrorKind,
+    AgentRuntimeMessageRole, ConversationBlockFields, ConversationBlockKind,
     ConversationInteraction, ConversationInteractionKind, ConversationInteractionOption,
     ConversationInteractionStatus, ConversationLocation, ConversationPlanEntry,
     ConversationQuestion, ConversationReasoningSource, ConversationTextField, NativeAuditManifest,
@@ -16,7 +17,33 @@ pub(super) fn decode(
     manifest: &NativeAuditManifest,
     out: &mut Vec<AgentEventPayload>,
 ) -> bool {
+    // These externally tagged errors are written by the Codex executor when
+    // initialization or a request fails, rather than by app-server itself.
+    // Preserve the exact diagnostic, including the executor's launch context.
+    for (variant, kind) in [
+        ("LaunchError", AgentRuntimeErrorKind::StartupFailed),
+        ("AuthRequired", AgentRuntimeErrorKind::AuthRequired),
+    ] {
+        if let Some(message) = payload[variant]["error"].as_str() {
+            out.push(error(kind, message.into()));
+            return true;
+        }
+    }
     let Some(method) = payload["method"].as_str() else {
+        if payload.get("id").is_some() {
+            if payload.get("result").is_some() && payload.get("error").is_none() {
+                // Responses to initialize/thread/start/etc are transport
+                // acknowledgements. Their full bytes remain in Native Audit.
+                return true;
+            }
+            if let Some(message) = diagnostic(&payload["error"]) {
+                // A failed optional request (e.g. a setting/control) does not
+                // prove that the business turn failed. The request's caller
+                // decides whether to emit a terminal executor error afterward.
+                notice(state, raw, manifest, message, out);
+                return true;
+            }
+        }
         return false;
     };
     let params = &payload["params"];
@@ -25,6 +52,71 @@ pub(super) fn decode(
         .or_else(|| params.get("item_id"))
         .and_then(Value::as_str);
     match method {
+        "error" => {
+            match (diagnostic(&params["error"]), params["willRetry"].as_bool()) {
+                (Some(message), Some(true)) => notice(
+                    state,
+                    raw,
+                    manifest,
+                    format!("Codex is retrying: {message}"),
+                    out,
+                ),
+                (Some(message), Some(false)) => {
+                    out.push(error(AgentRuntimeErrorKind::Unknown, message))
+                }
+                _ => {
+                    // Do not invent terminal semantics for an unrecognized
+                    // notification shape or let the generic error fallback do so.
+                    out.push(AgentEventPayload::ProviderExtension {
+                        provider_namespace: "codex".into(),
+                        provider_event: method.into(),
+                        payload: payload.clone(),
+                    });
+                }
+            }
+        }
+        "turn/completed" if params["turn"]["status"] == "failed" => {
+            if let Some(message) = diagnostic(&params["turn"]["error"]) {
+                out.push(error(AgentRuntimeErrorKind::Unknown, message));
+            } else {
+                // A preceding error notification may already hold the actual
+                // cause. Do not replace it with a fabricated generic error.
+                out.push(AgentEventPayload::LifecycleChanged {
+                    status: AgentRunStatus::Failed,
+                });
+            }
+        }
+        "thread/status/changed"
+        | "turn/started"
+        | "thread/name/updated"
+        | "thread/closed"
+        | "thread/compacted"
+        | "item/reasoning/summaryPartAdded"
+        | "rawResponseItem/completed"
+        | "thread/tokenUsage/updated"
+        | "account/updated"
+        | "account/rateLimits/updated"
+        | "skills/changed"
+        | "app/list/updated" => {
+            // Known housekeeping notifications are audit facts, not chat
+            // content. Keep this list explicit so future meaningful events
+            // retain the extension fallback.
+        }
+        "mcpServer/startupStatus/updated" => match params["status"].as_str() {
+            Some("starting" | "ready" | "cancelled") => {}
+            Some("failed") => {
+                let name = params["name"].as_str().unwrap_or("unknown");
+                let message = params["error"].as_str().unwrap_or("failed to start");
+                notice(
+                    state,
+                    raw,
+                    manifest,
+                    format!("MCP server {name}: {message}"),
+                    out,
+                );
+            }
+            _ => return false,
+        },
         "item/agentMessage/delta" => {
             state.text_chunk(
                 manifest,
@@ -372,6 +464,40 @@ pub(super) fn decode(
         _ => return false,
     }
     true
+}
+
+fn error(kind: AgentRuntimeErrorKind, message: String) -> AgentEventPayload {
+    AgentEventPayload::Error {
+        error: AgentRuntimeError::new(kind, message).with_provider(Some("codex")),
+    }
+}
+
+fn diagnostic(error: &Value) -> Option<String> {
+    let message = error["message"].as_str()?;
+    match error["additionalDetails"].as_str() {
+        Some(details) if !details.is_empty() => Some(format!("{message}\n\n{details}")),
+        _ => Some(message.into()),
+    }
+}
+
+fn notice(
+    state: &mut Decoder,
+    raw: &ProviderEvent,
+    manifest: &NativeAuditManifest,
+    message: String,
+    out: &mut Vec<AgentEventPayload>,
+) {
+    state.boundary();
+    let block = state.block(manifest, raw, ConversationBlockKind::Notice, None);
+    state.snapshot(
+        &block,
+        ConversationBlockFields {
+            text: Some(message),
+            ..Default::default()
+        },
+        out,
+    );
+    state.finish(&block, out);
 }
 
 pub(crate) fn request_key(native: &Value) -> String {

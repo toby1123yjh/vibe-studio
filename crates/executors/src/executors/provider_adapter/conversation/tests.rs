@@ -149,6 +149,298 @@ fn codex_summary_and_exposed_reasoning_preserve_their_native_boundaries() {
 }
 
 #[test]
+fn codex_executor_failures_preserve_original_diagnostics() {
+    for (variant, kind, message) in [
+        (
+            "LaunchError",
+            crate::runtime::AgentRuntimeErrorKind::StartupFailed,
+            "thread/start request failed: unsupported operation\n\nCodex launch context:\ncwd=/repo",
+        ),
+        (
+            "AuthRequired",
+            crate::runtime::AgentRuntimeErrorKind::AuthRequired,
+            "Please run codex login before starting this session",
+        ),
+    ] {
+        let events = transcript(
+            DirectProvider::Codex,
+            vec![json!({(variant): {"error": message}})],
+        );
+        assert_eq!(events.len(), 1);
+        let AgentEventPayload::Error { error } = &events[0].payload else {
+            panic!("{variant} must produce a canonical error");
+        };
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.message, message);
+        assert_eq!(error.provider.as_deref(), Some("codex"));
+    }
+}
+
+#[test]
+fn codex_failed_turn_preserves_nested_error_and_details() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![json!({
+            "method":"turn/completed",
+            "params":{"turn":{"id":"turn-1","status":"failed","error":{
+                "message":"The model is unavailable",
+                "codexErrorInfo":"modelNotFound",
+                "additionalDetails":"Select a model supported by this provider."
+            }}}
+        })],
+    );
+    assert_eq!(events.len(), 1);
+    let AgentEventPayload::Error { error } = &events[0].payload else {
+        panic!("a failed turn must retain its native diagnostic");
+    };
+    assert_eq!(
+        error.message,
+        "The model is unavailable\n\nSelect a model supported by this provider."
+    );
+    assert_eq!(error.provider.as_deref(), Some("codex"));
+}
+
+#[test]
+fn codex_retry_error_is_a_notice_and_allows_a_successful_turn() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![
+            json!({"method":"error","params":{"error":{"message":"Connection interrupted","additionalDetails":"Reconnecting"},"willRetry":true,"threadId":"thread-1","turnId":"turn-1"}}),
+            json!({"method":"item/completed","params":{"item":{"type":"agentMessage","id":"reply","text":"Recovered"}}}),
+            json!({"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"completed","error":null}}}),
+        ],
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event.payload,
+        AgentEventPayload::Error { .. }
+            | AgentEventPayload::LifecycleChanged {
+                status: crate::runtime::AgentRunStatus::Failed
+            }
+    )));
+    let visible = blocks(&events);
+    let notice = visible
+        .values()
+        .find(|(kind, _)| *kind == ConversationBlockKind::Notice)
+        .unwrap();
+    assert_eq!(
+        notice.1["text"],
+        "Codex is retrying: Connection interrupted\n\nReconnecting"
+    );
+    assert!(visible.values().any(
+        |(kind, fields)| *kind == ConversationBlockKind::Text && fields["text"] == "Recovered"
+    ));
+    assert!(matches!(
+        events.last().unwrap().payload,
+        AgentEventPayload::LifecycleChanged {
+            status: crate::runtime::AgentRunStatus::Succeeded
+        }
+    ));
+}
+
+#[test]
+fn codex_nonretrying_error_notification_is_terminal_and_keeps_details() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![json!({"method":"error","params":{"error":{
+            "message":"Account quota exhausted","additionalDetails":"Update your billing settings."
+        },"willRetry":false,"threadId":"thread-1","turnId":"turn-1"}})],
+    );
+    assert_eq!(events.len(), 1);
+    let AgentEventPayload::Error { error } = &events[0].payload else {
+        panic!("willRetry=false must produce a terminal error");
+    };
+    assert_eq!(
+        error.message,
+        "Account quota exhausted\n\nUpdate your billing settings."
+    );
+    assert_eq!(error.provider.as_deref(), Some("codex"));
+}
+
+#[test]
+fn codex_failed_turn_without_details_does_not_replace_an_existing_diagnostic() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![
+            json!({"method":"error","params":{"error":{"message":"The real failure"},"willRetry":false}}),
+            json!({"method":"turn/completed","params":{"turn":{"status":"failed","error":null}}}),
+        ],
+    );
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            AgentEventPayload::Error { error } => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].message, "The real failure");
+    assert!(matches!(
+        events.last().unwrap().payload,
+        AgentEventPayload::LifecycleChanged {
+            status: crate::runtime::AgentRunStatus::Failed
+        }
+    ));
+}
+
+#[test]
+fn codex_rpc_error_is_nonterminal_and_caller_failure_keeps_its_exact_diagnostic() {
+    let rpc_error =
+        json!({"id":42,"error":{"code":-32602,"message":"Optional setting is unsupported"}});
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![
+            rpc_error.clone(),
+            json!({"method":"item/completed","params":{"item":{"type":"agentMessage","id":"reply","text":"Still running"}}}),
+            json!({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
+        ],
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.payload, AgentEventPayload::Error { .. }))
+    );
+    assert!(
+        blocks(&events)
+            .values()
+            .any(|(kind, fields)| *kind == ConversationBlockKind::Notice
+                && fields["text"] == "Optional setting is unsupported")
+    );
+    assert!(matches!(
+        events.last().unwrap().payload,
+        AgentEventPayload::LifecycleChanged {
+            status: crate::runtime::AgentRunStatus::Succeeded
+        }
+    ));
+
+    let message = "thread/start failed: invalid parameters\n\nCodex launch context:\ncwd=/repo";
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![rpc_error, json!({"LaunchError":{"error":message}})],
+    );
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            AgentEventPayload::Error { error } => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].message, message);
+}
+
+#[test]
+fn codex_transport_housekeeping_does_not_create_conversation_blocks() {
+    let mut frames = vec![
+        json!({"id":1,"result":{"userAgent":"codex/0.144.1"}}),
+        json!({"jsonrpc":"2.0","id":"thread-start","result":{"thread":{"id":"thread-1"}}}),
+        json!({"id":3,"result":null}),
+    ];
+    for method in [
+        "thread/status/changed",
+        "turn/started",
+        "thread/name/updated",
+        "thread/closed",
+        "thread/compacted",
+        "item/reasoning/summaryPartAdded",
+        "rawResponseItem/completed",
+        "thread/tokenUsage/updated",
+        "account/updated",
+        "account/rateLimits/updated",
+        "skills/changed",
+        "app/list/updated",
+    ] {
+        frames.push(json!({"method":method,"params":{"threadId":"thread-1"}}));
+    }
+    for status in ["starting", "ready", "cancelled"] {
+        frames.push(json!({"method":"mcpServer/startupStatus/updated","params":{"name":"tools","status":status}}));
+    }
+    let events = transcript(DirectProvider::Codex, frames);
+    assert!(
+        events.is_empty(),
+        "housekeeping must remain in Native Audit"
+    );
+}
+
+#[test]
+fn codex_mcp_failure_is_visible_without_terminating_the_turn() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![json!({"method":"mcpServer/startupStatus/updated","params":{
+            "name":"expired-oauth","status":"failed","error":"OAuth credentials expired",
+            "failureReason":"reauthenticationRequired"
+        }})],
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event.payload,
+        AgentEventPayload::Error { .. } | AgentEventPayload::LifecycleChanged { .. }
+    )));
+    let visible = blocks(&events);
+    assert_eq!(visible.len(), 1);
+    let (kind, fields) = visible.values().next().unwrap();
+    assert_eq!(*kind, ConversationBlockKind::Notice);
+    assert_eq!(
+        fields["text"],
+        "MCP server expired-oauth: OAuth credentials expired"
+    );
+}
+
+#[test]
+fn codex_error_without_retry_semantics_is_retained_as_an_extension() {
+    for unknown in [
+        json!({"method":"error","params":{"error":{"message":"New error shape"}}}),
+        json!({"method":"error","params":{"error":{"newDiagnostic":"New error shape"},"willRetry":true}}),
+    ] {
+        let events = transcript(DirectProvider::Codex, vec![unknown.clone()]);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0].payload,
+            AgentEventPayload::ProviderExtension { payload, .. } if payload == &unknown
+        ));
+    }
+}
+
+#[test]
+fn codex_housekeeping_filter_keeps_sessions_configuration_tools_text_and_unknowns() {
+    let unknown = json!({"method":"thread/futureMeaningfulEvent","params":{"opaque":true}});
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![
+            json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}),
+            json!({"type":"runtime_configuration","model_id":"future-model","reasoning_id":"future-effort","source":"turn/started"}),
+            json!({"method":"turn/started","params":{"turn":{"id":"turn-1","status":"inProgress"}}}),
+            json!({"method":"item/started","params":{"item":{"type":"commandExecution","id":"tool-1","command":"pwd","cwd":"/repo","status":"inProgress"}}}),
+            unknown.clone(),
+            json!({"method":"item/completed","params":{"item":{"type":"commandExecution","id":"tool-1","command":"pwd","cwd":"/repo","status":"completed","aggregatedOutput":"/repo","exitCode":0}}}),
+            json!({"method":"item/completed","params":{"item":{"type":"agentMessage","id":"reply","text":"Done"}}}),
+        ],
+    );
+    assert!(events.iter().any(|event| matches!(&event.payload,
+        AgentEventPayload::SessionObserved { provider_session }
+            if provider_session.provider_session_id == "thread-1"
+    )));
+    assert!(events.iter().any(|event| matches!(&event.payload,
+        AgentEventPayload::ProviderExtension { provider_event, payload, .. }
+            if provider_event == "runtime_configuration" && payload["model_id"] == "future-model"
+    )));
+    assert!(events.iter().any(|event| matches!(&event.payload,
+        AgentEventPayload::ProviderExtension { payload, .. } if payload == &unknown
+    )));
+    let visible = blocks(&events);
+    assert_eq!(visible.len(), 2);
+    assert!(
+        visible
+            .values()
+            .any(|(kind, fields)| *kind == ConversationBlockKind::Tool
+                && fields["output_text"] == "/repo"
+                && fields["status"] == "succeeded")
+    );
+    assert!(
+        visible
+            .values()
+            .any(|(kind, fields)| *kind == ConversationBlockKind::Text && fields["text"] == "Done")
+    );
+}
+
+#[test]
 fn claude_nested_streams_partial_arguments_and_results_preserve_identity() {
     let stream = |parent: Option<&str>, event: Value| json!({"type":"stream_event", "parent_tool_use_id":parent, "event":event});
     let events = transcript(
