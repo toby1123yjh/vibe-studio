@@ -4,7 +4,22 @@ import type {
   ReasoningOption,
   RunState,
   BaseCodingAgent,
+  ExecutorConfig,
+  ProviderRunOptions,
 } from 'shared/types';
+
+export function isCodexReasoningConfigError(
+  agent: BaseCodingAgent | null,
+  error: string | null
+): boolean {
+  return (
+    agent === 'CODEX' &&
+    error != null &&
+    error.includes('config/read') &&
+    /(?:unknown|invalid) variant/.test(error) &&
+    error.includes('model_reasoning_effort')
+  );
+}
 
 export function getCurrentObservedConfiguration(
   state:
@@ -123,6 +138,62 @@ export function getReasoningDisplayLabel(
   if (inheritedLabel != null) return inheritedLabel;
   // A catalog default is not a confirmation of this session's actual effort.
   return options.length ? followCliLabel : null;
+}
+
+/** Match Codex's active mode; a preset's name does not select plan mode. */
+export function resolveActiveReasoning(
+  agent: BaseCodingAgent | null,
+  executorConfig: ExecutorConfig | null,
+  presetOptions: ExecutorConfig | null | undefined,
+  nativeReasoningId: string | null
+) {
+  const isCodexPlan =
+    agent === 'CODEX' &&
+    (executorConfig?.permission_policy ?? presetOptions?.permission_policy) ===
+      'PLAN';
+  if (isCodexPlan) {
+    return {
+      isCodexPlan,
+      configuredReasoningId:
+        executorConfig?.provider_options?.provider === 'codex'
+          ? executorConfig.provider_options.plan_mode_reasoning_effort
+          : undefined,
+      // Optional/null plan effort inherits the preset at the backend. Ordinary
+      // native defaults do not confirm the CLI's separate plan effort.
+      inheritedReasoningId:
+        presetOptions?.provider_options?.provider === 'codex'
+          ? (presetOptions.provider_options.plan_mode_reasoning_effort ?? null)
+          : null,
+    };
+  }
+  return {
+    isCodexPlan,
+    configuredReasoningId:
+      executorConfig?.reasoning_id !== undefined
+        ? executorConfig.reasoning_id
+        : presetOptions?.reasoning_id,
+    inheritedReasoningId: nativeReasoningId,
+  };
+}
+
+export function buildReasoningSelectionOverride({
+  isCodexPlan,
+  reasoningId,
+  providerOptions,
+}: {
+  isCodexPlan: boolean;
+  reasoningId: string | null;
+  providerOptions: ProviderRunOptions | null | undefined;
+}): Partial<ExecutorConfig> {
+  if (!isCodexPlan) return { reasoning_id: reasoningId };
+  return {
+    provider_options: {
+      ...(providerOptions?.provider === 'codex'
+        ? providerOptions
+        : { provider: 'codex' as const }),
+      plan_mode_reasoning_effort: reasoningId,
+    },
+  };
 }
 
 /** Native defaults are display metadata, never per-attempt overrides. */

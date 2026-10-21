@@ -54,7 +54,7 @@ import { ChatAggregatedToolEntries } from '@vibe/ui/components/ChatAggregatedToo
 import { ChatAggregatedDiffEntries } from '@vibe/ui/components/ChatAggregatedDiffEntries';
 import { ChatAggregatedFileChangeEntries } from '@vibe/ui/components/ChatAggregatedFileChangeEntries';
 import { ChatCollapsedThinking } from '@vibe/ui/components/ChatCollapsedThinking';
-import { ChatMarkdown } from '@vibe/ui/components/ChatMarkdown';
+import { AppChatMarkdown } from './AppChatMarkdown';
 import {
   DiffViewBody,
   useDiffData,
@@ -620,42 +620,6 @@ function FileEntryDiffBody({
       hideLineNumbers={diffData.hideLineNumbers}
       theme={actualTheme}
       diffMode={diffMode}
-    />
-  );
-}
-
-function AppChatMarkdown({
-  content,
-  workspaceId,
-  sessionId,
-  className,
-  maxWidth,
-}: {
-  content: string;
-  workspaceId: string | undefined;
-  sessionId: string | undefined;
-  className: string | undefined;
-  maxWidth: string | undefined;
-}) {
-  const { viewFileInChanges, findMatchingDiffPath } = useChangesViewActions();
-
-  return (
-    <ChatMarkdown
-      content={content}
-      workspaceId={workspaceId}
-      className={className}
-      maxWidth={maxWidth}
-      renderContent={({ content, className, workspaceId }) => (
-        <WYSIWYGEditor
-          value={content}
-          disabled
-          className={className}
-          workspaceId={workspaceId}
-          sessionId={sessionId}
-          findMatchingDiffPath={findMatchingDiffPath}
-          onCodeClick={viewFileInChanges}
-        />
-      )}
     />
   );
 }

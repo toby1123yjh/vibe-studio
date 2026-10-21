@@ -26,6 +26,7 @@ pub(super) struct NativePermissionDecision {
 struct PendingPermission {
     allow: Option<agent_client_protocol::PermissionOptionId>,
     reject: Option<agent_client_protocol::PermissionOptionId>,
+    options: HashMap<String, (agent_client_protocol::PermissionOptionId, bool)>,
     decision: oneshot::Sender<NativePermissionDecision>,
 }
 
@@ -94,6 +95,22 @@ impl AcpControl {
                 PendingPermission {
                     allow,
                     reject,
+                    options: options
+                        .iter()
+                        .map(|option| {
+                            (
+                                option.option_id.0.to_string(),
+                                (
+                                    option.option_id.clone(),
+                                    matches!(
+                                        option.kind,
+                                        PermissionOptionKind::AllowOnce
+                                            | PermissionOptionKind::AllowAlways
+                                    ),
+                                ),
+                            )
+                        })
+                        .collect(),
                     decision: tx,
                 },
             );
@@ -107,6 +124,58 @@ impl AcpControl {
         if let Ok(mut acknowledgements) = self.permission_acks.lock() {
             acknowledgements.remove(id);
         }
+    }
+
+    async fn deliver_permission(
+        &self,
+        request_id: String,
+        selected: Option<agent_client_protocol::PermissionOptionId>,
+        approved: bool,
+        reason: Option<String>,
+    ) -> Result<Vec<u8>, ExecutorError> {
+        use agent_client_protocol::{RequestPermissionOutcome, SelectedPermissionOutcome};
+        let (tx, rx) = oneshot::channel();
+        {
+            let permission = self
+                .pending_permissions
+                .lock()
+                .map_err(|_| unavailable())?
+                .remove(&request_id)
+                .ok_or_else(|| {
+                    ExecutorError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "ACP approval is no longer pending",
+                    ))
+                })?;
+            let outcome = selected
+                .map(|id| RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)))
+                .unwrap_or(RequestPermissionOutcome::Cancelled);
+            self.permission_acks
+                .lock()
+                .map_err(|_| unavailable())?
+                .insert(request_id.clone(), tx);
+            if permission
+                .decision
+                .send(NativePermissionDecision {
+                    outcome,
+                    approved,
+                    reason,
+                })
+                .is_err()
+            {
+                self.permission_acks
+                    .lock()
+                    .map_err(|_| unavailable())?
+                    .remove(&request_id);
+                return Err(ExecutorError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "ACP permission request closed",
+                )));
+            }
+        }
+        let result = await_delivery(rx).await;
+        self.abandon_permission(&request_id);
+        result
     }
 
     /// Called only after the writer has flushed this exact frame to the child.
@@ -165,16 +234,44 @@ async fn await_delivery(rx: oneshot::Receiver<Vec<u8>>) -> Result<Vec<u8>, Execu
 #[async_trait]
 impl ExecutorControl for AcpControl {
     async fn send(&self, control: DirectControl) -> Result<Vec<u8>, ExecutorError> {
+        if let DirectControl::ReplyInteraction { reply } = &control {
+            let (selected, approved) = {
+                let pending = self.pending_permissions.lock().map_err(|_| unavailable())?;
+                let permission = pending.get(&reply.request_id).ok_or_else(|| {
+                    ExecutorError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "ACP permission is no longer pending",
+                    ))
+                })?;
+                reply
+                    .option_id
+                    .as_deref()
+                    .and_then(|id| permission.options.get(id))
+                    .cloned()
+                    .ok_or_else(|| {
+                        ExecutorError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "ACP permission option was not advertised",
+                        ))
+                    })?
+            };
+            return self
+                .deliver_permission(
+                    reply.request_id.clone(),
+                    Some(selected),
+                    approved,
+                    reply.text.clone(),
+                )
+                .await;
+        }
         if let DirectControl::Approve {
             request_id,
             approved,
             reason,
         } = control
         {
-            use agent_client_protocol::{RequestPermissionOutcome, SelectedPermissionOutcome};
-            let (tx, rx) = oneshot::channel();
-            {
-                let mut pending = self.pending_permissions.lock().map_err(|_| unavailable())?;
+            let selected = {
+                let pending = self.pending_permissions.lock().map_err(|_| unavailable())?;
                 let permission = pending.get(&request_id).ok_or_else(|| {
                     ExecutorError::Io(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
@@ -187,43 +284,15 @@ impl ExecutorControl for AcpControl {
                         "The provider did not advertise an allow option",
                     )));
                 }
-                let permission = pending.remove(&request_id).ok_or_else(unavailable)?;
-                let selected = if approved {
-                    permission.allow
+                if approved {
+                    permission.allow.clone()
                 } else {
-                    permission.reject
-                };
-                let outcome = selected
-                    .map(|id| {
-                        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id))
-                    })
-                    .unwrap_or(RequestPermissionOutcome::Cancelled);
-                self.permission_acks
-                    .lock()
-                    .map_err(|_| unavailable())?
-                    .insert(request_id.clone(), tx);
-                if permission
-                    .decision
-                    .send(NativePermissionDecision {
-                        outcome,
-                        approved,
-                        reason,
-                    })
-                    .is_err()
-                {
-                    self.permission_acks
-                        .lock()
-                        .map_err(|_| unavailable())?
-                        .remove(&request_id);
-                    return Err(ExecutorError::Io(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "ACP permission request closed",
-                    )));
+                    permission.reject.clone()
                 }
-            }
-            let result = await_delivery(rx).await;
-            self.abandon_permission(&request_id);
-            return result;
+            };
+            return self
+                .deliver_permission(request_id, selected, approved, reason)
+                .await;
         }
         if !matches!(control, DirectControl::Cancel) {
             return Err(ExecutorError::Io(std::io::Error::new(
@@ -265,5 +334,55 @@ impl ExecutorControl for AcpControl {
         })
         .await;
         Ok(delivered)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::runtime::ConversationInteractionReply;
+
+    #[tokio::test]
+    async fn exact_advertised_option_waits_for_native_writer_flush_and_consumes_once() {
+        let control = AcpControl::new(CancellationToken::new());
+        let options: Vec<agent_client_protocol::PermissionOption> = serde_json::from_value(json!([
+            {"optionId":"allow-only-this-time", "name":"Allow once", "kind":"allow_once"},
+            {"optionId":"always-in-this-scope", "name":"Allow always", "kind":"allow_always"},
+            {"optionId":"no", "name":"Reject", "kind":"reject_once"}
+        ]))
+        .unwrap();
+        let (id, decision) = control.register_permission(&options).unwrap();
+        let reply = |option: &str| DirectControl::ReplyInteraction {
+            reply: ConversationInteractionReply {
+                request_id: id.clone(),
+                option_id: Some(option.into()),
+                answers: vec![],
+                text: None,
+            },
+        };
+        assert!(control.send(reply("invented-id")).await.is_err());
+        let sender = control.clone();
+        let command = reply("always-in-this-scope");
+        let delivery = tokio::spawn(async move { sender.send(command).await });
+        let selected = decision.await.unwrap();
+        assert!(selected.approved);
+        assert_eq!(
+            serde_json::to_value(selected.outcome).unwrap()["optionId"],
+            "always-in-this-scope"
+        );
+        assert!(
+            !delivery.is_finished(),
+            "callback resolution is not native delivery"
+        );
+        let bytes = serde_json::to_vec(&json!({"id":"real-native-id", "result":{
+            "outcome":{"outcome":"selected", "optionId":"always-in-this-scope"},
+            "_meta":{"_vibe_kanban_approval_id":id},
+        }}))
+        .unwrap();
+        control.acknowledge_written(&bytes);
+        assert_eq!(delivery.await.unwrap().unwrap(), bytes);
+        assert!(control.send(reply("allow-only-this-time")).await.is_err());
     }
 }

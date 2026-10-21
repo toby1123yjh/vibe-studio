@@ -770,6 +770,10 @@
     }
   },
   "modelSelector": {
+    "nativeConfigError": "Configuration native à vérifier",
+    "discoveryWarning": "Avertissement de détection des capacités",
+    "codexReasoningConfigHint": "Le Codex de cet hôte ne reconnaît pas l'effort de raisonnement configuré. Mettez Codex à jour sur cet hôte ou choisissez un effort disponible pour cette exécution. Les modèles et efforts chargés restent sélectionnables ; la configuration native reste inchangée.",
+    "discoveryDetails": "Détails de l'erreur",
     "configuredCatalog": "Modèles de la configuration locale, pas une liste complète des capacités.",
     "enterModelId": "Saisir un ID de modèle…",
     "modelId": "ID du modèle",

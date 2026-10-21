@@ -23,7 +23,7 @@ import {
   type ConversationListHandle,
 } from '@/features/workspace-chat/ui/ConversationListContainer';
 import { SessionChatBoxContainer } from '@/features/workspace-chat/ui/SessionChatBoxContainer';
-import { useWorkspacePendingApproval } from '@/features/workspace-chat/model/hooks/useWorkspacePendingApproval';
+import { ConversationInteractionPanel } from './ConversationInteractionPanel';
 import { EntriesProvider } from '@/features/workspace-chat/model/contexts/EntriesContext';
 import { MessageEditProvider } from '@/features/workspace-chat/model/contexts/MessageEditContext';
 import { RetryUiProvider } from '@/features/workspace-chat/model/contexts/RetryUiContext';
@@ -214,43 +214,6 @@ function EmbeddedConversationComposer(props: ConversationComposerProps) {
       diffError={summary.error}
       diffPaths={summary.paths}
     />
-  );
-}
-
-/** Locates the same canonical approval/input event rendered in the timeline. */
-function AgentWorkbenchAttentionBannerContainer({
-  onView,
-}: {
-  onView: () => void;
-}) {
-  const { t } = useTranslation('common');
-  const pending = useWorkspacePendingApproval();
-  if (!pending) return null;
-  return (
-    <div
-      role="status"
-      className="mx-auto flex w-chat max-w-full items-center gap-3 border-y border-warning/30 bg-warning/10 px-4 py-2 text-sm"
-    >
-      <span className="min-w-0 flex-1 truncate">
-        {pending.kind === 'input'
-          ? t('agentWorkbench.attention.waitingForInput', {
-              defaultValue: 'Agent is waiting for input',
-            })
-          : t('agentWorkbench.attention.needsApproval', {
-              toolName: pending.toolName,
-              defaultValue: '{{toolName}} needs approval',
-            })}
-      </span>
-      <button
-        type="button"
-        className="min-h-9 shrink-0 rounded px-3 font-medium text-foreground hover:bg-warning/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-        onClick={onView}
-      >
-        {t('agentWorkbench.attention.viewEvent', {
-          defaultValue: 'View event',
-        })}
-      </button>
-    </div>
   );
 }
 
@@ -494,9 +457,8 @@ export const WorkspaceConversationContent = forwardRef<
       ? renderContextBar?.(containerRef)
       : null;
 
-  const approvalBannerContent = workspaceWithSession ? (
-    <AgentWorkbenchAttentionBannerContainer onView={handleScrollToBottom} />
-  ) : null;
+  const approvalBannerContent =
+    workspaceWithSession && !readOnly ? <ConversationInteractionPanel /> : null;
 
   useImperativeHandle(
     ref,

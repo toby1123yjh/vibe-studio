@@ -770,6 +770,10 @@
     }
   },
   "modelSelector": {
+    "nativeConfigError": "기본 설정 읽기 오류",
+    "discoveryWarning": "기능 검색 경고",
+    "codexReasoningConfigHint": "이 호스트의 Codex가 설정된 추론 수준을 인식하지 못합니다. 이 호스트의 Codex를 업데이트하거나 이번 실행에 사용 가능한 수준을 선택하세요. 불러온 모델과 수준은 계속 선택할 수 있으며 기본 설정은 변경되지 않습니다.",
+    "discoveryDetails": "오류 세부 정보",
     "configuredCatalog": "로컬 설정의 모델이며 전체 기능 목록이 아닙니다.",
     "enterModelId": "모델 ID 입력…",
     "modelId": "모델 ID",

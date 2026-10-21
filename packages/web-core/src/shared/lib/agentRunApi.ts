@@ -1,6 +1,8 @@
 import type {
   AgentEventCursor,
   AgentRunSummary,
+  ConversationInteractionReply,
+  ReplyAgentRunInteractionRequest,
   CancelAgentRunRequest,
   ResolveAgentRunApprovalRequest,
   RetryAgentRunRequest,
@@ -8,8 +10,8 @@ import type {
   RunState,
   SubmitAgentRunInputRequest,
 } from 'shared/types';
-import { handleApiResponse } from './api';
-import { makeLocalApiRequest } from './localApiTransport';
+import { handleApiResponse } from '@/shared/lib/api';
+import { makeLocalApiRequest } from '@/shared/lib/localApiTransport';
 
 export interface AgentRunHistoryPage {
   agent_run_id: string;
@@ -58,6 +60,24 @@ function controlIdentity(operation: string, targetId: string) {
   };
 }
 
+/** Capture once per decision. Retrying a confirmed failure uses the exact
+ * same identity; uncertain delivery is refreshed, never automatically resent. */
+export function createAgentInteractionReply(
+  runAttemptId: string,
+  reply: ConversationInteractionReply
+): ReplyAgentRunInteractionRequest {
+  const replyId = crypto.randomUUID();
+  return {
+    command_id: replyId,
+    reply_id: replyId,
+    run_attempt_id: runAttemptId,
+    idempotency_key: `web:interaction:${runAttemptId}:${reply.request_id}:${replyId}`,
+    correlation_id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    reply,
+  };
+}
+
 async function postControl<TBody>(
   agentRunId: string,
   operation: string,
@@ -73,6 +93,24 @@ async function postControl<TBody>(
 }
 
 export const agentRunsApi = {
+  async replyInteraction(
+    agentRunId: string,
+    request: ReplyAgentRunInteractionRequest,
+    hostId: string | null
+  ): Promise<RunState> {
+    return handleApiResponse<RunState>(
+      await makeLocalApiRequest(
+        `/api/agent-runs/${encodeURIComponent(agentRunId)}/interaction`,
+        {
+          hostScope: 'explicit',
+          hostId,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        }
+      )
+    );
+  },
   async listForSession(
     sessionId: string,
     hostId?: string | null

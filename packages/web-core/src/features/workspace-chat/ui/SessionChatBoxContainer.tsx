@@ -47,11 +47,8 @@ import { useSessionAttachments } from '../model/hooks/useSessionAttachments';
 import { useMessageEditRetry } from '../model/hooks/useMessageEditRetry';
 import { useAgentProviderPolicy } from '@/shared/hooks/useAgentProviderPolicy';
 import { useBranchStatus } from '@/shared/hooks/useBranchStatus';
-import { useApprovalMutation } from '../model/hooks/useApprovalMutation';
-import { useWorkspacePendingApproval } from '../model/hooks/useWorkspacePendingApproval';
 import { useIsMobile } from '@/shared/hooks/useIsMobile';
 import { ResolveConflictsDialog } from '@/shared/dialogs/tasks/ResolveConflictsDialog';
-import { workspaceSummaryKeys } from '@/shared/hooks/workspaceSummaryKeys';
 import { buildAgentPrompt } from '@/shared/lib/promptMessage';
 import { formatDateShortWithTime } from '@/shared/lib/date';
 import {
@@ -334,17 +331,9 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   // Mobile layout — enables the enlarged approval footer + one-tap deny
   const isMobile = useIsMobile();
 
-  // Pending approval for this workspace (shared with the mobile approval banner)
-  const pendingApproval = useWorkspacePendingApproval();
-
-  // Follow-up drafts are owned by their canonical session. Interaction
-  // responses are transient and must never replace the session draft.
+  // Follow-up drafts remain session-owned. Native request responses have a
+  // separate structured region above this editor and never replace its draft.
   const scratchId = isNewSessionMode ? workspaceId : sessionId;
-  const [interactionMessage, setInteractionMessage] = useState('');
-
-  useEffect(() => {
-    setInteractionMessage('');
-  }, [pendingApproval?.controlId]);
 
   // Get repos for file search
   const { repos } = useWorkspaceRepo(workspaceId);
@@ -380,17 +369,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   );
   const hasReviewComments = (reviewContext?.comments.length ?? 0) > 0;
 
-  // Approval mutation for approve/deny/answer actions
-  const {
-    approveAsync,
-    denyAsync,
-    answerAsync,
-    isApproving,
-    isDenying,
-    isAnswering,
-    denyError,
-    answerError,
-  } = useApprovalMutation();
   const { mutate: cancelAgentRun, isPending: isCancelAgentRunPending } =
     useMutation({
       mutationFn: (agentRunId: string) =>
@@ -800,11 +778,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   // Editor change handler
   const handleEditorChange = useCallback(
     (value: string) => {
-      if (pendingApproval) {
-        setInteractionMessage(value);
-        if (sendError) clearError();
-        return;
-      }
       draftIdentityRef.current.revision += 1;
       if (isQueued) cancelQueue();
       if (executorConfig) {
@@ -822,7 +795,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       sendError,
       clearError,
       setLocalMessage,
-      pendingApproval,
     ]
   );
 
@@ -881,10 +853,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     isSending ||
     isStopping ||
     !!feedbackContext?.isSubmitting ||
-    editRetryMutation.isPending ||
-    isApproving ||
-    isDenying ||
-    isAnswering;
+    editRetryMutation.isPending;
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: attachmentGuard.uploadFiles,
@@ -989,114 +958,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     [presentation, workspaceId, workspace, actionsContext, t]
   );
 
-  // Handle approve action
-  const handleApprove = useCallback(async () => {
-    if (pendingApproval?.kind !== 'approval') return;
-
-    // Exit feedback mode if active
-    feedbackContext?.exitFeedbackMode();
-
-    try {
-      await approveAsync({
-        approvalId: pendingApproval.approvalId,
-        agentRunId: pendingApproval.agentRunId,
-      });
-
-      // Invalidate workspace summary cache to update sidebar
-      queryClient.invalidateQueries({ queryKey: workspaceSummaryKeys.all });
-      onScrollToBottom();
-    } catch {
-      // Error is handled by mutation
-    }
-  }, [
-    pendingApproval,
-    feedbackContext,
-    approveAsync,
-    queryClient,
-    onScrollToBottom,
-  ]);
-
-  // Handle request changes (deny with feedback)
-  const handleRequestChanges = useCallback(async () => {
-    if (pendingApproval?.kind !== 'approval' || !interactionMessage.trim())
-      return;
-
-    try {
-      await denyAsync({
-        approvalId: pendingApproval.approvalId,
-        agentRunId: pendingApproval.agentRunId,
-        reason: interactionMessage.trim(),
-      });
-      setInteractionMessage('');
-
-      // Invalidate workspace summary cache to update sidebar
-      queryClient.invalidateQueries({ queryKey: workspaceSummaryKeys.all });
-      onScrollToBottom();
-    } catch {
-      // Error is handled by mutation
-    }
-  }, [
-    pendingApproval,
-    interactionMessage,
-    denyAsync,
-    queryClient,
-    onScrollToBottom,
-  ]);
-
-  // Handle one-tap deny (reason optional): sends the typed text as the reason
-  // when present, otherwise a default reason. Mirrors handleRequestChanges but
-  // does not require the composer to be non-empty — this powers the mobile
-  // approval footer's dedicated Deny button.
-  const handleDeny = useCallback(async () => {
-    if (pendingApproval?.kind !== 'approval') return;
-
-    try {
-      await denyAsync({
-        approvalId: pendingApproval.approvalId,
-        agentRunId: pendingApproval.agentRunId,
-        reason:
-          interactionMessage.trim() || 'User denied this tool use request.',
-      });
-      setInteractionMessage('');
-
-      // Invalidate workspace summary cache to update sidebar
-      queryClient.invalidateQueries({ queryKey: workspaceSummaryKeys.all });
-      onScrollToBottom();
-    } catch {
-      // Error is handled by mutation
-    }
-  }, [
-    pendingApproval,
-    interactionMessage,
-    denyAsync,
-    queryClient,
-    onScrollToBottom,
-  ]);
-
-  // Handle AskUserQuestion answer submission
-  const handleAnswerQuestion = useCallback(
-    async (answers: Array<{ question: string; answer: string[] }>) => {
-      if (pendingApproval?.kind !== 'input') return;
-
-      try {
-        await answerAsync({
-          agentRunId: pendingApproval.agentRunId,
-          inputId: pendingApproval.inputId,
-          answers,
-        });
-        queryClient.invalidateQueries({
-          queryKey: workspaceSummaryKeys.all,
-        });
-        onScrollToBottom();
-      } catch {
-        // Error is handled by mutation
-      }
-    },
-    [pendingApproval, answerAsync, queryClient, onScrollToBottom]
-  );
-
-  const isApprovalTimedOut = false;
-
   const handleStop = useCallback(() => {
     if (activeAgentRun) {
       if (
@@ -1122,9 +983,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     stopStandaloneScripts,
   ]);
 
-  const composerMessage = pendingApproval ? interactionMessage : localMessage;
   const hasMessageContent =
-    composerMessage.trim().length > 0 || reviewMarkdown.length > 0;
+    localMessage.trim().length > 0 || reviewMarkdown.length > 0;
   const runtimeActionPolicy = useMemo(
     () =>
       deriveRuntimeActionPolicy({
@@ -1145,11 +1005,11 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         isStopping,
         isQueueLoading,
         isQueued,
-        hasPendingApproval: pendingApproval?.kind === 'approval',
-        hasPendingQuestion: pendingApproval?.kind === 'input',
-        isApprovalTimedOut,
-        isApprovalSubmitting: isApproving || isDenying,
-        isQuestionSubmitting: isAnswering,
+        hasPendingApproval: false,
+        hasPendingQuestion: false,
+        isApprovalTimedOut: false,
+        isApprovalSubmitting: false,
+        isQuestionSubmitting: false,
         providerPolicy,
       }),
     [
@@ -1170,11 +1030,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       isStopping,
       isQueueLoading,
       isQueued,
-      pendingApproval,
-      isApprovalTimedOut,
-      isApproving,
-      isDenying,
-      isAnswering,
       providerPolicy,
     ]
   );
@@ -1190,19 +1045,10 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   });
 
   // During loading, render with empty editor to preserve container UI
-  // In approval mode, don't show queued message - it's for follow-up, not approval response
   const editorValue = useMemo(() => {
     if (isScratchLoading || !hasInitialValue) return '';
-    if (pendingApproval) return interactionMessage;
     return queuedMessage ?? localMessage;
-  }, [
-    isScratchLoading,
-    hasInitialValue,
-    pendingApproval,
-    interactionMessage,
-    queuedMessage,
-    localMessage,
-  ]);
+  }, [isScratchLoading, hasInitialValue, queuedMessage, localMessage]);
 
   const renderEditor = useCallback(
     ({
@@ -1463,31 +1309,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
               isSubmitting: feedbackContext.isSubmitting,
               error: feedbackContext.error,
               isTimedOut: feedbackContext.isTimedOut,
-            }
-          : undefined
-      }
-      approvalMode={
-        pendingApproval?.kind === 'approval'
-          ? {
-              isActive: true,
-              onApprove: handleApprove,
-              onRequestChanges: handleRequestChanges,
-              onDeny: handleDeny,
-              isSubmitting: isApproving || isDenying,
-              isTimedOut: isApprovalTimedOut,
-              error: denyError?.message ?? null,
-            }
-          : undefined
-      }
-      askQuestionMode={
-        pendingApproval?.kind === 'input'
-          ? {
-              isActive: true,
-              questions: pendingApproval.questions,
-              onSubmitAnswers: handleAnswerQuestion,
-              isSubmitting: isAnswering,
-              isTimedOut: isApprovalTimedOut,
-              error: answerError?.message ?? null,
             }
           : undefined
       }

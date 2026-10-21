@@ -95,7 +95,9 @@ pub(crate) fn create_workflow_plugin(
 pub(crate) fn encode_control(control: DirectControl) -> Result<Vec<u8>, serde_json::Error> {
     let request = match control {
         DirectControl::Cancel => serde_json::json!({"type":"abort"}),
-        DirectControl::Approve { .. } | DirectControl::Input { .. } => {
+        DirectControl::Approve { .. }
+        | DirectControl::Input { .. }
+        | DirectControl::ReplyInteraction { .. } => {
             return Err(serde_json::Error::io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Oh My Pi RPC does not expose host approval/input responses",

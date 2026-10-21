@@ -37,6 +37,9 @@ export const useConversationHistory = ({
     isConnected,
   } = useExecutionProcessesContext();
   const canonicalSession = useCanonicalAgentSession();
+  const canonicalConversationRef = useRef(canonicalSession.conversation);
+  canonicalConversationRef.current = canonicalSession.conversation;
+  const emittedCanonicalRef = useRef(false);
   const executionProcesses = useRef<ExecutionProcess[]>(executionProcessesRaw);
   const displayedExecutionProcesses = useRef<ExecutionProcessStateStore>({});
   const loadedInitialEntries = useRef(false);
@@ -69,9 +72,9 @@ export const useConversationHistory = ({
     ): ConversationTimelineSource => ({
       executionProcessState,
       liveExecutionProcesses: executionProcesses.current,
-      canonical: canonicalSession.conversation,
+      canonical: canonicalConversationRef.current,
     }),
-    [canonicalSession.conversation]
+    []
   );
 
   useEffect(() => {
@@ -362,8 +365,30 @@ export const useConversationHistory = ({
     emittedEmptyInitialRef.current = false;
     streamingProcessIdsRef.current.clear();
     previousActiveMapRef.current.clear();
+    emittedCanonicalRef.current = false;
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
   }, [scopeKey, emitEntries]);
+
+  useEffect(() => {
+    const first = !emittedCanonicalRef.current;
+    if (!canonicalSession.conversation.isLoading)
+      emittedCanonicalRef.current = true;
+    // Canonical changes update the existing source. They must never reset the
+    // script log subscriptions or the composer's session draft.
+    emitEntries(
+      displayedExecutionProcesses.current,
+      first
+        ? 'initial'
+        : canonicalSession.isLoadingHistory
+          ? 'historic'
+          : 'running',
+      canonicalSession.conversation.isLoading
+    );
+  }, [
+    canonicalSession.conversation,
+    canonicalSession.isLoadingHistory,
+    emitEntries,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -513,5 +538,9 @@ export const useConversationHistory = ({
     }
   }, [scopeKey, idListKey, executionProcessesRaw]);
 
-  return { isFirstTurn, isLoadingHistory: isLoadingHistoryState };
+  return {
+    isFirstTurn,
+    isLoadingHistory:
+      isLoadingHistoryState || canonicalSession.isLoadingHistory,
+  };
 };

@@ -97,6 +97,8 @@ pub fn reduce_agent_event(
         state.terminal_output = None;
         state.last_error = None;
         state.observed_configuration = None;
+        state.pending_interactions.clear();
+        state.closed_interaction_ids.clear();
     }
 
     let apply = match &event.payload {
@@ -105,6 +107,9 @@ pub fn reduce_agent_event(
                 ReducerApply::IgnoredTerminalRegression
             } else {
                 state.status = *status;
+                if status.is_terminal() {
+                    state.pending_interactions.clear();
+                }
                 ReducerApply::Applied
             }
         }
@@ -159,6 +164,73 @@ pub fn reduce_agent_event(
                     event_id: event.event_id,
                     run_attempt_id: event.run_attempt_id,
                 });
+            }
+            ReducerApply::Applied
+        }
+        AgentEventPayload::Conversation { update } => {
+            use super::{
+                ConversationBlockOperation, ConversationInteractionKind,
+                ConversationInteractionStatus,
+            };
+            let interaction = match &update.operation {
+                ConversationBlockOperation::Snapshot { fields }
+                | ConversationBlockOperation::Patch { fields, .. } => fields.interaction.as_ref(),
+                _ => None,
+            };
+            if let Some(interaction) = interaction
+                && !state.status.is_terminal()
+            {
+                let closed = state
+                    .closed_interaction_ids
+                    .contains(&interaction.request_id);
+                match interaction.status {
+                    ConversationInteractionStatus::Pending
+                    | ConversationInteractionStatus::Delivering
+                    | ConversationInteractionStatus::DeliveryUnknown
+                    | ConversationInteractionStatus::Failed => {
+                        if !closed {
+                            if let Some(pending) = state
+                                .pending_interactions
+                                .iter_mut()
+                                .find(|pending| pending.request_id == interaction.request_id)
+                            {
+                                *pending = interaction.clone();
+                            } else {
+                                state.pending_interactions.push(interaction.clone());
+                            }
+                        }
+                    }
+                    ConversationInteractionStatus::Delivered
+                    | ConversationInteractionStatus::Resolved
+                    | ConversationInteractionStatus::Cancelled => {
+                        state
+                            .pending_interactions
+                            .retain(|pending| pending.request_id != interaction.request_id);
+                        if !closed {
+                            state
+                                .closed_interaction_ids
+                                .push(interaction.request_id.clone());
+                        }
+                    }
+                }
+                if state.status != super::AgentRunStatus::Cancelling {
+                    if let Some(pending) = state.pending_interactions.first() {
+                        state.status = match pending.kind {
+                            ConversationInteractionKind::Permission => {
+                                super::AgentRunStatus::AwaitingApproval
+                            }
+                            ConversationInteractionKind::Question => {
+                                super::AgentRunStatus::AwaitingInput
+                            }
+                        };
+                    } else if matches!(
+                        state.status,
+                        super::AgentRunStatus::AwaitingApproval
+                            | super::AgentRunStatus::AwaitingInput
+                    ) {
+                        state.status = super::AgentRunStatus::Running;
+                    }
+                }
             }
             ReducerApply::Applied
         }
@@ -286,6 +358,176 @@ mod tests {
                 payload,
             },
         )
+    }
+
+    #[test]
+    fn interactions_preserve_pending_order_and_never_reopen_closed_requests() {
+        use super::super::{
+            ConversationBlockFields, ConversationBlockKind, ConversationBlockOperation,
+            ConversationBlockUpdate, ConversationInteraction, ConversationInteractionKind,
+            ConversationInteractionStatus,
+        };
+        let request = request();
+        let attempt = Uuid::new_v4();
+        let mut state = RunState::pending(&request);
+        let interaction =
+            |id: &str, status: ConversationInteractionStatus| AgentEventPayload::Conversation {
+                update: Box::new(ConversationBlockUpdate {
+                    block_id: id.into(),
+                    kind: ConversationBlockKind::Interaction,
+                    role: None,
+                    native_id: None,
+                    parent_block_id: None,
+                    operation: ConversationBlockOperation::Patch {
+                        fields: ConversationBlockFields {
+                            interaction: Some(ConversationInteraction {
+                                request_id: id.into(),
+                                kind: ConversationInteractionKind::Permission,
+                                status,
+                                title: None,
+                                prompt: None,
+                                tool_call_id: None,
+                                native_request_id: None,
+                                options: vec![],
+                                questions: vec![],
+                                scope: None,
+                                actionable: true,
+                            }),
+                            ..Default::default()
+                        },
+                        clear_fields: vec![],
+                    },
+                }),
+            };
+        for (index, (id, status)) in [
+            ("a", ConversationInteractionStatus::Pending),
+            ("b", ConversationInteractionStatus::Pending),
+            ("a", ConversationInteractionStatus::Delivering),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            reduce_agent_event(
+                &mut state,
+                &event(
+                    &request,
+                    attempt,
+                    1,
+                    index as u64 + 1,
+                    interaction(id, status),
+                ),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            state
+                .pending_interactions
+                .iter()
+                .map(|item| item.request_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                attempt,
+                1,
+                4,
+                interaction("a", ConversationInteractionStatus::Resolved),
+            ),
+        )
+        .unwrap();
+        assert_eq!(state.pending_interactions.len(), 1);
+        assert_eq!(state.pending_interactions[0].request_id, "b");
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                attempt,
+                1,
+                5,
+                interaction("b", ConversationInteractionStatus::Delivered),
+            ),
+        )
+        .unwrap();
+        assert!(state.pending_interactions.is_empty());
+        assert_eq!(state.status, super::super::AgentRunStatus::Running);
+        for (index, (id, status)) in [
+            ("a", ConversationInteractionStatus::DeliveryUnknown),
+            ("b", ConversationInteractionStatus::Delivering),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            reduce_agent_event(
+                &mut state,
+                &event(
+                    &request,
+                    attempt,
+                    1,
+                    index as u64 + 6,
+                    interaction(id, status),
+                ),
+            )
+            .unwrap();
+            assert!(state.pending_interactions.is_empty());
+            assert_eq!(state.status, super::super::AgentRunStatus::Running);
+        }
+        assert_eq!(state.last_event_sequence, 7);
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                attempt,
+                1,
+                8,
+                AgentEventPayload::LifecycleChanged {
+                    status: super::super::AgentRunStatus::Succeeded,
+                },
+            ),
+        )
+        .unwrap();
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                attempt,
+                1,
+                9,
+                interaction("c", ConversationInteractionStatus::Pending),
+            ),
+        )
+        .unwrap();
+        assert!(state.pending_interactions.is_empty());
+        assert_eq!(state.status, super::super::AgentRunStatus::Succeeded);
+        let next_attempt = Uuid::new_v4();
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                next_attempt,
+                2,
+                1,
+                AgentEventPayload::LifecycleChanged {
+                    status: super::super::AgentRunStatus::Running,
+                },
+            ),
+        )
+        .unwrap();
+        reduce_agent_event(
+            &mut state,
+            &event(
+                &request,
+                next_attempt,
+                2,
+                2,
+                interaction("a", ConversationInteractionStatus::Pending),
+            ),
+        )
+        .unwrap();
+        assert!(state.closed_interaction_ids.is_empty());
+        assert_eq!(state.pending_interactions.len(), 1);
     }
 
     #[test]

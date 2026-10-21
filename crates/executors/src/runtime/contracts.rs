@@ -13,7 +13,7 @@ pub const AGENT_REQUEST_PAYLOAD_VERSION: u16 = 1;
 pub const CAPABILITY_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
 pub const PROVIDER_SESSION_REFERENCE_SCHEMA_VERSION: u16 = 1;
 pub const AGENT_EVENT_SCHEMA_VERSION: u16 = 1;
-pub const AGENT_EVENT_PAYLOAD_VERSION: u16 = 1;
+pub const AGENT_EVENT_PAYLOAD_VERSION: u16 = 2;
 pub const RUN_STATE_SCHEMA_VERSION: u16 = 1;
 pub const RUN_STATE_REDUCER_VERSION: u16 = 1;
 
@@ -385,6 +385,9 @@ pub enum AgentFileChangeType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AgentEventPayload {
+    Conversation {
+        update: Box<super::ConversationBlockUpdate>,
+    },
     LifecycleChanged {
         status: AgentRunStatus,
     },
@@ -462,7 +465,9 @@ impl AgentEventPayload {
         payload_version: u16,
         payload: serde_json::Value,
     ) -> Result<Self, ContractDecodeError> {
-        if payload_version < AGENT_EVENT_PAYLOAD_VERSION {
+        // V1 payload shapes remain readable. Conversation facts are additive;
+        // no historical event is rewritten and absent native details stay absent.
+        if payload_version < 1 {
             return Err(ContractDecodeError::MissingUpcaster {
                 contract: "agent_event.payload",
                 from: payload_version,
@@ -490,6 +495,7 @@ impl AgentEventPayload {
 }
 
 const KNOWN_AGENT_EVENT_TYPES: &[&str] = &[
+    "conversation",
     "lifecycle_changed",
     "session_observed",
     "message",
@@ -545,11 +551,13 @@ impl AgentEventEnvelope {
             AGENT_EVENT_SCHEMA_VERSION,
         )?;
         match self.payload_version.cmp(&AGENT_EVENT_PAYLOAD_VERSION) {
-            std::cmp::Ordering::Less => Err(ContractVersionError::MissingUpcaster {
-                contract: "agent_event.payload",
-                provided: self.payload_version,
-                current: AGENT_EVENT_PAYLOAD_VERSION,
-            }),
+            std::cmp::Ordering::Less if self.payload_version != 1 => {
+                Err(ContractVersionError::MissingUpcaster {
+                    contract: "agent_event.payload",
+                    provided: self.payload_version,
+                    current: AGENT_EVENT_PAYLOAD_VERSION,
+                })
+            }
             std::cmp::Ordering::Greater
                 if !matches!(&self.payload, AgentEventPayload::Unknown { .. }) =>
             {
@@ -636,6 +644,12 @@ pub struct RunState {
     pub last_error: Option<AgentRuntimeError>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_configuration: Option<ObservedRuntimeConfiguration>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_interactions: Vec<super::ConversationInteraction>,
+    /// Attempt-scoped tombstones prevent late delivery observations from
+    /// reopening a request already delivered, resolved, or cancelled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closed_interaction_ids: Vec<String>,
     pub unknown_event_count: u64,
     pub updated_at: DateTime<Utc>,
 }
@@ -658,6 +672,8 @@ impl RunState {
             terminal_output: None,
             last_error: None,
             observed_configuration: None,
+            pending_interactions: Vec::new(),
+            closed_interaction_ids: Vec::new(),
             unknown_event_count: 0,
             updated_at: request.created_at,
         }
@@ -997,6 +1013,47 @@ mod tests {
     }
 
     #[test]
+    fn v1_payloads_remain_readable_after_conversation_v2() {
+        // V1 used the same adjacent type/data tagging as V2. Exercise both
+        // the versioned reader and the full envelope read used by SQLite.
+        let payload = json!({
+            "type": "thinking",
+            "data": {"content": "historical exposed text"}
+        });
+        let decoded = AgentEventPayload::upcast(1, payload.clone()).unwrap();
+        assert_eq!(
+            decoded,
+            AgentEventPayload::Thinking {
+                content: "historical exposed text".into()
+            }
+        );
+        let envelope: AgentEventEnvelope = serde_json::from_value(json!({
+            "schema_version": 1,
+            "payload_version": 1,
+            "event_id": Uuid::nil(),
+            "session_id": Uuid::nil(),
+            "agent_run_id": Uuid::nil(),
+            "turn_id": Uuid::nil(),
+            "run_attempt_id": Uuid::nil(),
+            "run_attempt_number": 1,
+            "sequence": 1,
+            "correlation_id": Uuid::nil(),
+            "timestamp": "2026-10-20T00:00:00Z",
+            "payload": payload
+        }))
+        .unwrap();
+        envelope.validate_for_projection().unwrap();
+        assert_eq!(envelope.payload, decoded);
+        assert!(matches!(
+            AgentEventPayload::upcast(
+                1,
+                json!({"type": "thinking", "content": "invalid flat payload"})
+            ),
+            Err(ContractDecodeError::MalformedCurrentPayload(_))
+        ));
+    }
+
+    #[test]
     fn historical_payload_requires_registered_upcaster() {
         let error = AgentEventPayload::upcast(0, json!({ "type": "message" }))
             .expect_err("clean v1 has no historical canonical upcaster");
@@ -1035,7 +1092,7 @@ mod tests {
         .expect("event should serialize");
 
         assert_eq!(value["schema_version"], 1);
-        assert_eq!(value["payload_version"], 1);
+        assert_eq!(value["payload_version"], AGENT_EVENT_PAYLOAD_VERSION);
         assert_eq!(value["payload"]["type"], "lifecycle_changed");
         assert_eq!(value["payload"]["data"]["status"], "awaiting_approval");
     }

@@ -77,10 +77,6 @@ pub enum ApiError {
     BadRequest(String),
     #[error("Conflict: {0}")]
     Conflict(String),
-    #[error(
-        "The selected directory already contains a project; confirm reopening it or choose another directory"
-    )]
-    ProjectDirectoryExists(Box<api_types::Project>),
     #[error("Forbidden: {0}")]
     Forbidden(String),
     #[error("Too many requests: {0}")]
@@ -510,9 +506,6 @@ impl IntoResponse for ApiError {
             ),
             ApiError::BadRequest(msg) => ErrorInfo::bad_request("BadRequest", msg.clone()),
             ApiError::Conflict(msg) => ErrorInfo::conflict("ConflictError", msg.clone()),
-            ApiError::ProjectDirectoryExists(_) => {
-                ErrorInfo::conflict("ProjectDirectoryExists", self.to_string())
-            }
             ApiError::Forbidden(msg) => {
                 ErrorInfo::with_status(StatusCode::FORBIDDEN, "ForbiddenError", msg.clone())
             }
@@ -577,16 +570,6 @@ impl IntoResponse for ApiError {
             .message
             .unwrap_or_else(|| format!("{}: {}", info.error_type, self));
         let response = ApiResponse::<()>::error(&message);
-        if let ApiError::ProjectDirectoryExists(project) = &self {
-            return (
-                info.status,
-                Json(serde_json::json!({
-                    "success": false, "data": null, "message": message,
-                    "error_data": { "code": "PROJECT_DIRECTORY_EXISTS", "project": project }
-                })),
-            )
-                .into_response();
-        }
         if matches!(
             &self,
             ApiError::Session(SessionError::ActiveAgentRun | SessionError::ActiveAgentProcess)

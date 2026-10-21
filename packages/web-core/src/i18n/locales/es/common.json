@@ -770,6 +770,10 @@
     }
   },
   "modelSelector": {
+    "nativeConfigError": "Revisar la configuración nativa",
+    "discoveryWarning": "Advertencia al detectar capacidades",
+    "codexReasoningConfigHint": "El Codex de este host no reconoce el esfuerzo de razonamiento configurado. Actualiza Codex en este host o elige un esfuerzo disponible para esta ejecución. Los modelos y esfuerzos cargados siguen disponibles; la configuración nativa no cambia.",
+    "discoveryDetails": "Detalles del error",
     "configuredCatalog": "Modelos de la configuración local, no una lista completa de capacidades.",
     "enterModelId": "Introducir un ID de modelo…",
     "modelId": "ID del modelo",

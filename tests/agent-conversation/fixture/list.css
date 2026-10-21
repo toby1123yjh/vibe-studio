@@ -1,0 +1,36 @@
+.list-host {
+  height: 420px;
+  width: 720px;
+  overflow: hidden;
+}
+.list-host .h-full {
+  height: 100%;
+}
+.list-host .overflow-hidden {
+  overflow: hidden;
+}
+.list-host .overflow-y-auto {
+  overflow-y: auto;
+}
+.list-host .relative {
+  position: relative;
+}
+.list-host [data-conversation-block] {
+  min-height: 54px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.list-host p {
+  margin: 0;
+}
+.list-host pre {
+  margin: 0;
+}
+.list-host button {
+  min-height: 30px;
+}
+.list-host .sticky {
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+}

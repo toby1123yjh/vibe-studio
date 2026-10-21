@@ -1,13 +1,43 @@
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const fixtureRoot = `${repoRoot}/tests/agent-center/fixture`;
+const require = createRequire(import.meta.url);
+const tailwind = require(
+  `${repoRoot}/packages/local-web/node_modules/tailwindcss`
+);
+const loadConfig = require(
+  `${repoRoot}/packages/local-web/node_modules/tailwindcss/loadConfig`
+);
+const tailwindConfig = loadConfig(
+  `${repoRoot}/packages/local-web/tailwind.new.config.js`
+);
 
 export default defineConfig({
   root: fixtureRoot,
   plugins: [react()],
+  css: {
+    postcss: {
+      plugins: [
+        tailwind({
+          ...tailwindConfig,
+          content: [
+            ...tailwindConfig.content.map((entry: string) =>
+              resolve(repoRoot, 'packages/local-web', entry).replaceAll(
+                '\\',
+                '/'
+              )
+            ),
+            `${fixtureRoot}/src/**/*.{ts,tsx}`,
+          ],
+        }),
+      ],
+    },
+  },
   resolve: {
     alias: [
       {

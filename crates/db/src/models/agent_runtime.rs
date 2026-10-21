@@ -650,18 +650,34 @@ impl AgentRunCommandRecord {
     pub async fn reconcile_inflight(
         pool: &SqlitePool,
     ) -> Result<u64, AgentRuntimePersistenceError> {
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        // An interrupted native answer may already have reached the CLI.
+        // Keep its uncertainty durable instead of resetting it to pending.
+        sqlx::query(
+            "UPDATE agent_conversation_interaction_replies
+             SET delivery_status='delivery_unknown',last_error='native reply delivery interrupted',updated_at=?
+             WHERE delivery_status='delivering'",
+        ).bind(Utc::now()).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE agent_run_commands SET delivery_status='failed',
+             last_error='native interaction delivery is unconfirmed after restart',updated_at=?
+             WHERE delivery_status='delivering' AND json_extract(command_envelope,'$.command.type')='reply_interaction'",
+        ).bind(Utc::now()).execute(&mut *tx).await?;
         let result = sqlx::query(
             "UPDATE agent_run_commands SET delivery_status = 'pending', updated_at = ? WHERE delivery_status = 'delivering'",
         )
         .bind(Utc::now())
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(result.rows_affected())
     }
 
     pub async fn pending(pool: &SqlitePool) -> Result<Vec<Self>, AgentRuntimePersistenceError> {
         Ok(sqlx::query_as::<_, Self>(
-            "SELECT * FROM agent_run_commands WHERE delivery_status IN ('pending', 'failed') ORDER BY created_at, command_id",
+            "SELECT * FROM agent_run_commands WHERE delivery_status = 'pending'
+             OR (delivery_status = 'failed' AND COALESCE(json_extract(command_envelope,'$.command.type'),'') <> 'reply_interaction')
+             ORDER BY created_at, command_id",
         )
         .fetch_all(pool)
         .await?)

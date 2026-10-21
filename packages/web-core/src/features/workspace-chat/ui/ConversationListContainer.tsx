@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,11 @@ import { useConversationVirtualizer } from '../model/useConversationVirtualizer'
 import { useScrollCommandExecutor } from '../model/useScrollCommandExecutor';
 
 import DisplayConversationEntry from './DisplayConversationEntry';
+import {
+  ConversationBlockEntry,
+  ConversationBlockGroup,
+} from './ConversationBlockEntry';
+import { useAgentRunSession } from '@/features/agent-runtime/model/AgentRunSessionContext';
 import { ApprovalFormProvider } from '@/shared/hooks/ApprovalForm';
 import { useEntriesActions } from '../model/contexts/EntriesContext';
 import {
@@ -81,6 +87,10 @@ function renderRowContent(
   readOnly: boolean
 ): React.ReactNode {
   if (isAggregatedGroup(entry)) {
+    const blockIds = entry.entries.map((item) => item.conversationBlockId);
+    if (blockIds.every((id): id is string => Boolean(id))) {
+      return <ConversationBlockGroup ids={blockIds} workspaceId={attempt.id} />;
+    }
     return (
       <DisplayConversationEntry
         expansionKey={entry.patchKey}
@@ -160,6 +170,14 @@ function renderRowContent(
   }
 
   if (entry.type === 'NORMALIZED_ENTRY') {
+    if (entry.conversationBlockId) {
+      return (
+        <ConversationBlockEntry
+          blockId={entry.conversationBlockId}
+          workspaceId={attempt.id}
+        />
+      );
+    }
     return (
       <DisplayConversationEntry
         expansionKey={entry.patchKey}
@@ -198,6 +216,7 @@ export const ConversationList = forwardRef<
   ref
 ) {
   const { t } = useTranslation('common');
+  const sessionConversation = useAgentRunSession();
   const savedViewRef = useRef(initialViewState);
   const reportViewRef = useRef(onViewStateChange);
   reportViewRef.current = onViewStateChange;
@@ -256,7 +275,6 @@ export const ConversationList = forwardRef<
   const [hasSetupScriptRun, setHasSetupScriptRun] = useState(false);
   const [hasCleanupScriptRun, setHasCleanupScriptRun] = useState(false);
   const [hasRunningProcess, setHasRunningProcess] = useState(false);
-  const lastSettledTailStartIndexRef = useRef<number | null>(null);
   const { setEntries, reset } = useEntriesActions();
   const setTokenUsageInfo = useSetTokenUsageInfo();
   const scriptOutputCacheRef = useRef<
@@ -339,7 +357,6 @@ export const ConversationList = forwardRef<
     setHasCleanupScriptRun(false);
     setHasRunningProcess(false);
     setDataVersion(0);
-    lastSettledTailStartIndexRef.current = null;
     reset();
   }, [conversationScopeKey, reset]);
 
@@ -353,6 +370,61 @@ export const ConversationList = forwardRef<
 
   // ---- TanStack Virtual plumbing ----
   const tanstackScrollRef = useRef<HTMLDivElement | null>(null);
+  const historyAnchorRef = useRef<{
+    key: string;
+    top: number;
+    ready: boolean;
+    committed: boolean;
+    corrections: number;
+  } | null>(null);
+  const returnToLatestRef = useRef<{
+    behavior: 'auto' | 'smooth';
+    ready: boolean;
+    committed: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    historyAnchorRef.current = null;
+    returnToLatestRef.current = null;
+  }, [conversationScopeKey]);
+
+  useEffect(() => {
+    const element = tanstackScrollRef.current;
+    if (!element) return;
+    const cancelWindowScroll = () => {
+      historyAnchorRef.current = null;
+      returnToLatestRef.current = null;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        [
+          'ArrowUp',
+          'ArrowDown',
+          'PageUp',
+          'PageDown',
+          'Home',
+          'End',
+          ' ',
+        ].includes(event.key)
+      )
+        cancelWindowScroll();
+    };
+    element.addEventListener('wheel', cancelWindowScroll, { passive: true });
+    element.addEventListener('touchstart', cancelWindowScroll, {
+      passive: true,
+    });
+    element.addEventListener('pointerdown', cancelWindowScroll, {
+      passive: true,
+    });
+    element.addEventListener('keydown', handleKeyDown);
+    return () => {
+      cancelWindowScroll();
+      element.removeEventListener('wheel', cancelWindowScroll);
+      element.removeEventListener('touchstart', cancelWindowScroll);
+      element.removeEventListener('pointerdown', cancelWindowScroll);
+      element.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   const clearPendingInteractionAnchor = useCallback(() => {
     if (pendingInteractionAnchorFrameRef.current !== null) {
@@ -367,6 +439,8 @@ export const ConversationList = forwardRef<
 
   const shouldSuppressInteractionDrivenSizeAdjustment = useCallback(
     () =>
+      historyAnchorRef.current !== null ||
+      returnToLatestRef.current !== null ||
       performance.now() < programmaticScrollDeadlineRef.current ||
       (pendingInteractionAnchorRef.current !== null &&
         performance.now() < pendingInteractionAnchorDeadlineRef.current),
@@ -453,6 +527,18 @@ export const ConversationList = forwardRef<
     prevEntriesRef.current = derivedTimeline.displayEntries;
     prevRowsRef.current = derivedTimeline.rows;
 
+    // Page completion and list derivation are separate React updates. Apply
+    // their scroll transition only after the actual new window is committed.
+    if (
+      pending.source.canonical ===
+      sessionConversation.store?.getSnapshot().conversation
+    ) {
+      if (historyAnchorRef.current?.ready)
+        historyAnchorRef.current.committed = true;
+      if (returnToLatestRef.current?.ready)
+        returnToLatestRef.current.committed = true;
+    }
+
     setDataVersion((current) => current + 1);
     setEntries(derivedEntries.entries);
 
@@ -517,51 +603,14 @@ export const ConversationList = forwardRef<
     [conversationRows, hasRunningProcess]
   );
 
-  const candidateFirstUnvirtualizedRowIndex = useMemo(() => {
-    const firstTailRowIndex = Math.max(
-      conversationRows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS,
-      0
-    );
-
-    if (!hasActiveStreamingTurn) {
-      return firstTailRowIndex;
-    }
-
-    for (let index = conversationRows.length - 1; index >= 0; index -= 1) {
-      if (conversationRows[index]?.isUserMessage) {
-        return Math.min(index, firstTailRowIndex);
-      }
-    }
-
-    return firstTailRowIndex;
-  }, [conversationRows, hasActiveStreamingTurn]);
-
-  const streamingFirstUnvirtualizedRowIndex = useMemo(() => {
-    const lastSettledTailStartIndex = lastSettledTailStartIndexRef.current;
-    if (lastSettledTailStartIndex == null) {
-      return candidateFirstUnvirtualizedRowIndex;
-    }
-
-    return Math.min(
-      lastSettledTailStartIndex,
-      candidateFirstUnvirtualizedRowIndex
-    );
-  }, [candidateFirstUnvirtualizedRowIndex]);
-
-  useEffect(() => {
-    if (!hasActiveStreamingTurn) {
-      lastSettledTailStartIndexRef.current =
-        candidateFirstUnvirtualizedRowIndex;
-    }
-  }, [candidateFirstUnvirtualizedRowIndex, hasActiveStreamingTurn]);
-
-  const firstUnvirtualizedRowIndex = hasActiveStreamingTurn
-    ? Math.max(
-        0,
-        streamingFirstUnvirtualizedRowIndex -
-          STREAMING_UNVIRTUALIZED_BUFFER_ROWS
-      )
-    : candidateFirstUnvirtualizedRowIndex;
+  // A single long agent turn can contain thousands of tools. Retaining every
+  // row since its user message defeats virtualization, so keep a bounded tail.
+  const firstUnvirtualizedRowIndex = Math.max(
+    0,
+    conversationRows.length -
+      ALWAYS_UNVIRTUALIZED_TAIL_ROWS -
+      (hasActiveStreamingTurn ? STREAMING_UNVIRTUALIZED_BUFFER_ROWS : 0)
+  );
 
   const virtualizedRows = useMemo(
     () => conversationRows.slice(0, firstUnvirtualizedRowIndex),
@@ -580,6 +629,30 @@ export const ConversationList = forwardRef<
     onAtBottomChange,
     shouldSuppressSizeAdjustment: shouldSuppressInteractionDrivenSizeAdjustment,
   });
+
+  const loadPrevious = useCallback(() => {
+    const element = tanstackScrollRef.current;
+    const store = sessionConversation.store;
+    if (!element || !store || store.getSnapshot().isLoadingHistory) return;
+    const top = element.getBoundingClientRect().top;
+    const visible = [
+      ...element.querySelectorAll<HTMLElement>('[data-semantic-key]'),
+    ].find((row) => row.getBoundingClientRect().bottom > top);
+    if (visible?.dataset.semanticKey)
+      historyAnchorRef.current = {
+        key: visible.dataset.semanticKey,
+        top: visible.getBoundingClientRect().top - top,
+        ready: false,
+        committed: false,
+        corrections: 0,
+      };
+    const anchor = historyAnchorRef.current;
+    returnToLatestRef.current = null;
+    conversationVirtualizer.releaseBottomLock();
+    void store.loadPrevious().then(() => {
+      if (anchor && historyAnchorRef.current === anchor) anchor.ready = true;
+    });
+  }, [sessionConversation.store, conversationVirtualizer]);
 
   // NOTE: Do NOT call conversationVirtualizer.virtualizer.measure() when
   // firstUnvirtualizedRowIndex changes. measure() wipes ALL cached item sizes,
@@ -645,12 +718,38 @@ export const ConversationList = forwardRef<
 
   const scrollToBottomAndClearSpacer = useCallback(
     (behavior?: 'auto' | 'smooth') => {
+      historyAnchorRef.current = null;
       if (planRevealSpacerRef.current) {
         planRevealSpacerRef.current.style.height = '0px';
       }
+      if (sessionConversation.hasNewer && sessionConversation.store) {
+        if (returnToLatestRef.current) return;
+        const transition = {
+          behavior: behavior ?? 'auto',
+          ready: false,
+          committed: false,
+        };
+        returnToLatestRef.current = transition;
+        void sessionConversation.store
+          .loadLatest()
+          .then(() => {
+            if (returnToLatestRef.current === transition)
+              transition.ready = true;
+          })
+          .catch(() => {
+            if (returnToLatestRef.current === transition)
+              returnToLatestRef.current = null;
+          });
+        return;
+      }
+      returnToLatestRef.current = null;
       conversationVirtualizer.scrollToBottom(behavior);
     },
-    [conversationVirtualizer]
+    [
+      conversationVirtualizer,
+      sessionConversation.hasNewer,
+      sessionConversation.store,
+    ]
   );
 
   const restoreInitialPosition = useCallback(() => {
@@ -673,12 +772,69 @@ export const ConversationList = forwardRef<
     virtualizer: conversationVirtualizer.virtualizer,
     itemCount: conversationRows.length,
     dataVersion,
-    checkIsAtBottom: conversationVirtualizer.checkIsAtBottom,
+    checkIsAtBottom: () =>
+      !historyAnchorRef.current &&
+      !returnToLatestRef.current &&
+      conversationVirtualizer.checkIsAtBottom(),
     scrollToBottom: scrollToBottomAndClearSpacer,
     scrollToAbsoluteIndex,
     restoreInitialPosition,
   });
   scrollOnEntriesChangedRef.current = scrollExecutor.onEntriesChanged;
+
+  const windowScrollRef = useRef({ conversationRows, conversationVirtualizer });
+  windowScrollRef.current = { conversationRows, conversationVirtualizer };
+  useLayoutEffect(() => {
+    const element = tanstackScrollRef.current;
+    if (!element) return;
+    const latest = returnToLatestRef.current;
+    if (latest?.committed) {
+      returnToLatestRef.current = null;
+      windowScrollRef.current.conversationVirtualizer.scrollToBottom(
+        latest.behavior
+      );
+      return;
+    }
+    const anchor = historyAnchorRef.current;
+    if (!anchor?.committed) return;
+    const index = windowScrollRef.current.conversationRows.findIndex(
+      (row) => row.semanticKey === anchor.key
+    );
+    if (index < 0) {
+      historyAnchorRef.current = null;
+      return;
+    }
+    const correct = () => {
+      const row = [
+        ...element.querySelectorAll<HTMLElement>('[data-semantic-key]'),
+      ].find((item) => item.dataset.semanticKey === anchor.key);
+      if (!row) return false;
+      element.scrollTop +=
+        row.getBoundingClientRect().top -
+        element.getBoundingClientRect().top -
+        anchor.top;
+      return true;
+    };
+    let frame: number | null = null;
+    const correctAfterMeasurement = () => {
+      if (historyAnchorRef.current !== anchor) return;
+      anchor.corrections += 1;
+      if (!correct() && anchor.corrections === 1)
+        windowScrollRef.current.conversationVirtualizer.scrollToIndex(index, {
+          align: 'start',
+          behavior: 'auto',
+        });
+      if (anchor.corrections < 5) {
+        frame = requestAnimationFrame(correctAfterMeasurement);
+      } else {
+        historyAnchorRef.current = null;
+      }
+    };
+    correctAfterMeasurement();
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [dataVersion]);
 
   // Determine if there are entries to show placeholders
   const hasEntries = conversationRows.length > 0;
@@ -915,6 +1071,57 @@ export const ConversationList = forwardRef<
           onClickCapture={handleConversationClickCapture}
         >
           <div className="pt-2">
+            {sessionConversation.error && (
+              <div
+                role="status"
+                className="mx-double mb-base flex items-center gap-base text-sm text-low"
+              >
+                <span className="min-w-0 flex-1 break-words">
+                  {t('conversation.connectionError', {
+                    defaultValue: 'Conversation updates unavailable',
+                  })}
+                  : {sessionConversation.error}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    void sessionConversation.store?.loadLatest().catch(() => {})
+                  }
+                >
+                  {t('buttons.retry')}
+                </Button>
+              </div>
+            )}
+            {sessionConversation.hasMore && (
+              <div className="flex justify-center py-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-scroll-anchor-ignore
+                  disabled={sessionConversation.isLoadingHistory}
+                  onClick={loadPrevious}
+                >
+                  {t('conversation.loadEarlierMessages', {
+                    defaultValue: 'Load earlier messages',
+                  })}
+                </Button>
+              </div>
+            )}
+            {sessionConversation.hasNewer && (
+              <div className="sticky top-0 z-10 flex justify-center bg-primary/90 py-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-scroll-anchor-ignore
+                  onClick={() => scrollToBottomAndClearSpacer('auto')}
+                >
+                  {t('conversation.returnToLatest', {
+                    defaultValue: 'Return to latest messages',
+                  })}
+                </Button>
+              </div>
+            )}
             {workflowContext.error || workflowNotifications.error ? (
               <div
                 role="status"
@@ -948,29 +1155,31 @@ export const ConversationList = forwardRef<
             )}
           </div>
 
-          {isLoadingHistory && !showLoader && (
-            <div className="flex flex-col items-center gap-2 px-double py-3">
-              <div className="flex w-full max-w-md flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="h-2.5 w-16 animate-pulse rounded-full bg-foreground/10" />
-                  <div className="h-2.5 flex-1 animate-pulse rounded-full bg-foreground/[0.06]" />
+          {isLoadingHistory &&
+            !sessionConversation.isLoadingHistory &&
+            !showLoader && (
+              <div className="flex flex-col items-center gap-2 px-double py-3">
+                <div className="flex w-full max-w-md flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2.5 w-16 animate-pulse rounded-full bg-foreground/10" />
+                    <div className="h-2.5 flex-1 animate-pulse rounded-full bg-foreground/[0.06]" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-2.5 w-24 animate-pulse rounded-full bg-foreground/[0.07]"
+                      style={{ animationDelay: '150ms' }}
+                    />
+                    <div
+                      className="h-2.5 w-32 animate-pulse rounded-full bg-foreground/[0.05]"
+                      style={{ animationDelay: '150ms' }}
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div
-                    className="h-2.5 w-24 animate-pulse rounded-full bg-foreground/[0.07]"
-                    style={{ animationDelay: '150ms' }}
-                  />
-                  <div
-                    className="h-2.5 w-32 animate-pulse rounded-full bg-foreground/[0.05]"
-                    style={{ animationDelay: '150ms' }}
-                  />
-                </div>
+                <span className="text-xs text-low">
+                  {t('conversation.loadingEarlierMessages')}
+                </span>
               </div>
-              <span className="text-xs text-low">
-                {t('conversation.loadingEarlierMessages')}
-              </span>
-            </div>
-          )}
+            )}
 
           {showEmptyState && (
             <div className="flex min-h-full items-center justify-center px-double py-12">

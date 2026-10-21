@@ -25,7 +25,7 @@ use executors::{
         CancellationToken, ExecutorControl, ExecutorExitResult,
         provider_adapter::{
             DirectControl, DirectIntent, DirectProvider, DirectProviderLaunchRequest,
-            launch_direct_provider,
+            StatefulProviderMapper, launch_direct_provider,
         },
     },
     profile::ExecutorConfig,
@@ -716,6 +716,7 @@ fn spawn_stdout_reader(
 ) {
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout);
+        let mut mapper = StatefulProviderMapper::new(provider);
         loop {
             let mut bytes = Vec::new();
             match reader.read_until(b'\n', &mut bytes).await {
@@ -741,20 +742,14 @@ fn spawn_stdout_reader(
                             }
                         }
                     };
-                    let decoded = match provider.decode_native_frame(&frame) {
-                        Ok(decoded) => decoded,
-                        Err(error) => {
-                            let _ = notices.send(OutputNotice::ProtocolFailure(error.to_string()));
-                            break;
-                        }
-                    };
-                    let mapped = match provider.map_provider_event(&decoded, &manifest) {
+                    let mapped = match mapper.map_frame(&frame, &manifest) {
                         Ok(mapped) => mapped,
                         Err(error) => {
                             let _ = notices.send(OutputNotice::ProtocolFailure(error.to_string()));
                             break;
                         }
                     };
+                    let mut frame_terminal = None;
                     for event in mapped {
                         let terminal =
                             match &event.payload {
@@ -774,9 +769,14 @@ fn spawn_stdout_reader(
                             };
                         let _ = notices.send(OutputNotice::Mapped(event, native_ref.clone()));
                         if let Some(status) = terminal {
-                            let _ = notices.send(OutputNotice::ProviderTerminal(status));
-                            break;
+                            frame_terminal = Some(status);
                         }
+                    }
+                    // A native frame may contain final content and several
+                    // finishes alongside its terminal fact. Deliver all of
+                    // them before asking the monitor to complete the attempt.
+                    if let Some(status) = frame_terminal {
+                        let _ = notices.send(OutputNotice::ProviderTerminal(status));
                     }
                 }
                 Err(error) => {
@@ -891,6 +891,7 @@ async fn monitor_process(
                 let Some(ProcessCommand::Control { bytes, control: direct_control, cancel, result }) = command else {
                     continue;
                 };
+                let interaction_reply = matches!(&direct_control, Some(DirectControl::ReplyInteraction { .. }));
                 let sent_bytes = if let Some(control_peer) = control.as_ref() {
                     match direct_control {
                         Some(direct_control) => control_peer
@@ -917,6 +918,8 @@ async fn monitor_process(
                     } else {
                         Ok(Vec::new())
                     }
+                } else if !cancel {
+                    Err("provider has no native control peer or input frame".to_string())
                 } else {
                     Ok(Vec::new())
                 };
@@ -925,6 +928,11 @@ async fn monitor_process(
                     Err(message) => {
                         if !cancel {
                             let _ = result.send(Err(message.clone()));
+                            // Stale or unsupported native decisions are command
+                            // errors. They must not kill an otherwise live run.
+                            if interaction_reply {
+                                continue;
+                            }
                             break ExitCause::ProtocolFailure(message);
                         }
                         // Cancellation is still authoritative when the
@@ -1371,6 +1379,101 @@ mod tests {
             )
             .unwrap(),
         ))
+    }
+
+    #[tokio::test]
+    async fn missing_interaction_peer_rejects_without_auditing_or_terminating_the_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = test_host(&directory.path().join("events.jsonl")).await;
+        let (mut spawned, output) = executors::stdout_dup::spawn_local_output_process().unwrap();
+        let writer = test_audit_writer(directory.path(), &host);
+        let correlation_id = Uuid::new_v4();
+        let (notices_tx, notices_rx) = mpsc::unbounded_channel();
+        spawn_stdout_reader(
+            DirectProvider::Codex,
+            correlation_id,
+            spawned.child.inner().stdout.take().unwrap(),
+            writer.clone(),
+            notices_tx.clone(),
+        );
+        spawn_stderr_reader(
+            correlation_id,
+            spawned.child.inner().stderr.take().unwrap(),
+            writer.clone(),
+            notices_tx,
+        );
+        let (commands_tx, commands_rx) = mpsc::channel(1);
+        let monitor = tokio::spawn(monitor_process(
+            host.clone(),
+            DirectProvider::Codex,
+            correlation_id,
+            spawned.child,
+            None,
+            None,
+            None,
+            None,
+            writer.clone(),
+            notices_rx,
+            commands_rx,
+        ));
+        let (result, response) = oneshot::channel();
+        commands_tx
+            .send(ProcessCommand::Control {
+                bytes: Vec::new(),
+                control: Some(DirectControl::ReplyInteraction {
+                    reply: executors::runtime::ConversationInteractionReply {
+                        request_id: "native-request".into(),
+                        option_id: Some("accept".into()),
+                        answers: Vec::new(),
+                        text: None,
+                    },
+                }),
+                cancel: false,
+                result,
+            })
+            .await
+            .unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(3), response)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("no native control peer"), "{error}");
+        assert!(!host.response_after(0).await.unwrap().terminal);
+        assert_eq!(writer.lock().await.manifest().frame_count, 0);
+        drop(output);
+        let (result, response) = oneshot::channel();
+        commands_tx
+            .send(ProcessCommand::Control {
+                bytes: Vec::new(),
+                control: None,
+                cancel: true,
+                result,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), monitor)
+            .await
+            .unwrap()
+            .unwrap();
+        response.await.unwrap().unwrap();
+        assert_eq!(writer.lock().await.manifest().frame_count, 0);
+        assert!(
+            host.response_after(0)
+                .await
+                .unwrap()
+                .events
+                .iter()
+                .any(|event| {
+                    matches!(
+                        &event.payload,
+                        HostEventPayload::Terminal {
+                            status: AgentRunStatus::Cancelled,
+                            ..
+                        }
+                    )
+                })
+        );
     }
 
     #[tokio::test]

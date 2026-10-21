@@ -4,7 +4,8 @@
 //! All writers hold BEGIN IMMEDIATE until atomic publication, including workflow
 //! acceptance. Publishing is staged so rejected runtime transactions do not save
 //! a task. If SQLite commit fails afterwards, the file remains authoritative and
-//! reopening repairs the projection; it is never overwritten with stale SQL.
+//! reading the registered project repairs the projection; the file is never
+//! overwritten with stale SQL.
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
@@ -496,15 +497,11 @@ pub(crate) async fn load_in(
     Ok((root, document))
 }
 
-/// Exactly-once adoption of pre-file-store projects. A registered mount never
-/// enters this path, even if its file was deleted or corrupted.
-async fn adopt_in(
+/// Resolve the existing directory binding without adopting or publishing data.
+async fn legacy_directory_in(
     conn: &mut SqliteConnection,
     project_id: Uuid,
-) -> Result<(PathBuf, ProjectDocument), ApiError> {
-    if project_id == DEFAULT_PROJECT_ID {
-        return Err(invalid("Default project has no portable task directory"));
-    }
+) -> Result<Option<PathBuf>, ApiError> {
     let payload: Option<String> = sqlx::query_scalar(
         "SELECT payload FROM scratch WHERE id=? AND scratch_type='PROJECT_REPO_DEFAULTS'",
     )
@@ -519,12 +516,12 @@ async fn adopt_in(
             ScratchPayload::ProjectRepoDefaults(d) => Some(d),
             _ => None,
         });
-    let path = if let Some(path) = defaults
+    if let Some(path) = defaults
         .as_ref()
         .and_then(|d| d.directory_path.as_deref())
         .filter(|p| !p.trim().is_empty())
     {
-        PathBuf::from(path)
+        Ok(Some(PathBuf::from(path)))
     } else {
         let paths:Vec<String>=sqlx::query_scalar("SELECT r.path FROM repos r JOIN project_repos p ON p.repo_id=r.id WHERE p.project_id=?").bind(project_id).fetch_all(&mut *conn).await?;
         let path = if paths.len() == 1 {
@@ -537,13 +534,27 @@ async fn adopt_in(
         } else {
             None
         };
-        PathBuf::from(path.ok_or_else(|| {
+        Ok(path.map(PathBuf::from))
+    }
+}
+
+/// Exactly-once adoption of pre-file-store projects. A registered mount never
+/// enters this path, even if its file was deleted or corrupted.
+async fn adopt_in(
+    conn: &mut SqliteConnection,
+    project_id: Uuid,
+) -> Result<(PathBuf, ProjectDocument), ApiError> {
+    if project_id == DEFAULT_PROJECT_ID {
+        return Err(invalid("Default project has no portable task directory"));
+    }
+    let path = legacy_directory_in(conn, project_id)
+        .await?
+        .ok_or_else(|| {
             ApiError::Conflict(
                 "PROJECT_SPACE_REQUIRED: Open this project's directory before managing its tasks"
                     .into(),
             )
-        })?)
-    };
+        })?;
     if !path.is_absolute() {
         return Err(invalid("Project directory must be absolute"));
     }
@@ -557,7 +568,7 @@ async fn adopt_in(
     };
     if document.project.id != project_id {
         return Err(ApiError::Conflict(
-            "Directory contains another project; open it using its existing identity".into(),
+            "Directory contains another project's data; select a different directory".into(),
         ));
     }
     register_in(conn, &root, &document).await?;
@@ -792,11 +803,12 @@ pub(crate) async fn owner(pool: &SqlitePool, table: &str, id: Uuid) -> Result<Uu
         .ok_or_else(|| ApiError::BadRequest("Record not found".into()))
 }
 
-pub(crate) async fn open_with_confirmation(
+/// Create a new project in the chosen directory. Retained documents from a
+/// deleted project are replaced, never used to restore its identity or tasks.
+pub(crate) async fn open(
     pool: &SqlitePool,
     directory: &str,
     request: CreateProjectRequest,
-    confirmed_project_id: Option<Uuid>,
 ) -> Result<Project, ApiError> {
     let path = Path::new(directory);
     if !path.is_absolute() {
@@ -809,8 +821,51 @@ pub(crate) async fn open_with_confirmation(
         return Err(ApiError::BadRequest("Select a project directory".into()));
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    // Inspect before staging, registration or version upgrades. A rejected
-    // create/open request must not change the directory or its SQL projection.
+    let mounted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM project_task_mounts WHERE directory_path=?)",
+    )
+    .bind(root.to_string_lossy().as_ref())
+    .fetch_one(&mut *tx)
+    .await?;
+    if mounted {
+        return Err(ApiError::Conflict(
+            "This directory is already used by a project; choose another directory".into(),
+        ));
+    }
+    // A registered legacy project may not have read its Tasks yet. Its saved
+    // directory still belongs to it, even before the first mount is created.
+    let unmounted: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT p.id FROM projects p WHERE p.id<>? AND NOT EXISTS(SELECT 1 FROM project_task_mounts m WHERE m.project_id=p.id)",
+    )
+    .bind(DEFAULT_PROJECT_ID)
+    .fetch_all(&mut *tx)
+    .await?;
+    for project_id in unmounted {
+        if let Some(path) = legacy_directory_in(&mut tx, project_id).await?
+            && path.is_absolute()
+            && tokio::fs::canonicalize(path)
+                .await
+                .is_ok_and(|registered| registered == root)
+        {
+            return Err(ApiError::Conflict(
+                "This directory is already used by a project; choose another directory".into(),
+            ));
+        }
+    }
+    if let Some(id) = request.id {
+        let registered: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if registered {
+            return Err(ApiError::Conflict(
+                "This project ID already exists; create a project with a new ID".into(),
+            ));
+        }
+    }
+    // Inspect before staging or registration. Invalid metadata is not
+    // permission to overwrite it, and checked revisions protect publication.
     let target = match metadata_path(&root, false) {
         Ok(target) => target,
         Err(ApiError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -818,66 +873,23 @@ pub(crate) async fn open_with_confirmation(
         }
         Err(error) => return Err(error),
     };
-    let existing = target.try_exists()?;
-    let mounted: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM project_task_mounts WHERE directory_path=?)",
-    )
-    .bind(root.to_string_lossy().as_ref())
-    .fetch_one(&mut *tx)
-    .await?;
-    if mounted && !existing {
-        return Err(invalid(
-            "The registered project document is missing; it must not be recreated from the local index",
-        ));
-    }
-    let mut document = if existing {
-        let document = read_path(&target)?;
-        if confirmed_project_id != Some(document.project.id) {
-            return Err(ApiError::ProjectDirectoryExists(Box::new(document.project)));
-        }
-        document
-    } else if confirmed_project_id.is_some() {
-        return Err(ApiError::Conflict(
-            "The project document changed or was removed; choose the directory again before opening it".into(),
-        ));
-    } else if let Some(id) = request.id {
-        let registered: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
-                .bind(id)
-                .fetch_one(&mut *tx)
-                .await?;
-        if registered {
-            legacy_in(&mut tx, id).await?
-        } else {
-            ProjectDocument::new(request)
-        }
+    let previous_revision = if target.try_exists()? {
+        Some(read_path(&target)?.revision)
     } else {
-        ProjectDocument::new(request)
+        None
     };
-    register_in(&mut tx, &root, &document).await?;
-    let prepared = prepare_document(&root, &mut document, existing)?;
-    project_in(&mut tx, &document).await?;
-    if let Some(prepared) = prepared {
-        prepared.publish()?;
+    let mut document = ProjectDocument::new(request);
+    if let Some(revision) = previous_revision {
+        document.revision = revision
+            .checked_add(1)
+            .ok_or_else(|| invalid("Revision overflow"))?;
     }
+    let prepared = stage(&root, &document, previous_revision)?;
+    register_in(&mut tx, &root, &document).await?;
+    project_in(&mut tx, &document).await?;
+    prepared.publish()?;
     tx.commit().await?;
     Ok(document.project)
-}
-
-/// Tests that intentionally open existing portable projects still pass through
-/// the same confirmation boundary used by the create dialog.
-#[cfg(test)]
-pub(crate) async fn open(
-    pool: &SqlitePool,
-    directory: &str,
-    request: CreateProjectRequest,
-) -> Result<Project, ApiError> {
-    match open_with_confirmation(pool, directory, request.clone(), None).await {
-        Err(ApiError::ProjectDirectoryExists(project)) => {
-            open_with_confirmation(pool, directory, request, Some(project.id)).await
-        }
-        result => result,
-    }
 }
 
 pub(crate) async fn create_in(
@@ -1328,6 +1340,15 @@ mod tests {
         .unwrap()
     }
 
+    // Tests for ordinary mounted reads seed their registration explicitly.
+    // Project creation never restores an existing document's business data.
+    async fn register_fixture(pool: &SqlitePool, root: &Path, document: &ProjectDocument) {
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        register_in(&mut tx, root, document).await.unwrap();
+        project_in(&mut tx, document).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+
     #[tokio::test]
     async fn deleted_project_cannot_be_readopted_by_stale_reads_or_writes() {
         let pool = pool().await;
@@ -1389,14 +1410,9 @@ mod tests {
         // Creating a different project does not turn old workspace defaults
         // into permission to rediscover a previously deleted project.
         let unrelated = tempfile::tempdir().unwrap();
-        let created = open_with_confirmation(
-            &pool,
-            unrelated.path().to_str().unwrap(),
-            project_request(),
-            None,
-        )
-        .await
-        .unwrap();
+        let created = open(&pool, unrelated.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
         assert!(project_exists(&pool, created.id).await);
         assert!(!project_exists(&pool, project.id).await);
         assert!(read(&pool, project.id).await.is_err());
@@ -1422,28 +1438,22 @@ mod tests {
             "User-owned data"
         );
 
-        // Retained portable data is recoverable only through an explicit reopen.
-        assert!(matches!(
-            open_with_confirmation(
-                &pool,
-                directory.path().to_str().unwrap(),
-                project_request(),
-                None
-            )
-            .await,
-            Err(ApiError::ProjectDirectoryExists(existing)) if existing.id == project.id
-        ));
+        // Reusing the directory creates a new project, never the deleted one.
+        let mut draft = project_request();
+        draft.name = "A completely new project".into();
+        let replacement = open(&pool, directory.path().to_str().unwrap(), draft)
+            .await
+            .unwrap();
+        assert_ne!(replacement.id, project.id);
+        assert_eq!(replacement.name, "A completely new project");
         assert!(!project_exists(&pool, project.id).await);
-        let reopened = open_with_confirmation(
-            &pool,
-            directory.path().to_str().unwrap(),
-            project_request(),
-            Some(project.id),
-        )
-        .await
-        .unwrap();
-        assert_eq!(reopened.id, project.id);
-        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(read(&pool, project.id).await.is_err());
+        assert!(read(&pool, replacement.id).await.unwrap().tasks.is_empty());
+        assert_eq!(read_path(&path).unwrap().project.id, replacement.id);
+        assert_eq!(
+            std::fs::read_to_string(&user_file).unwrap(),
+            "User-owned data"
+        );
     }
 
     #[tokio::test]
@@ -1508,9 +1518,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn existing_directory_requires_confirmation_before_registration_or_upgrade() {
-        use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
-
+    async fn existing_unregistered_document_is_replaced_without_restoring_business_data() {
         let pool = pool().await;
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
@@ -1521,114 +1529,287 @@ mod tests {
         original.insert_task(task).unwrap();
         stage(&root, &original, None).unwrap().publish().unwrap();
         let path = root.join(METADATA).join(DOCUMENT);
-        let before = std::fs::read(&path).unwrap();
-
-        for confirmation in [None, Some(Uuid::new_v4())] {
-            let error = open_with_confirmation(
-                &pool,
-                root.to_str().unwrap(),
-                project_request(),
-                confirmation,
-            )
+        let mut draft = project_request();
+        draft.id = Some(Uuid::new_v4());
+        draft.name = "The requested new project".into();
+        draft.color = "1 2% 3%".into();
+        let created = open(&pool, root.to_str().unwrap(), draft.clone())
             .await
-            .unwrap_err();
+            .unwrap();
+        assert_eq!(Some(created.id), draft.id);
+        assert_eq!(created.name, draft.name);
+        assert_eq!(created.color, draft.color);
+        assert!(!project_exists(&pool, original.project.id).await);
+        assert!(
+            workspace_defaults(&pool, original.project.id)
+                .await
+                .is_none()
+        );
+        let document = read(&pool, created.id).await.unwrap();
+        assert_eq!(document.schema_version, FORMAT_VERSION);
+        assert_eq!(document.revision, original.revision + 1);
+        assert_eq!(document.statuses[0].name, "Discuss");
+        assert_eq!(
+            document.statuses.len(),
+            super::super::local_remote::DEFAULT_STATUSES.len()
+        );
+        assert_eq!(
+            document.tags.len(),
+            super::super::local_remote::DEFAULT_TAGS.len()
+        );
+        assert!(document.tasks.is_empty());
+        assert!(document.task_tags.is_empty());
+        assert!(document.task_assignees.is_empty());
+        assert!(document.task_followers.is_empty());
+        assert!(document.task_relationships.is_empty());
+        assert!(
+            document
+                .statuses
+                .iter()
+                .all(|status| !original.statuses.iter().any(|old| old.id == status.id))
+        );
+        assert!(
+            document
+                .tags
+                .iter()
+                .all(|tag| !original.tags.iter().any(|old| old.id == tag.id))
+        );
+        assert_eq!(read_path(&path).unwrap().project.id, created.id);
+        let old_tasks: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM local_issues WHERE project_id=?")
+                .bind(original.project.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(old_tasks, 0);
+    }
+
+    #[tokio::test]
+    async fn new_creation_rejects_registered_directory_with_or_without_its_document() {
+        use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        let path = directory.path().join(METADATA).join(DOCUMENT);
+        let before = std::fs::read(&path).unwrap();
+        let defaults = workspace_defaults(&pool, project.id).await;
+        for exists in [true, false] {
+            if !exists {
+                std::fs::remove_file(&path).unwrap();
+            }
+            let draft = project_request();
+            let error = open(&pool, directory.path().to_str().unwrap(), draft)
+                .await
+                .unwrap_err();
             let response = error.into_response();
             assert_eq!(response.status(), StatusCode::CONFLICT);
             let bytes = to_bytes(response.into_body(), 8192).await.unwrap();
             let payload: Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(payload["success"], false);
-            assert!(payload["data"].is_null());
-            assert!(!payload["message"].as_str().unwrap().is_empty());
-            assert_eq!(payload["error_data"]["code"], "PROJECT_DIRECTORY_EXISTS");
-            assert_eq!(
-                payload["error_data"]["project"],
-                serde_json::to_value(&original.project).unwrap()
-            );
-            assert!(!project_exists(&pool, original.project.id).await);
-            assert!(
-                workspace_defaults(&pool, original.project.id)
-                    .await
-                    .is_none()
-            );
-            let mounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_task_mounts")
+            assert!(payload.get("error_data").is_none_or(Value::is_null));
+            assert_eq!(workspace_defaults(&pool, project.id).await, defaults);
+            let projects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_task_mounts")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-            assert_eq!(mounts, 0);
-            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(projects, 1);
+            if exists {
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            } else {
+                assert!(!path.exists());
+            }
         }
-
-        let mut draft = project_request();
-        draft.id = Some(Uuid::new_v4());
-        draft.name = "This must not rename the restored project".into();
-        draft.color = "1 2% 3%".into();
-        let restored = open_with_confirmation(
-            &pool,
-            root.to_str().unwrap(),
-            draft,
-            Some(original.project.id),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            serde_json::to_value(restored).unwrap(),
-            serde_json::to_value(&original.project).unwrap()
-        );
-        let document = read(&pool, original.project.id).await.unwrap();
-        assert_eq!(document.schema_version, FORMAT_VERSION);
-        assert_eq!(document.revision, original.revision + 1);
-        assert_eq!(document.statuses[0].name, "Discuss");
-        assert_eq!(
-            serde_json::to_value(document.tasks).unwrap(),
-            serde_json::to_value(original.tasks).unwrap()
-        );
     }
 
     #[tokio::test]
-    async fn stale_confirmation_never_opens_a_replaced_or_missing_document() {
+    async fn new_creation_cannot_reuse_a_registered_project_id() {
+        let pool = pool().await;
+        let directory = tempfile::tempdir().unwrap();
+        let another = tempfile::tempdir().unwrap();
+        let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        let path = directory.path().join(METADATA).join(DOCUMENT);
+        let before = std::fs::read(&path).unwrap();
+        // Even a registered project that has not yet been mounted must not be
+        // adopted or renamed by a request to create a different project.
+        for mounted in [true, false] {
+            if !mounted {
+                sqlx::query("DELETE FROM project_task_mounts WHERE project_id=?")
+                    .bind(project.id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            let mut draft = project_request();
+            draft.id = Some(project.id);
+            draft.name = "Must not overwrite the registered project".into();
+            assert!(matches!(
+                open(&pool, another.path().to_str().unwrap(), draft).await,
+                Err(ApiError::Conflict(_))
+            ));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert!(!another.path().join(METADATA).exists());
+            let name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=?")
+                .bind(project.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(name, project.name);
+        }
+    }
+
+    #[tokio::test]
+    async fn new_creation_preserves_unmounted_registered_roots_but_not_copied_identity() {
+        for binding in ["directory", "project_repo", "repo_default"] {
+            let pool = pool().await;
+            let directory = tempfile::tempdir().unwrap();
+            let copied = tempfile::tempdir().unwrap();
+            let project = open(&pool, directory.path().to_str().unwrap(), project_request())
+                .await
+                .unwrap();
+            let document = read(&pool, project.id).await.unwrap();
+            let task = task_request(&document);
+            let task_id = task.id.unwrap();
+            mutate(&pool, project.id, |document| document.insert_task(task))
+                .await
+                .unwrap();
+            let path = directory.path().join(METADATA).join(DOCUMENT);
+            let before = std::fs::read(&path).unwrap();
+            sqlx::query("DELETE FROM project_task_mounts WHERE project_id=?")
+                .bind(project.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            if binding != "directory" {
+                let repo_id = Uuid::new_v4();
+                sqlx::query(
+                    "INSERT INTO repos(id,path,name,display_name) VALUES (?,?,'test','Test')",
+                )
+                .bind(repo_id)
+                .bind(directory.path().to_string_lossy().as_ref())
+                .execute(&pool)
+                .await
+                .unwrap();
+                let repos = if binding == "project_repo" {
+                    sqlx::query("INSERT INTO project_repos(id,project_id,repo_id) VALUES (?,?,?)")
+                        .bind(Uuid::new_v4())
+                        .bind(project.id)
+                        .bind(repo_id)
+                        .execute(&pool)
+                        .await
+                        .unwrap();
+                    vec![]
+                } else {
+                    vec![db::models::scratch::DraftWorkspaceRepo {
+                        repo_id,
+                        target_branch: "main".into(),
+                    }]
+                };
+                let defaults = ScratchPayload::ProjectRepoDefaults(ProjectRepoDefaultsData {
+                    repos,
+                    directory_path: None,
+                });
+                sqlx::query("UPDATE scratch SET payload=? WHERE id=? AND scratch_type='PROJECT_REPO_DEFAULTS'")
+                    .bind(serde_json::to_string(&defaults).unwrap())
+                    .bind(project.id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            let defaults = workspace_defaults(&pool, project.id).await;
+            for exists in [true, false] {
+                if !exists {
+                    std::fs::remove_file(&path).unwrap();
+                }
+                assert!(matches!(
+                    open(&pool, directory.path().to_str().unwrap(), project_request()).await,
+                    Err(ApiError::Conflict(_))
+                ));
+                assert_eq!(workspace_defaults(&pool, project.id).await, defaults);
+                let mounts: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM project_task_mounts WHERE project_id=?",
+                )
+                .bind(project.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                assert_eq!(mounts, 0);
+                if exists {
+                    assert_eq!(std::fs::read(&path).unwrap(), before);
+                } else {
+                    assert!(!path.exists());
+                }
+            }
+            // A copied file is not the active project's bound working root.
+            std::fs::create_dir(copied.path().join(METADATA)).unwrap();
+            std::fs::write(copied.path().join(METADATA).join(DOCUMENT), &before).unwrap();
+            let created = open(&pool, copied.path().to_str().unwrap(), project_request())
+                .await
+                .unwrap();
+            assert_ne!(created.id, project.id);
+            assert!(read(&pool, created.id).await.unwrap().tasks.is_empty());
+            assert!(!path.exists());
+            std::fs::write(&path, &before).unwrap();
+            // Normal registered reads can still perform their existing adoption.
+            assert_eq!(read(&pool, project.id).await.unwrap().tasks[0].id, task_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn new_creation_never_overwrites_invalid_unregistered_metadata() {
         let pool = pool().await;
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
-        let first = ProjectDocument::new(project_request());
-        stage(&root, &first, None).unwrap().publish().unwrap();
-        assert!(matches!(
-            open_with_confirmation(&pool, root.to_str().unwrap(), project_request(), None).await,
-            Err(ApiError::ProjectDirectoryExists(project)) if project.id == first.project.id
-        ));
-
-        let replacement = ProjectDocument::new(project_request());
+        std::fs::create_dir(root.join(METADATA)).unwrap();
         let path = root.join(METADATA).join(DOCUMENT);
-        std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
-        assert!(matches!(
-            open_with_confirmation(
-                &pool,
-                root.to_str().unwrap(),
-                project_request(),
-                Some(first.project.id)
-            ).await,
-            Err(ApiError::ProjectDirectoryExists(project)) if project.id == replacement.project.id
-        ));
-        assert!(!project_exists(&pool, first.project.id).await);
-        assert!(!project_exists(&pool, replacement.project.id).await);
+        let mut unsupported = ProjectDocument::new(project_request());
+        unsupported.schema_version = FORMAT_VERSION + 1;
+        for bytes in [
+            b"{broken".to_vec(),
+            serde_json::to_vec(&unsupported).unwrap(),
+        ] {
+            std::fs::write(&path, &bytes).unwrap();
+            let mut draft = project_request();
+            draft.id = Some(Uuid::new_v4());
+            let id = draft.id.unwrap();
+            assert!(open(&pool, root.to_str().unwrap(), draft).await.is_err());
+            assert!(!project_exists(&pool, id).await);
+            assert!(workspace_defaults(&pool, id).await.is_none());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+    }
 
-        std::fs::remove_file(&path).unwrap();
-        assert!(matches!(
-            open_with_confirmation(
-                &pool,
-                root.to_str().unwrap(),
-                project_request(),
-                Some(replacement.project.id)
-            )
-            .await,
-            Err(ApiError::Conflict(_))
-        ));
-        assert!(!path.exists());
-        assert!(!project_exists(&pool, replacement.project.id).await);
-        assert!(
-            workspace_defaults(&pool, replacement.project.id)
-                .await
-                .is_none()
-        );
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn new_creation_never_follows_metadata_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        for directory_link in [true, false] {
+            let pool = pool().await;
+            let directory = tempfile::tempdir().unwrap();
+            let external = tempfile::tempdir().unwrap();
+            let root = directory.path().canonicalize().unwrap();
+            let document = ProjectDocument::new(project_request());
+            let bytes = serde_json::to_vec(&document).unwrap();
+            let external_document = external.path().join(DOCUMENT);
+            std::fs::write(&external_document, &bytes).unwrap();
+            if directory_link {
+                symlink(external.path(), root.join(METADATA)).unwrap();
+            } else {
+                std::fs::create_dir(root.join(METADATA)).unwrap();
+                symlink(&external_document, root.join(METADATA).join(DOCUMENT)).unwrap();
+            }
+            let mut draft = project_request();
+            draft.id = Some(Uuid::new_v4());
+            let id = draft.id.unwrap();
+            assert!(open(&pool, root.to_str().unwrap(), draft).await.is_err());
+            assert!(!project_exists(&pool, id).await);
+            assert_eq!(std::fs::read(&external_document).unwrap(), bytes);
+        }
     }
 
     #[tokio::test]
@@ -1646,13 +1827,11 @@ mod tests {
             let old_tasks = serde_json::to_value(&old.tasks).unwrap();
             let id = old.project.id;
             stage(&root, &old, None).unwrap().publish().unwrap();
-            if mounted {
-                let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-                register_in(&mut tx, &root, &old).await.unwrap();
-                project_in(&mut tx, &old).await.unwrap();
-                tx.commit().await.unwrap();
-            } else {
-                open(&pool, root.to_str().unwrap(), project_request())
+            register_fixture(&pool, &root, &old).await;
+            if !mounted {
+                sqlx::query("DELETE FROM project_task_mounts WHERE project_id=?")
+                    .bind(id)
+                    .execute(&pool)
                     .await
                     .unwrap();
             }
@@ -1677,9 +1856,6 @@ mod tests {
             assert_eq!(projected_status, old.tasks[0].status_id);
             let path = metadata_path(&root, false).unwrap();
             let published = std::fs::read(&path).unwrap();
-            open(&pool, root.to_str().unwrap(), project_request())
-                .await
-                .unwrap();
             read(&pool, id).await.unwrap();
             assert_eq!(std::fs::read(path).unwrap(), published);
 
@@ -1709,9 +1885,7 @@ mod tests {
         let statuses = serde_json::to_value(&old.statuses).unwrap();
         stage(&root, &old, None).unwrap().publish().unwrap();
 
-        open(&pool, root.to_str().unwrap(), project_request())
-            .await
-            .unwrap();
+        register_fixture(&pool, &root, &old).await;
         let upgraded = read(&pool, old.project.id).await.unwrap();
         assert_eq!(upgraded.schema_version, FORMAT_VERSION);
         assert_eq!(serde_json::to_value(upgraded.statuses).unwrap(), statuses);
@@ -1792,7 +1966,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_crud_uses_file_authority_and_preserves_ids_on_a_fresh_host() {
+    async fn task_crud_uses_file_authority_but_new_project_never_restores_a_copied_file() {
         let pool = pool().await;
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
@@ -1817,27 +1991,33 @@ mod tests {
         std::fs::create_dir(second.path().join(METADATA)).unwrap();
         std::fs::write(second.path().join(METADATA).join(DOCUMENT), bytes).unwrap();
         let fresh = super::tests::pool().await;
-        let restored = open(&fresh, second.path().to_str().unwrap(), project_request())
+        let created = open(&fresh, second.path().to_str().unwrap(), project_request())
             .await
             .unwrap();
-        assert_eq!(restored.id, project.id);
-        let restored = read(&fresh, project.id).await.unwrap();
-        assert_eq!(restored.tasks[0].id, id);
-        assert_eq!(restored.tasks[0].title, "An updated report");
+        assert_ne!(created.id, project.id);
+        assert!(!project_exists(&fresh, project.id).await);
+        let created = read(&fresh, created.id).await.unwrap();
+        assert!(created.tasks.is_empty());
+        assert!(
+            created
+                .statuses
+                .iter()
+                .all(|status| status.project_id == created.project.id)
+        );
         let runtime:i64=sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM sessions)+(SELECT COUNT(*) FROM tasks)+(SELECT COUNT(*) FROM workflow_runs)").fetch_one(&fresh).await.unwrap();
         assert_eq!(runtime, 0);
-        mutate(&fresh, project.id, |document| {
+        mutate(&pool, project.id, |document| {
             document.tasks.clear();
             Ok(())
         })
         .await
         .unwrap();
-        assert!(read(&fresh, project.id).await.unwrap().tasks.is_empty());
-        assert_eq!(read(&pool, project.id).await.unwrap().tasks.len(), 1);
+        assert!(read(&pool, project.id).await.unwrap().tasks.is_empty());
+        assert!(owner(&fresh, "tasks", id).await.is_err());
     }
 
     #[tokio::test]
-    async fn copied_project_keeps_task_hierarchy_tags_and_relationships() {
+    async fn registered_document_projects_task_hierarchy_tags_and_relationships() {
         let source_pool = pool().await;
         let source = tempfile::tempdir().unwrap();
         let destination = tempfile::tempdir().unwrap();
@@ -1882,15 +2062,9 @@ mod tests {
         )
         .unwrap();
         let destination_pool = pool().await;
-        let restored = open(
-            &destination_pool,
-            destination.path().to_str().unwrap(),
-            project_request(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(restored.id, project.id);
-        let actual = read(&destination_pool, restored.id).await.unwrap();
+        let root = destination.path().canonicalize().unwrap();
+        register_fixture(&destination_pool, &root, &expected).await;
+        let actual = read(&destination_pool, project.id).await.unwrap();
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
             serde_json::to_value(expected).unwrap()
@@ -2070,11 +2244,25 @@ mod tests {
             second.path().join(METADATA).join(DOCUMENT),
         )
         .unwrap();
+        let mut duplicate = project_request();
+        duplicate.id = Some(project.id);
         assert!(
-            open(&pool, second.path().to_str().unwrap(), project_request())
+            open(&pool, second.path().to_str().unwrap(), duplicate)
                 .await
                 .is_err()
         );
+        let copied_bytes = std::fs::read(second.path().join(METADATA).join(DOCUMENT)).unwrap();
+        let source_bytes = std::fs::read(first.path().join(METADATA).join(DOCUMENT)).unwrap();
+        assert_eq!(copied_bytes, source_bytes);
+        let separate = open(&pool, second.path().to_str().unwrap(), project_request())
+            .await
+            .unwrap();
+        assert_ne!(separate.id, project.id);
+        assert_eq!(
+            std::fs::read(first.path().join(METADATA).join(DOCUMENT)).unwrap(),
+            source_bytes
+        );
+        assert!(read(&pool, separate.id).await.unwrap().tasks.is_empty());
         let mut document = read(&pool, project.id).await.unwrap();
         document.statuses[0].project_id = Uuid::new_v4();
         assert!(document.validate().is_err());
@@ -2125,8 +2313,10 @@ mod tests {
             second.path().join(METADATA).join(DOCUMENT),
         )
         .unwrap();
+        let mut duplicate = project_request();
+        duplicate.id = Some(project.id);
         assert!(
-            open(&pool, second.path().to_str().unwrap(), project_request())
+            open(&pool, second.path().to_str().unwrap(), duplicate)
                 .await
                 .is_err()
         );

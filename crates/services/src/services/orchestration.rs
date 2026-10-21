@@ -248,6 +248,7 @@ where
             }
             AgentRunPortCommand::Cancel { .. }
             | AgentRunPortCommand::SubmitInput { .. }
+            | AgentRunPortCommand::ReplyInteraction { .. }
             | AgentRunPortCommand::ResolveApproval { .. }
             | AgentRunPortCommand::Retry { .. } => self.port.control(command.clone()).await,
         };

@@ -316,7 +316,9 @@ test("failed Git enrichment retries the new directory project without opening a 
     })
     .click();
   await create(page);
-  await expect(page.getByRole("alert")).toContainText("The project was opened");
+  await expect(page.getByRole("alert")).toContainText(
+    "The project was created",
+  );
   await page
     .getByRole("button", { name: "Retry saving directory", exact: true })
     .click();
@@ -349,9 +351,6 @@ test("cancel after a local directory open failure never deletes project files", 
   expect(await data(page, "result")).toEqual({ action: "canceled" });
 });
 
-const existingProjectId = "68916c8e-7f85-48f1-b15e-a63cb87f4e45";
-const existingConfirmation = (page: Page) =>
-  page.getByRole("dialog", { name: "Open existing project?", exact: true });
 const creationDialog = (page: Page) =>
   page.getByRole("dialog", { name: "Create Project", exact: true });
 
@@ -364,151 +363,133 @@ async function chooseDirectory(page: Page) {
     .click();
 }
 
-test("canceling existing-directory confirmation keeps the draft and does not reopen or mutate it", async ({
-  page,
-}) => {
-  await open(page, "?local&existing");
-  await chooseDirectory(page);
-  await create(page);
-  const confirmation = existingConfirmation(page);
-  await expect(confirmation).toContainText("Portable project");
-  await expect(confirmation).toContainText(
-    "the details entered for the new project will not be used",
-  );
-  expect(await data(page, "opens")).toHaveLength(1);
-  expect(await data(page, "inserts")).toBeNull();
-  expect(await data(page, "saves")).toBeNull();
-  await confirmation
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
-  await expect(page.getByLabel("Project name")).toHaveValue("New project");
-  await expect(page.getByRole("status")).toContainText("/fixture/folder");
-  await expect(
-    page.getByRole("button", { name: "Create Project", exact: true }),
-  ).toBeEnabled();
-  expect(await data(page, "opens")).toHaveLength(1);
-  expect(await data(page, "refreshes")).toBeNull();
-  expect(await data(page, "removes")).toBeNull();
-  expect(await data(page, "result")).toBeNull();
-});
-
 for (const mode of ["folder", "git"]) {
-  test(`confirmed ${mode} opens the displayed identity on its captured Host and preserves old settings`, async ({
+  test(`a detached ${mode} directory creates from the current draft with one Host-scoped request`, async ({
     page,
   }) => {
-    await open(page, `?local&existing&mode=${mode}&fail`);
+    await open(page, `?local&detached-project&mode=${mode}`);
     await page.getByLabel("Machine", { exact: true }).selectOption("remote-1");
     await chooseDirectory(page);
     await create(page);
-    await existingConfirmation(page)
-      .getByRole("button", { name: "Open existing project", exact: true })
-      .click();
     await expect(creationDialog(page)).not.toBeVisible();
     const opens = await data(page, "opens");
-    expect(opens).toHaveLength(2);
-    expect(opens[0]).toMatchObject({
-      hostId: "remote-1",
-      input: {
-        directory_path: mode === "git" ? "/fixture/repo" : "/fixture/folder",
+    expect(opens).toEqual([
+      {
+        hostId: "remote-1",
+        input: {
+          directory_path: mode === "git" ? "/fixture/repo" : "/fixture/folder",
+          name: "New project",
+          color: expect.any(String),
+        },
       },
-    });
-    expect(opens[0].input).not.toHaveProperty("confirmed_project_id");
-    expect(opens[1]).toEqual({
-      hostId: "remote-1",
-      input: { ...opens[0].input, confirmed_project_id: existingProjectId },
-    });
+    ]);
+    expect(await data(page, "requests")).toMatchObject([
+      { hostId: "remote-1", hostScope: "explicit", method: "POST" },
+    ]);
     expect(await data(page, "inserts")).toBeNull();
-    expect(await data(page, "saves")).toBeNull();
+    expect(await data(page, "saves")).toEqual(
+      mode === "git"
+        ? [
+            {
+              projectId: "directory-project",
+              hostId: "remote-1",
+              value: {
+                kind: "git",
+                repo: { repo_id: "repo-2", target_branch: "feature/test" },
+              },
+            },
+          ]
+        : null,
+    );
     expect(await data(page, "removes")).toBeNull();
     expect(await data(page, "result")).toMatchObject({
       action: "created",
       hostId: "remote-1",
       project: {
-        id: existingProjectId,
-        name: "Portable project",
-        color: "100 20% 30%",
+        id: "directory-project",
+        name: "New project",
+        color: opens[0].input.color,
       },
     });
+    expect(await data(page, "result")).not.toMatchObject({
+      project: { id: "68916c8e-7f85-48f1-b15e-a63cb87f4e45" },
+    });
+    await expect(
+      page.getByText("Portable project", { exact: true }),
+    ).not.toBeVisible();
+    expect(await data(page, "refreshes")).toEqual([
+      { params: { organization_id: "org-fixture" }, hostId: "remote-1" },
+      { params: { organization_id: "org-fixture" }, hostId: "remote-1" },
+    ]);
   });
 }
 
-test("changed directory identity after confirmation is not silently confirmed again", async ({
-  page,
-}) => {
-  await open(page, "?local&existing&identity-changed");
-  await chooseDirectory(page);
-  await create(page);
-  await existingConfirmation(page)
-    .getByRole("button", { name: "Open existing project", exact: true })
-    .click();
-  await expect(existingConfirmation(page)).not.toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("Confirm before opening");
-  expect(await data(page, "opens")).toHaveLength(2);
-  expect(await data(page, "result")).toBeNull();
-  expect(await data(page, "saves")).toBeNull();
-  expect(await data(page, "removes")).toBeNull();
-});
-
 for (const conflict of [
   "ordinary-conflict",
-  "message-conflict",
   "text-conflict",
-  ...["id", "name", "code", "success", "status"].map(
-    (field) => `existing&malformed-conflict=${field}`,
-  ),
+  "legacy-conflict",
 ]) {
-  test(`${conflict} is an ordinary error, not permission to restore a project`, async ({
+  test(`${conflict} stays an inline error with the draft retained and no recovery dialog`, async ({
     page,
   }) => {
     await open(page, `?local&${conflict}`);
     await chooseDirectory(page);
     await create(page);
     await expect(page.getByRole("alert")).toBeVisible();
-    await expect(existingConfirmation(page)).not.toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(creationDialog(page)).toBeVisible();
+    await expect(page.getByLabel("Project name")).toHaveValue("New project");
+    await expect(page.getByRole("status")).toContainText("/fixture/folder");
+    await expect(
+      page.getByRole("button", { name: "Open existing project", exact: true }),
+    ).not.toBeVisible();
     expect(await data(page, "opens")).toHaveLength(1);
     expect(await data(page, "saves")).toBeNull();
     expect(await data(page, "result")).toBeNull();
+    expect(await data(page, "refreshes")).toBeNull();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(await data(page, "opens")).toHaveLength(1);
+    expect(await data(page, "removes")).toBeNull();
+    expect(await data(page, "result")).toEqual({ action: "canceled" });
   });
 }
 
-test("an unavailable machine cannot be confirmed or replaced by this machine", async ({
+test("a machine going offline during creation does not write Git defaults or fall back to this machine", async ({
   page,
 }) => {
-  await open(page, "?local&existing");
+  await open(page, "?local&mode=git&hold-open");
   await page.getByLabel("Machine", { exact: true }).selectOption("remote-1");
   await chooseDirectory(page);
   await create(page);
-  const confirmation = existingConfirmation(page);
-  await expect(confirmation).toBeVisible();
+  await expect(page.getByLabel("Machine", { exact: true })).toBeDisabled();
   await page.evaluate(() =>
     window.dispatchEvent(new Event("fixture-host-offline")),
   );
-  await confirmation
-    .getByRole("button", { name: "Open existing project", exact: true })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Choose the working directory again",
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("fixture-open-release")),
   );
-  expect(await data(page, "opens")).toHaveLength(1);
+  await expect(page.getByRole("alert")).toContainText(
+    "The project was created",
+  );
+  expect(await data(page, "opens")).toMatchObject([{ hostId: "remote-1" }]);
   expect(await data(page, "saves")).toBeNull();
   expect(await data(page, "result")).toBeNull();
 });
 
-test("machine switching invalidates a pending confirmation without sending it to either machine", async ({
+test("machine switching invalidates a pending create response without mutating the replacement scope", async ({
   page,
 }) => {
-  await open(page, "?local&existing");
+  await open(page, "?local&mode=git&hold-open");
   await page.getByLabel("Machine", { exact: true }).selectOption("remote-1");
   await chooseDirectory(page);
   await create(page);
-  const confirmation = existingConfirmation(page);
-  await expect(confirmation).toBeVisible();
+  await expect(page.getByLabel("Machine", { exact: true })).toBeDisabled();
   await page.evaluate(() =>
     window.dispatchEvent(new Event("fixture-host-switch")),
   );
-  await confirmation
-    .getByRole("button", { name: "Open existing project", exact: true })
-    .click();
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("fixture-open-release")),
+  );
   await expect(page.getByLabel("Machine", { exact: true })).toHaveValue(
     "local",
   );
@@ -518,50 +499,31 @@ test("machine switching invalidates a pending confirmation without sending it to
   expect(await data(page, "opens")).toHaveLength(1);
   expect(await data(page, "result")).toBeNull();
   expect(await data(page, "refreshes")).toBeNull();
+  expect(await data(page, "saves")).toBeNull();
 });
 
-test("confirmation stays single-flight while the confirmed open request is pending", async ({
+test("creation stays single-flight while the directory request is pending", async ({
   page,
 }) => {
-  await open(page, "?local&existing&hold-confirmed-open");
+  await open(page, "?local&hold-open");
   await chooseDirectory(page);
   await create(page);
-  await existingConfirmation(page)
-    .getByRole("button", { name: "Open existing project", exact: true })
-    .click();
   await expect(page.getByLabel("Machine", { exact: true })).toBeDisabled();
   await expect(
     page.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(creationDialog(page)).toBeVisible();
-  expect(await data(page, "opens")).toHaveLength(2);
+  await page.getByLabel("Project name").press("Enter");
+  expect(await data(page, "opens")).toHaveLength(1);
   await page.evaluate(() =>
     window.dispatchEvent(new Event("fixture-open-release")),
   );
   await expect(creationDialog(page)).not.toBeVisible();
-  expect(await data(page, "opens")).toHaveLength(2);
+  expect(await data(page, "opens")).toHaveLength(1);
 });
 
-test("failed explicit reopen can be canceled without deleting the portable project", async ({
-  page,
-}) => {
-  await open(page, "?local&existing&confirmed-open-fails");
-  await chooseDirectory(page);
-  await create(page);
-  await existingConfirmation(page)
-    .getByRole("button", { name: "Open existing project", exact: true })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Could not open the project",
-  );
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  expect(await data(page, "removes")).toBeNull();
-  expect(await data(page, "saves")).toBeNull();
-  expect(await data(page, "result")).toEqual({ action: "canceled" });
-});
-
-test("local deletion explains retained files and explicit reopen; cloud keeps permanent deletion semantics", async ({
+test("local deletion explains retained files without recovery; cloud keeps permanent deletion semantics", async ({
   page,
 }) => {
   for (const deployment of ["local", "cloud"]) {
@@ -572,13 +534,16 @@ test("local deletion explains retained files and explicit reopen; cloud keeps pe
     const dialog = page.getByRole("dialog", { name: "Delete Project?" });
     await expect(dialog).toContainText("Portable project");
     if (deployment === "local") {
-      await expect(dialog).toContainText("files, and task data will be kept");
-      await expect(dialog).toContainText("explicitly reopen its directory");
+      await expect(dialog).toContainText("directory and files will be kept");
+      await expect(dialog).toContainText("creates a new project");
+      await expect(dialog).toContainText(
+        "previous tasks and settings will not be restored",
+      );
       await expect(dialog).not.toContainText("permanently delete");
     } else {
       await expect(dialog).toContainText("permanently delete");
       await expect(dialog).not.toContainText(
-        "files, and task data will be kept",
+        "directory and files will be kept",
       );
     }
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();

@@ -7,13 +7,12 @@
     "selectColor": "Select project color",
     "creating": "Creating...",
     "createButton": "Create Project",
-    "existingProjectTitle": "既存のプロジェクトを開きますか？",
-    "existingProjectDescription": "このディレクトリには既に「{{name}}」があります。開きますか？元の名前、タスク、設定は保持され、新しいプロジェクト用に入力した情報は使われません。",
-    "openExistingProject": "既存のプロジェクトを開く"
+    "workspaceHint": "新しいプロジェクトに使用するディレクトリを選択します。エージェントは起動しません。",
+    "createdWorkspaceSaveFailed": "プロジェクトは作成されましたが、Git 設定を保存できませんでした。保存を再試行してください。キャンセルしてもプロジェクトとファイルは保持されます。"
   },
   "deleteProjectDialog": {
     "title": "Delete Project?",
-    "description": "このデバイスから「{{name}}」を削除しますか？ディレクトリ、ファイル、タスクのデータは保持されます。ディレクトリを明示的に開き直した場合にのみ復元されます。",
+    "description": "Vibe Studio から「{{name}}」を削除しますか？ディレクトリとファイルは保持されます。同じディレクトリを再び選ぶと新しいプロジェクトが作成され、以前のタスクや設定は復元されません。",
     "cloudDescription": "「{{name}}」とすべてのタスクを完全に削除します。この操作は元に戻せません。",
     "error": "Failed to delete project. Please try again."
   },

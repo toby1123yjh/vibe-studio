@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use db::models::agent_runtime::{
     AgentEventRecord, AgentRunCommandRecord, AgentRunStateRecord, AgentRuntimePersistenceError,
@@ -81,6 +83,10 @@ pub enum AgentRunCommandError {
     Port(#[from] AgentRunPortError),
     #[error("AgentRun command {0} is already being delivered")]
     DeliveryInProgress(Uuid),
+    #[error(
+        "Native interaction command {0} has an unconfirmed delivery; it cannot be resent automatically"
+    )]
+    ReplyDeliveryUnconfirmed(Uuid),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -110,6 +116,16 @@ where
         let (record, _) = AgentRunCommandRecord::enqueue(self.pool, &command).await?;
         if record.delivery_status == "delivered" {
             return Ok(());
+        }
+        if record.delivery_status == "failed"
+            && matches!(
+                &record.command_envelope.0.command,
+                executors::runtime::AgentRunPortCommand::ReplyInteraction { .. }
+            )
+        {
+            return Err(AgentRunCommandError::ReplyDeliveryUnconfirmed(
+                record.command_id,
+            ));
         }
         self.deliver(record.command_id).await
     }
@@ -324,7 +340,9 @@ impl<'a> AgentRuntimeReadService<'a> {
         };
         stats.event_count = all_events.len() as u64;
         stats.unknown_event_count = page.state.unknown_event_count;
+        let mut identities = SemanticEventIdentities::default();
         for event in &all_events {
+            identities.observe(event);
             stats.first_event_at = stats.first_event_at.map_or(Some(event.timestamp), |value| {
                 Some(value.min(event.timestamp))
             });
@@ -332,15 +350,14 @@ impl<'a> AgentRuntimeReadService<'a> {
                 Some(value.max(event.timestamp))
             });
             match &event.payload {
-                AgentEventPayload::Message { .. } => stats.message_count += 1,
-                AgentEventPayload::Thinking { .. } => stats.thinking_count += 1,
-                AgentEventPayload::ToolCall { .. } => {
-                    stats.tool_call_count += 1;
-                }
-                AgentEventPayload::ApprovalRequested { .. } => stats.approval_request_count += 1,
-                AgentEventPayload::ApprovalResolved { .. } => stats.approval_resolution_count += 1,
-                AgentEventPayload::InputRequested { .. } => stats.input_request_count += 1,
-                AgentEventPayload::InputResolved { .. } => stats.input_resolution_count += 1,
+                AgentEventPayload::Conversation { .. }
+                | AgentEventPayload::Message { .. }
+                | AgentEventPayload::Thinking { .. }
+                | AgentEventPayload::ToolCall { .. }
+                | AgentEventPayload::ApprovalRequested { .. }
+                | AgentEventPayload::ApprovalResolved { .. }
+                | AgentEventPayload::InputRequested { .. }
+                | AgentEventPayload::InputResolved { .. } => {}
                 AgentEventPayload::TokenUsage {
                     input_tokens,
                     output_tokens,
@@ -361,7 +378,101 @@ impl<'a> AgentRuntimeReadService<'a> {
                 | AgentEventPayload::SessionObserved { .. } => {}
             }
         }
+        stats.message_count = identities.messages.len() as u64;
+        stats.thinking_count = identities.thinking.len() as u64;
+        stats.tool_call_count = identities.tools.len() as u64;
+        stats.approval_request_count = identities.approval_requests.len() as u64;
+        stats.approval_resolution_count = identities.approval_resolutions.len() as u64;
+        stats.input_request_count = identities.input_requests.len() as u64;
+        stats.input_resolution_count = identities.input_resolutions.len() as u64;
         Ok(stats)
+    }
+}
+
+#[derive(Default)]
+struct SemanticEventIdentities {
+    messages: HashSet<(Uuid, String)>,
+    thinking: HashSet<(Uuid, String)>,
+    tools: HashSet<(Uuid, String)>,
+    approval_requests: HashSet<(Uuid, String)>,
+    approval_resolutions: HashSet<(Uuid, String)>,
+    input_requests: HashSet<(Uuid, String)>,
+    input_resolutions: HashSet<(Uuid, String)>,
+}
+
+impl SemanticEventIdentities {
+    fn observe(&mut self, event: &AgentEventEnvelope) {
+        use executors::runtime::{
+            ConversationBlockKind, ConversationBlockOperation, ConversationInteractionKind,
+            ConversationInteractionStatus,
+        };
+
+        let key = |id: String| (event.run_attempt_id, id);
+        match &event.payload {
+            AgentEventPayload::Conversation { update } => {
+                let fields = match &update.operation {
+                    ConversationBlockOperation::Snapshot { fields }
+                    | ConversationBlockOperation::Patch { fields, .. } => Some(fields),
+                    _ => None,
+                };
+                match update.kind {
+                    ConversationBlockKind::Text => {
+                        self.messages.insert(key(update.block_id.clone()));
+                    }
+                    ConversationBlockKind::Reasoning => {
+                        self.thinking.insert(key(update.block_id.clone()));
+                    }
+                    ConversationBlockKind::Tool => {
+                        // Fields may be omitted on later patches. The stable
+                        // block ID, rather than a patch's native ID, owns this.
+                        self.tools.insert(key(update.block_id.clone()));
+                    }
+                    _ => {}
+                }
+                if let Some(interaction) = fields.and_then(|fields| fields.interaction.as_ref()) {
+                    let (requested, resolved) = match interaction.kind {
+                        ConversationInteractionKind::Permission => {
+                            (&mut self.approval_requests, &mut self.approval_resolutions)
+                        }
+                        ConversationInteractionKind::Question => {
+                            (&mut self.input_requests, &mut self.input_resolutions)
+                        }
+                    };
+                    requested.insert(key(interaction.request_id.clone()));
+                    if matches!(
+                        interaction.status,
+                        ConversationInteractionStatus::Resolved
+                            | ConversationInteractionStatus::Cancelled
+                    ) {
+                        resolved.insert(key(interaction.request_id.clone()));
+                    }
+                }
+            }
+            AgentEventPayload::Message { message, .. } => {
+                self.messages.insert(key(message.message_id.to_string()));
+            }
+            AgentEventPayload::Thinking { .. } => {
+                self.thinking.insert(key(event.event_id.to_string()));
+            }
+            AgentEventPayload::ToolCall { tool_call_id, .. } => {
+                self.tools.insert(key(tool_call_id
+                    .clone()
+                    .unwrap_or_else(|| event.event_id.to_string())));
+            }
+            AgentEventPayload::ApprovalRequested { approval_id, .. } => {
+                self.approval_requests.insert(key(approval_id.clone()));
+            }
+            AgentEventPayload::ApprovalResolved { approval_id, .. } => {
+                self.approval_resolutions.insert(key(approval_id.clone()));
+            }
+            AgentEventPayload::InputRequested { input_id, .. } => {
+                self.input_requests.insert(key(input_id.clone()));
+            }
+            AgentEventPayload::InputResolved { input_id, .. } => {
+                self.input_resolutions.insert(key(input_id.clone()));
+            }
+            _ => {}
+        }
     }
 }
 

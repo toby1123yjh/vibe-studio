@@ -35,7 +35,7 @@
   },
   "createProjectDialog": {
     "workspaceLabel": "工作目录（必选）",
-    "workspaceHint": "选择项目目录。打开已有项目需要确认，不会启动智能体。",
+    "workspaceHint": "选择新项目使用的目录，不会启动智能体。",
     "chooseWorkspace": "选择文件夹或 Git 仓库",
     "changeWorkspace": "更改位置",
     "machineLabel": "所属机器",
@@ -54,14 +54,11 @@
     "selectColor": "选择项目颜色",
     "creating": "正在创建…",
     "createButton": "创建项目",
-    "openedWorkspaceSaveFailed": "项目已打开，但 Git 设置保存失败。可重试保存；取消不会删除项目和文件。",
-    "existingProjectTitle": "打开已有项目？",
-    "existingProjectDescription": "此目录已包含项目“{{name}}”，是否打开？将保留原项目名称、任务和设置，不使用本次填写的新项目信息。",
-    "openExistingProject": "打开已有项目"
+    "createdWorkspaceSaveFailed": "项目已创建，但 Git 设置保存失败。可重试保存；取消不会删除项目和文件。"
   },
   "deleteProjectDialog": {
     "title": "删除项目？",
-    "description": "从当前设备移除“{{name}}”？项目目录、文件和任务资料会保留，只有主动重新打开该目录才会恢复。",
+    "description": "从 Vibe Studio 移除“{{name}}”？目录和文件会保留。再次选择此目录将创建新项目，不会恢复原任务和设置。",
     "cloudDescription": "这将永久删除“{{name}}”及其所有任务。此操作无法撤销。",
     "error": "删除项目失败，请重试。"
   },

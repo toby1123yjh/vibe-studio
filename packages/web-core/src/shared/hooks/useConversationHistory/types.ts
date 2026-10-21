@@ -9,7 +9,7 @@ import {
 export interface CanonicalConversationIdentity {
   readonly agentRunId: string;
   readonly runAttemptId: string;
-  readonly runAttemptNumber: number;
+  readonly runAttemptNumber: number | null;
   readonly eventId: string;
   readonly eventIds: readonly string[];
   readonly sequence: bigint;
@@ -20,6 +20,9 @@ export type PatchTypeWithKey = PatchType & {
   patchKey: string;
   executionProcessId?: string;
   canonical?: CanonicalConversationIdentity;
+  /** Stable read-model reference. Text and tool details subscribe independently. */
+  conversationBlockId?: string;
+  conversationParentBlockId?: string | null;
 };
 
 /**

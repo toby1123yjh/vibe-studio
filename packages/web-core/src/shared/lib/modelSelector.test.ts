@@ -1,6 +1,11 @@
 import { expect, test as it } from '@playwright/test';
+import { createRequire } from 'node:module';
 const describe = it.describe;
-import type { ModelInfo, ModelSelectorConfig } from 'shared/types';
+import type {
+  ExecutorConfig,
+  ModelInfo,
+  ModelSelectorConfig,
+} from 'shared/types';
 import {
   appendPresetModel,
   buildModelSelectionOverride,
@@ -16,7 +21,51 @@ import {
   resolveNativeModelId,
   resolveNativeReasoningId,
   resolveDefaultModelId,
+  isCodexReasoningConfigError,
+  resolveActiveReasoning,
+  buildReasoningSelectionOverride,
 } from './modelSelector';
+
+// The generated file belongs to the root CommonJS package in Node tests.
+const { PermissionPolicy }: typeof import('shared/types') = createRequire(
+  import.meta.url
+)('../../../../../shared/types.ts');
+
+describe('Codex configuration compatibility warning', () => {
+  const error =
+    'Codex native configuration discovery failed: I/O error: config/read request failed: invalid configuration: unknown variant `max`, expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` in `model_reasoning_effort`';
+
+  it('recognizes the native effort parser error without rewriting it', () => {
+    expect(isCodexReasoningConfigError('CODEX', error)).toBe(true);
+    expect(
+      isCodexReasoningConfigError(
+        'CODEX',
+        error.replace('unknown variant', 'invalid variant')
+      )
+    ).toBe(true);
+    expect(
+      isCodexReasoningConfigError(
+        'CODEX',
+        `Update Codex on this host. ${error}`
+      )
+    ).toBe(true);
+  });
+
+  it('does not call unrelated discovery failures a Codex effort incompatibility', () => {
+    expect(isCodexReasoningConfigError('GEMINI', error)).toBe(false);
+    expect(isCodexReasoningConfigError(null, error)).toBe(false);
+    expect(isCodexReasoningConfigError('CODEX', null)).toBe(false);
+    expect(
+      isCodexReasoningConfigError('CODEX', 'config/read request timed out')
+    ).toBe(false);
+    expect(
+      isCodexReasoningConfigError(
+        'CODEX',
+        'config/read: unknown variant `other` in `sandbox_mode`'
+      )
+    ).toBe(false);
+  });
+});
 
 const models: ModelInfo[] = [
   {
@@ -440,6 +489,191 @@ describe('model selector reasoning overrides', () => {
     ).toEqual({
       selectedReasoningId: 'unsupported',
       unavailable: true,
+    });
+  });
+});
+
+describe('Codex active-mode reasoning selection', () => {
+  const preset: ExecutorConfig = {
+    executor: 'CODEX',
+    permission_policy: PermissionPolicy.PLAN,
+    reasoning_id: 'xhigh',
+    provider_options: {
+      provider: 'codex',
+      service_tier: 'priority',
+      plan_mode_reasoning_effort: 'medium',
+    },
+  };
+
+  it('uses the plan effort for a plan preset, preserving ordinary reasoning', () => {
+    const request: ExecutorConfig = {
+      executor: 'CODEX',
+      reasoning_id: 'xhigh',
+      provider_options: {
+        provider: 'codex',
+        plan_mode_reasoning_effort: 'high',
+      },
+    };
+    expect(resolveActiveReasoning('CODEX', request, preset, 'max')).toEqual({
+      isCodexPlan: true,
+      configuredReasoningId: 'high',
+      inheritedReasoningId: 'medium',
+    });
+    expect(request.reasoning_id).toBe('xhigh');
+  });
+
+  for (const policy of [PermissionPolicy.AUTO, PermissionPolicy.SUPERVISED]) {
+    it(`uses ordinary reasoning when ${policy} overrides a plan preset`, () => {
+      const request: ExecutorConfig = {
+        ...preset,
+        variant: 'PLAN',
+        permission_policy: policy,
+        reasoning_id: null,
+      };
+      expect(resolveActiveReasoning('CODEX', request, preset, 'high')).toEqual({
+        isCodexPlan: false,
+        configuredReasoningId: null,
+        inheritedReasoningId: 'high',
+      });
+    });
+  }
+
+  it('selects plan mode by effective policy rather than a preset name', () => {
+    expect(
+      resolveActiveReasoning(
+        'CODEX',
+        {
+          executor: 'CODEX',
+          variant: 'CUSTOM',
+          permission_policy: PermissionPolicy.PLAN,
+        },
+        null,
+        'xhigh'
+      )
+    ).toEqual({
+      isCodexPlan: true,
+      configuredReasoningId: undefined,
+      inheritedReasoningId: null,
+    });
+    expect(
+      resolveActiveReasoning(
+        'CODEX',
+        { executor: 'CODEX', variant: 'PLAN' },
+        {
+          executor: 'CODEX',
+          permission_policy: PermissionPolicy.AUTO,
+          reasoning_id: 'high',
+        },
+        'xhigh'
+      ).isCodexPlan
+    ).toBe(false);
+  });
+
+  for (const planEffort of [undefined, null]) {
+    it(`inherits the preset plan effort for ${String(planEffort)}, without borrowing ordinary native defaults`, () => {
+      const request: ExecutorConfig = {
+        executor: 'CODEX',
+        permission_policy: null,
+        reasoning_id: 'max',
+        provider_options: {
+          provider: 'codex',
+          plan_mode_reasoning_effort: planEffort,
+        },
+      };
+      const active = resolveActiveReasoning('CODEX', request, preset, 'xhigh');
+      expect(active).toEqual({
+        isCodexPlan: true,
+        configuredReasoningId: planEffort,
+        inheritedReasoningId: 'medium',
+      });
+      expect(
+        getReasoningDisplayLabel(
+          models[0].reasoning_options,
+          active.configuredReasoningId,
+          active.configuredReasoningId !== undefined,
+          'Inherit settings',
+          active.inheritedReasoningId
+        )
+      ).toBe('Medium');
+
+      const unknown = resolveActiveReasoning(
+        'CODEX',
+        { ...request, permission_policy: PermissionPolicy.PLAN },
+        null,
+        'xhigh'
+      );
+      expect(unknown.inheritedReasoningId).toBeNull();
+      expect(
+        getReasoningDisplayLabel(
+          models[0].reasoning_options,
+          unknown.configuredReasoningId,
+          unknown.configuredReasoningId !== undefined,
+          'Inherit settings',
+          unknown.inheritedReasoningId
+        )
+      ).toBe('Inherit settings');
+    });
+  }
+
+  it('changes only plan effort and retains service tier, ordinary effort and opaque IDs', () => {
+    const request: ExecutorConfig = { ...preset, reasoning_id: null };
+    const change = buildReasoningSelectionOverride({
+      isCodexPlan: true,
+      reasoningId: 'Vendor/Exact:Effort',
+      providerOptions: request.provider_options,
+    });
+    expect(change).toEqual({
+      provider_options: {
+        provider: 'codex',
+        service_tier: 'priority',
+        plan_mode_reasoning_effort: 'Vendor/Exact:Effort',
+      },
+    });
+    expect({ ...request, ...change }.reasoning_id).toBeNull();
+    expect(request.provider_options).toEqual(preset.provider_options);
+  });
+
+  it('preserves explicit null for plan inheritance and does not clear ordinary reasoning', () => {
+    const change = buildReasoningSelectionOverride({
+      isCodexPlan: true,
+      reasoningId: null,
+      providerOptions: preset.provider_options,
+    });
+    const request: ExecutorConfig = JSON.parse(
+      JSON.stringify({ ...preset, ...change })
+    );
+    expect(request.reasoning_id).toBe('xhigh');
+    expect(request.provider_options).toEqual({
+      provider: 'codex',
+      service_tier: 'priority',
+      plan_mode_reasoning_effort: null,
+    });
+    expect(resolveActiveReasoning('CODEX', request, preset, 'max')).toEqual({
+      isCodexPlan: true,
+      configuredReasoningId: null,
+      inheritedReasoningId: 'medium',
+    });
+  });
+
+  it('leaves ordinary and non-Codex reasoning overrides unchanged', () => {
+    expect(
+      buildReasoningSelectionOverride({
+        isCodexPlan: false,
+        reasoningId: null,
+        providerOptions: preset.provider_options,
+      })
+    ).toEqual({ reasoning_id: null });
+    expect(
+      resolveActiveReasoning(
+        'CLAUDE_CODE',
+        { executor: 'CLAUDE_CODE', permission_policy: PermissionPolicy.PLAN },
+        { executor: 'CLAUDE_CODE', reasoning_id: 'high' },
+        'xhigh'
+      )
+    ).toEqual({
+      isCodexPlan: false,
+      configuredReasoningId: 'high',
+      inheritedReasoningId: 'xhigh',
     });
   });
 });

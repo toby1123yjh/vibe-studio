@@ -36,7 +36,9 @@ pub(crate) fn build_command(
 pub(crate) fn encode_control(control: DirectControl) -> Result<Vec<u8>, serde_json::Error> {
     if matches!(
         control,
-        DirectControl::Cancel | DirectControl::Approve { .. }
+        DirectControl::Cancel
+            | DirectControl::Approve { .. }
+            | DirectControl::ReplyInteraction { .. }
     ) {
         // This is a typed owned-peer route, not a native frame. The host
         // audits only the exact bytes returned by successful peer delivery.

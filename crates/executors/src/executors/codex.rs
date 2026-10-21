@@ -299,6 +299,10 @@ pub struct Codex {
     #[ts(skip)]
     #[derivative(Debug = "ignore", PartialEq = "ignore")]
     approvals: Option<Arc<dyn ExecutorApprovalService>>,
+    #[serde(skip)]
+    #[ts(skip)]
+    #[derivative(Debug = "ignore", PartialEq = "ignore")]
+    native_interactions: bool,
 }
 
 #[async_trait]
@@ -642,32 +646,37 @@ impl Codex {
         selected_skills: &[SelectedSkill],
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
+        let mut direct = self.clone();
+        direct.native_interactions = true;
         match intent {
             super::provider_adapter::DirectIntent::Initial => {
-                self.spawn_slash_command(current_dir, prompt, None, selected_skills.to_vec(), env)
+                direct
+                    .spawn_slash_command(current_dir, prompt, None, selected_skills.to_vec(), env)
                     .await
             }
             super::provider_adapter::DirectIntent::FollowUp
             | super::provider_adapter::DirectIntent::Resume => {
-                self.spawn_slash_command(
-                    current_dir,
-                    prompt,
-                    session_id,
-                    selected_skills.to_vec(),
-                    env,
-                )
-                .await
+                direct
+                    .spawn_slash_command(
+                        current_dir,
+                        prompt,
+                        session_id,
+                        selected_skills.to_vec(),
+                        env,
+                    )
+                    .await
             }
             super::provider_adapter::DirectIntent::Review => {
-                self.spawn_review_target(
-                    current_dir,
-                    ReviewTarget::Custom {
-                        instructions: prompt.to_string(),
-                    },
-                    session_id,
-                    env,
-                )
-                .await
+                direct
+                    .spawn_review_target(
+                        current_dir,
+                        ReviewTarget::Custom {
+                            instructions: prompt.to_string(),
+                        },
+                        session_id,
+                        env,
+                    )
+                    .await
             }
         }
     }
@@ -985,6 +994,14 @@ impl Codex {
         }
     }
 
+    fn active_reasoning_effort(&self) -> Option<&ReasoningEffort> {
+        if self.plan {
+            self.plan_mode_reasoning_effort.as_ref()
+        } else {
+            self.model_reasoning_effort.as_ref()
+        }
+    }
+
     async fn spawn_inner(
         &self,
         current_dir: &Path,
@@ -1114,6 +1131,8 @@ impl Codex {
             .map(WorkflowMcpReadiness::startup_deadline);
         let prompt_gate = WorkflowPromptGate::new(readiness.is_some());
         let command_parts =
+            command_adapter::append_runtime_reasoning_overrides(command_parts, self);
+        let command_parts =
             command_adapter::append_workflow_mcp(command_parts, workflow_mcp.as_ref());
         let (program_path, args) = command_parts.into_resolved().await?;
         let launch_context = self.launch_context(&program_path, &args, current_dir);
@@ -1158,13 +1177,11 @@ impl Codex {
             (Some(SandboxMode::DangerFullAccess), None)
         );
         let plan_mode = self.plan;
-        let reasoning_effort = (if self.plan {
-            self.plan_mode_reasoning_effort.as_ref()
-        } else {
-            self.model_reasoning_effort.as_ref()
-        })
-        .map(ReasoningEffort::to_protocol);
+        let reasoning_effort = self
+            .active_reasoning_effort()
+            .map(ReasoningEffort::to_protocol);
         let approvals = self.approvals.clone();
+        let native_interactions = self.native_interactions;
         let repo_context = env.repo_context.clone();
         let commit_reminder = env.commit_reminder;
         let commit_reminder_prompt = env.commit_reminder_prompt.clone();
@@ -1190,6 +1207,7 @@ impl Codex {
                 commit_reminder_prompt,
                 cancel_for_task.clone(),
             );
+            client.enable_native_interactions(native_interactions);
             let rpc_peer = JsonRpcPeer::spawn(
                 child_stdin,
                 child_stdout,
@@ -1345,15 +1363,26 @@ fn apply_model_discovery(
             }
             match discovery.native_defaults {
                 Ok(defaults) => options.model_selector.native_defaults = Some(defaults),
-                Err(error) => errors.push(format!(
-                    "Codex native configuration discovery failed: {error}"
-                )),
+                Err(error) => errors.push(native_configuration_discovery_error(&error)),
             }
         }
         Err(error) => errors.push(format!("Codex model/config discovery failed: {error}")),
     }
     options.error = (!errors.is_empty()).then(|| errors.join("; "));
     options.loading_models = false;
+}
+
+fn native_configuration_discovery_error(error: &ExecutorError) -> String {
+    let diagnostic = error.to_string();
+    let unsupported_effort = diagnostic.contains("model_reasoning_effort")
+        && (diagnostic.contains("unknown variant") || diagnostic.contains("invalid variant"));
+    if unsupported_effort {
+        format!(
+            "Codex native configuration discovery failed: The Codex executable used by Vibe Studio does not support the configured reasoning effort. Update that Codex installation or select a supported reasoning effort. Original diagnostic: {diagnostic}"
+        )
+    } else {
+        format!("Codex native configuration discovery failed: {diagnostic}")
+    }
 }
 
 /// Convert a live `model/list` response into the UI model-selector shape,
@@ -1497,7 +1526,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (!Object.hasOwn(request, 'id')) return;
   let result;
   if (request.method === 'initialize') result = { userAgent: 'codex/0.115.0', platformFamily: process.platform === 'win32' ? 'windows' : 'unix', platformOs: process.platform };
-  else if (request.method === 'config/read') result = { config: { model: 'unlisted-native-model', model_reasoning_effort: 'future-effort', api_key: 'private-fixture-token' } };
+  else if (request.method === 'config/read') {
+    if (process.env.VK_FIXTURE_FAIL_CONFIG === '1') { process.stdout.write(JSON.stringify({ id: request.id, error: { code: -32000, message: 'invalid configuration: unknown variant `max`, expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` in `model_reasoning_effort`' } }) + '\n'); return; }
+    result = { config: { model: 'unlisted-native-model', model_reasoning_effort: 'future-effort', api_key: 'private-fixture-token' } };
+  }
   else if (request.method === 'model/list') {
     if (process.env.VK_FIXTURE_FAIL_CATALOG === '1') { process.stdout.write(JSON.stringify({ id: request.id, error: { code: -32000, message: 'catalog unavailable' } }) + '\n'); return; }
     result = { data: [{ id: 'catalog-model', model: 'catalog-model', displayName: 'Catalog Model', defaultReasoningEffort: 'low', supportedReasoningEfforts: [{reasoningEffort:'low'}] }], nextCursor: null };
@@ -1505,7 +1537,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   process.stdout.write(JSON.stringify({ id: request.id, result }) + '\n');
 });
 "#).unwrap();
-        for fail_catalog in [false, true] {
+        for (fail_catalog, fail_config) in [(false, false), (true, false), (false, true)] {
             std::fs::write(&trace, "").unwrap();
             let mut executor = test_executor();
             executor.cmd.base_command_override = Some(format!("node \"{}\"", script.display()));
@@ -1519,6 +1551,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
                     "VK_FIXTURE_FAIL_CATALOG".into(),
                     if fail_catalog { "1" } else { "0" }.into(),
                 ),
+                (
+                    "VK_FIXTURE_FAIL_CONFIG".into(),
+                    if fail_config { "1" } else { "0" }.into(),
+                ),
             ]));
             let result = executor
                 .discover_models(directory.path().to_path_buf())
@@ -1528,10 +1564,23 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             options.model_selector.catalog_source =
                 Some(crate::model_selector::ModelCatalogSource::Builtin);
             super::apply_model_discovery(&mut options, result);
-            let defaults = options.model_selector.native_defaults.as_ref().unwrap();
-            assert_eq!(defaults.model_id.as_deref(), Some("unlisted-native-model"));
-            assert_eq!(defaults.reasoning_id.as_deref(), Some("future-effort"));
-            assert_eq!(options.error.is_some(), fail_catalog);
+            if fail_config {
+                assert!(options.model_selector.native_defaults.is_none());
+                let error = options.error.as_deref().unwrap();
+                assert!(error.contains("Update that Codex installation"));
+                assert!(error.contains("select a supported reasoning effort"));
+                assert!(error.contains("unknown variant `max`"));
+                assert_eq!(options.model_selector.models[0].id, "catalog-model");
+                assert_eq!(
+                    options.model_selector.models[0].reasoning_options[0].id,
+                    "low"
+                );
+            } else {
+                let defaults = options.model_selector.native_defaults.as_ref().unwrap();
+                assert_eq!(defaults.model_id.as_deref(), Some("unlisted-native-model"));
+                assert_eq!(defaults.reasoning_id.as_deref(), Some("future-effort"));
+            }
+            assert_eq!(options.error.is_some(), fail_catalog || fail_config);
             assert!(!options.loading_models);
             assert_eq!(
                 options.model_selector.catalog_source,
@@ -1582,6 +1631,116 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
                 !request["method"].as_str().unwrap().starts_with("thread/")
                     && !request["method"].as_str().unwrap().starts_with("turn/")
             }));
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_runtime_effort_repairs_incompatible_native_config_before_any_thread_or_turn()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("startup-config.cjs");
+        let trace = directory.path().join("requests.jsonl");
+        std::fs::write(&script, r#"
+const fs = require('node:fs');
+const readline = require('node:readline');
+let effort = 'max';
+const args = process.argv.slice(2);
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '-c' && args[i + 1]?.startsWith('model_reasoning_effort=')) effort = JSON.parse(args[++i].split('=').slice(1).join('='));
+}
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  fs.appendFileSync(process.env.VK_FIXTURE_TRACE, JSON.stringify({method: request.method, effort}) + '\n');
+  if (!Object.hasOwn(request, 'id')) return;
+  if (request.method === 'initialize') {
+    process.stdout.write(JSON.stringify({id: request.id, result: {userAgent: 'codex/older-compatible'}}) + '\n');
+  } else if (request.method === 'config/read') {
+    const response = effort === 'max'
+      ? {error: {code: -32000, message: 'invalid configuration: unknown variant `max` in `model_reasoning_effort`'}}
+      : {result: {config: {model: 'fixture-model', model_reasoning_effort: effort}}};
+    process.stdout.write(JSON.stringify({id: request.id, ...response}) + '\n');
+  } else process.exit(21);
+});
+"#).unwrap();
+
+        for effort in [None, Some("xhigh")] {
+            std::fs::write(&trace, "").unwrap();
+            let mut executor = test_executor();
+            executor.model_reasoning_effort = effort.map(|value| value.parse().unwrap());
+            executor.cmd.base_command_override = Some(format!("node \"{}\"", script.display()));
+            executor.cmd.additional_params =
+                Some(vec!["-c".into(), "model_reasoning_effort=\"max\"".into()]);
+            executor.cmd.env = Some(std::collections::HashMap::from([(
+                "VK_FIXTURE_TRACE".into(),
+                trace.to_string_lossy().into_owned(),
+            )]));
+            let parts = executor
+                .build_command_builder()
+                .unwrap()
+                .build_initial()
+                .unwrap();
+            let request_cwd = directory.path().to_string_lossy().into_owned();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let env = crate::env::ExecutionEnv::new(
+                crate::env::RepoContext::default(),
+                false,
+                String::new(),
+            );
+            let mut child = executor
+                .spawn_app_server(
+                    directory.path(),
+                    parts,
+                    &env,
+                    move |client, _, _, _, _| async move {
+                        let result = client.model_configuration_read(request_cwd, None).await;
+                        let _ = sender.send(result);
+                        Ok(())
+                    },
+                )
+                .await
+                .unwrap();
+            let result = tokio::time::timeout(super::MODELS_DISCOVERY_TIMEOUT, receiver).await;
+            if let Some(cancel) = child.cancel.as_ref() {
+                cancel.cancel();
+            }
+            let _ = child.child.kill().await;
+            let result = result.unwrap().unwrap();
+            match effort {
+                Some(effort) => assert_eq!(result.unwrap().reasoning_id.as_deref(), Some(effort)),
+                None => assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("unknown variant `max`")
+                ),
+            }
+            let requests: Vec<serde_json::Value> = std::fs::read_to_string(&trace)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(requests.len(), 3);
+            assert!(requests.iter().all(|request| {
+                matches!(
+                    request["method"].as_str(),
+                    Some("initialize" | "initialized" | "config/read")
+                )
+            }));
+        }
+    }
+
+    #[test]
+    fn unrelated_config_errors_do_not_claim_codex_needs_updating() {
+        for diagnostic in [
+            "config/read failed: permission denied",
+            "invalid configuration: unknown variant `future` in `sandbox_mode`",
+            "config/read timed out while reading model_reasoning_effort",
+        ] {
+            let error = crate::executors::ExecutorError::InvalidConfiguration(diagnostic.into());
+            assert_eq!(
+                super::native_configuration_discovery_error(&error),
+                format!("Codex native configuration discovery failed: {error}")
+            );
         }
     }
 

@@ -13,6 +13,7 @@ use command_group::AsyncGroupChild;
 use db::{
     DBService,
     models::{
+        agent_conversation::ConversationInteractionReplyRecord,
         agent_runtime::{
             AgentEventRecord, AgentProviderSessionRecord, AgentRunRecord, NativeAuditStreamRecord,
         },
@@ -30,7 +31,7 @@ use executors::{
         CancellationToken, ExecutorExitResult, ExecutorExitSignal,
         provider_adapter::{
             DirectControl, DirectIntent, DirectProvider, DirectProviderLaunchRequest,
-            encode_control, require_capability,
+            StatefulProviderMapper, encode_control, require_capability,
         },
     },
     profile::ExecutorConfig,
@@ -39,15 +40,19 @@ use executors::{
         AgentEventEnvelope, AgentEventPayload, AgentEventStream, AgentRunIntent, AgentRunPort,
         AgentRunPortCommand, AgentRunPortCommandEnvelope, AgentRunPortError, AgentRunPortSnapshot,
         AgentRunRequestEnvelope, AgentRunStatus, AgentRuntimeError, AgentRuntimeErrorKind,
-        AgentRuntimeMessageRole, CanonicalMessage, NativeAuditChannel, NativeAuditFrame,
-        NativeAuditIntegrityStatus, NativeAuditMetadata, NativeAuditReference, NativeAuditWriter,
-        ProviderSessionReference, RunAttemptMode, RunAttemptRequest,
+        AgentRuntimeMessageRole, CanonicalMessage, ConversationBlockFields, ConversationBlockKind,
+        ConversationBlockOperation, ConversationBlockUpdate, ConversationInteraction,
+        ConversationInteractionKind, ConversationInteractionReply, ConversationInteractionStatus,
+        NativeAuditChannel, NativeAuditFrame, NativeAuditIntegrityStatus, NativeAuditMetadata,
+        NativeAuditReference, NativeAuditWriter, ProviderSessionReference, RunAttemptMode,
+        RunAttemptRequest,
     },
     workflow_mcp,
 };
 use futures::{StreamExt, stream};
 use rand::{RngCore, rngs::OsRng};
 use serde::Serialize;
+use services::services::agent_conversation::AgentConversationService;
 use sqlx::{Row, types::Json};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -364,6 +369,59 @@ impl LocalAgentRunPort {
                 }
             }
         }
+        if let Err(error) = self.reconcile_interaction_deliveries().await {
+            tracing::error!(%error, "failed to recover interrupted native interaction deliveries");
+        }
+    }
+
+    /// A process host may have accepted a reply before the application stopped.
+    /// Recover its visible state through the canonical writer, never by sending
+    /// that decision again or changing a read-model DTO at the same revision.
+    async fn reconcile_interaction_deliveries(&self) -> Result<(), AgentRunPortError> {
+        let replies: Vec<ConversationInteractionReplyRecord> = sqlx::query_as(
+            "SELECT * FROM agent_conversation_interaction_replies
+             WHERE delivery_status IN ('delivering', 'delivery_unknown')",
+        )
+        .fetch_all(&self.db.pool)
+        .await
+        .map_err(port_database)?;
+        for reply in replies {
+            if reply.delivery_status == "delivering" {
+                ConversationInteractionReplyRecord::mark_delivery(
+                    &self.db.pool,
+                    reply.reply_id,
+                    "delivery_unknown",
+                    Some("native reply delivery interrupted"),
+                )
+                .await
+                .map_err(port_database)?;
+            }
+            let (request, attempt) = self.load_request(reply.agent_run_id).await?;
+            if attempt.run_attempt_id != reply.run_attempt_id {
+                continue;
+            }
+            let Some((block_id, interaction)) = AgentConversationService::new(&self.db.pool)
+                .interaction_block(reply.agent_run_id, reply.run_attempt_id, &reply.request_id)
+                .await
+                .map_err(|error| AgentRunPortError::Unavailable(error.to_string()))?
+            else {
+                continue;
+            };
+            if matches!(
+                interaction.status,
+                ConversationInteractionStatus::Pending | ConversationInteractionStatus::Delivering
+            ) {
+                self.append_interaction_status(
+                    &request,
+                    &attempt,
+                    &block_id,
+                    &interaction,
+                    ConversationInteractionStatus::DeliveryUnknown,
+                )
+                .await?;
+            }
+        }
+        Ok(())
     }
 
     /// Persist a complete AgentRun identity without launching its provider.
@@ -2654,6 +2712,7 @@ impl LocalAgentRunPort {
         let port = self.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
+            let mut mapper = StatefulProviderMapper::new(provider);
             loop {
                 let mut bytes = Vec::new();
                 match reader.read_until(b'\n', &mut bytes).await {
@@ -2674,14 +2733,6 @@ impl LocalAgentRunPort {
                                 break;
                             }
                         };
-                        let decoded = match provider.decode_native_frame(&frame) {
-                            Ok(decoded) => decoded,
-                            Err(error) => {
-                                let _ =
-                                    notices.send(OutputNotice::ProtocolFailure(error.to_string()));
-                                break;
-                            }
-                        };
                         let mapped = {
                             let writers = port.audit_writers.lock().await;
                             let Some(writer) = writers.get(&attempt.run_attempt_id) else {
@@ -2690,7 +2741,7 @@ impl LocalAgentRunPort {
                                 ));
                                 break;
                             };
-                            provider.map_provider_event(&decoded, writer.manifest())
+                            mapper.map_frame(&frame, writer.manifest())
                         };
                         let mapped = match mapped {
                             Ok(mapped) => mapped,
@@ -2700,6 +2751,7 @@ impl LocalAgentRunPort {
                                 break;
                             }
                         };
+                        let mut frame_terminal = None;
                         for event in mapped {
                             let terminal_status = match &event.payload {
                                 AgentEventPayload::LifecycleChanged { status }
@@ -2713,9 +2765,11 @@ impl LocalAgentRunPort {
                                 .append_mapped_event(&request, &attempt, event, native_ref.clone())
                                 .await;
                             if let Some(status) = terminal_status {
-                                let _ = notices.send(OutputNotice::ProviderTerminal(status));
-                                break;
+                                frame_terminal = Some(status);
                             }
+                        }
+                        if let Some(status) = frame_terminal {
+                            let _ = notices.send(OutputNotice::ProviderTerminal(status));
                         }
                     }
                     Err(error) => {
@@ -3082,6 +3136,163 @@ impl LocalAgentRunPort {
                 "control command is not present in a durable command store".to_string(),
             )),
         }
+    }
+
+    async fn append_interaction_status(
+        &self,
+        request: &AgentRunRequestEnvelope,
+        attempt: &RunAttemptRequest,
+        block_id: &str,
+        interaction: &ConversationInteraction,
+        status: ConversationInteractionStatus,
+    ) -> Result<(), AgentRunPortError> {
+        let mut interaction = interaction.clone();
+        interaction.status = status;
+        interaction.actionable = false;
+        self.append_event(
+            request,
+            attempt,
+            AgentEventPayload::Conversation {
+                update: Box::new(ConversationBlockUpdate {
+                    block_id: block_id.to_owned(),
+                    kind: ConversationBlockKind::Interaction,
+                    role: None,
+                    native_id: None,
+                    parent_block_id: None,
+                    operation: ConversationBlockOperation::Patch {
+                        fields: ConversationBlockFields {
+                            interaction: Some(interaction),
+                            ..Default::default()
+                        },
+                        clear_fields: Vec::new(),
+                    },
+                }),
+            },
+            Vec::new(),
+            Utc::now(),
+            None,
+        )
+        .await
+    }
+
+    async fn reply_interaction(
+        &self,
+        agent_run_id: Uuid,
+        run_attempt_id: Uuid,
+        reply_id: Uuid,
+        reply: &ConversationInteractionReply,
+    ) -> Result<(), AgentRunPortError> {
+        let payload = serde_json::to_value(reply)
+            .map_err(|error| AgentRunPortError::Rejected(error.to_string()))?;
+        // A retry of the same decision remains idempotent even if its attempt
+        // completed meanwhile. Never use that retry to write stdin again.
+        let existing: Option<ConversationInteractionReplyRecord> = sqlx::query_as(
+            "SELECT * FROM agent_conversation_interaction_replies WHERE reply_id = ?",
+        )
+        .bind(reply_id)
+        .fetch_optional(&self.db.pool)
+        .await
+        .map_err(port_database)?;
+        if let Some(existing) = existing {
+            if existing.agent_run_id != agent_run_id
+                || existing.run_attempt_id != run_attempt_id
+                || existing.request_id != reply.request_id
+                || existing.payload_json.0 != payload
+            {
+                return Err(AgentRunPortError::Rejected(
+                    "interaction reply identity was reused with a different decision".into(),
+                ));
+            }
+            return interaction_delivery_result(&existing.delivery_status);
+        }
+
+        let (request, attempt) = self.load_request(agent_run_id).await?;
+        if attempt.run_attempt_id != run_attempt_id {
+            return Err(AgentRunPortError::Rejected(
+                "interaction belongs to a different execution attempt".into(),
+            ));
+        }
+        if self.query(agent_run_id).await?.state.status.is_terminal() {
+            return Err(AgentRunPortError::Rejected(
+                "cannot answer an interaction for a terminal AgentRun".into(),
+            ));
+        }
+        let (block_id, interaction) = AgentConversationService::new(&self.db.pool)
+            .interaction_block(agent_run_id, attempt.run_attempt_id, &reply.request_id)
+            .await
+            .map_err(|error| AgentRunPortError::Unavailable(error.to_string()))?
+            .ok_or_else(|| {
+                AgentRunPortError::Rejected("native interaction is no longer pending".into())
+            })?;
+        validate_interaction_reply(&interaction, reply)?;
+        let direct_control = DirectControl::ReplyInteraction {
+            reply: reply.clone(),
+        };
+        let bytes = encode_control(
+            self.provider(&request.provider_id)?,
+            &attempt.capability_snapshot,
+            direct_control.clone(),
+        )
+        .map_err(|error| AgentRunPortError::Rejected(error.to_string()))?;
+        let (record, claimed) = ConversationInteractionReplyRecord::claim(
+            &self.db.pool,
+            request.session_id,
+            agent_run_id,
+            attempt.run_attempt_id,
+            &reply.request_id,
+            reply_id,
+            &payload,
+        )
+        .await
+        .map_err(|error| AgentRunPortError::Rejected(error.to_string()))?;
+        if !claimed {
+            return interaction_delivery_result(&record.delivery_status);
+        }
+        if let Err(error) = self
+            .append_interaction_status(
+                &request,
+                &attempt,
+                &block_id,
+                &interaction,
+                ConversationInteractionStatus::Delivering,
+            )
+            .await
+        {
+            ConversationInteractionReplyRecord::mark_delivery(
+                &self.db.pool,
+                reply_id,
+                "failed",
+                Some(&error.to_string()),
+            )
+            .await
+            .map_err(port_database)?;
+            return Err(error);
+        }
+
+        let result = self
+            .write_attached_control(&attempt, &bytes, direct_control)
+            .await;
+        let (status, delivery_status, delivery_error) = match &result {
+            Ok(()) => (ConversationInteractionStatus::Delivered, "delivered", None),
+            // A lost host response does not prove that native stdin was not
+            // written. Persist uncertainty before returning, with no resend.
+            Err(error) => (
+                ConversationInteractionStatus::DeliveryUnknown,
+                "delivery_unknown",
+                Some(error.to_string()),
+            ),
+        };
+        ConversationInteractionReplyRecord::mark_delivery(
+            &self.db.pool,
+            reply_id,
+            delivery_status,
+            delivery_error.as_deref(),
+        )
+        .await
+        .map_err(port_database)?;
+        self.append_interaction_status(&request, &attempt, &block_id, &interaction, status)
+            .await?;
+        result
     }
 
     async fn write_attached_control(
@@ -3543,6 +3754,14 @@ impl AgentRunPort for LocalAgentRunPort {
                 )
                 .await
             }
+            AgentRunPortCommand::ReplyInteraction {
+                run_attempt_id,
+                reply_id,
+                reply,
+            } => {
+                self.reply_interaction(agent_run_id, *run_attempt_id, *reply_id, reply)
+                    .await
+            }
             AgentRunPortCommand::Retry {
                 mode,
                 run_attempt_id,
@@ -3725,6 +3944,98 @@ fn resolve_process_host_executable() -> Result<PathBuf, AgentRunPortError> {
     )))
 }
 
+fn interaction_delivery_result(status: &str) -> Result<(), AgentRunPortError> {
+    match status {
+        "delivered" | "resolved" => Ok(()),
+        "pending" | "delivering" | "delivery_unknown" => Err(AgentRunPortError::Rejected(
+            "native interaction delivery is unconfirmed; the decision will not be resent".into(),
+        )),
+        _ => Err(AgentRunPortError::Rejected(format!(
+            "native interaction reply is {status}; the decision will not be resent"
+        ))),
+    }
+}
+
+fn validate_interaction_reply(
+    interaction: &ConversationInteraction,
+    reply: &ConversationInteractionReply,
+) -> Result<(), AgentRunPortError> {
+    let reject = |message: &str| AgentRunPortError::Rejected(message.to_owned());
+    if interaction.request_id != reply.request_id
+        || interaction.status != ConversationInteractionStatus::Pending
+        || !interaction.actionable
+    {
+        return Err(reject("native interaction is no longer actionable"));
+    }
+    match interaction.kind {
+        ConversationInteractionKind::Permission => {
+            let option = reply.option_id.as_deref().ok_or_else(|| {
+                reject("native permission requires one of the advertised option IDs")
+            })?;
+            if !interaction.options.iter().any(|item| item.id == option)
+                || !reply.answers.is_empty()
+            {
+                return Err(reject("invalid native permission decision"));
+            }
+        }
+        ConversationInteractionKind::Question => {
+            if reply.option_id.is_some() {
+                return Err(reject(
+                    "question answers cannot contain a permission decision",
+                ));
+            }
+            if interaction.questions.is_empty() {
+                if !reply.answers.is_empty()
+                    || reply
+                        .text
+                        .as_deref()
+                        .is_none_or(|text| text.trim().is_empty())
+                {
+                    return Err(reject("native question requires a text answer"));
+                }
+                return Ok(());
+            }
+            if reply.text.is_some() {
+                return Err(reject(
+                    "structured answers must identify their native question",
+                ));
+            }
+            let mut answered = HashSet::new();
+            for answer in &reply.answers {
+                let question = interaction
+                    .questions
+                    .iter()
+                    .find(|question| question.id == answer.question_id)
+                    .ok_or_else(|| reject("answer refers to an unknown native question"))?;
+                if !answered.insert(&answer.question_id)
+                    || (!question.multiple && answer.values.len() > 1)
+                    || (question.required && answer.values.is_empty())
+                {
+                    return Err(reject("invalid number of native question answers"));
+                }
+                let mut values = HashSet::new();
+                for value in &answer.values {
+                    if !values.insert(value)
+                        || value.trim().is_empty()
+                        || (!question.allow_free_text
+                            && !question.options.iter().any(|option| &option.id == value))
+                    {
+                        return Err(reject("answer is not allowed by the native question"));
+                    }
+                }
+            }
+            if interaction
+                .questions
+                .iter()
+                .any(|question| question.required && !answered.contains(&question.id))
+            {
+                return Err(reject("a required native question was not answered"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn port_database(error: sqlx::Error) -> AgentRunPortError {
     AgentRunPortError::Unavailable(error.to_string())
 }
@@ -3753,6 +4064,263 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
+
+    fn permission_interaction() -> ConversationInteraction {
+        serde_json::from_value(serde_json::json!({
+            "request_id": "permission-a",
+            "kind": "permission",
+            "status": "pending",
+            "actionable": true,
+            "options": [
+                {"id": "allow-once", "label": "Allow once"},
+                {"id": "allow-session", "label": "Allow for this session"},
+                {"id": "reject-once", "label": "Reject"}
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn permission_reply() -> ConversationInteractionReply {
+        ConversationInteractionReply {
+            request_id: "permission-a".into(),
+            option_id: Some("allow-session".into()),
+            answers: Vec::new(),
+            text: None,
+        }
+    }
+
+    #[test]
+    fn interaction_answers_require_exact_native_choices_and_question_structure() {
+        let mut permission = permission_interaction();
+        let mut reply = permission_reply();
+        validate_interaction_reply(&permission, &reply).unwrap();
+        reply.option_id = Some("true".into());
+        assert!(validate_interaction_reply(&permission, &reply).is_err());
+        reply = permission_reply();
+        permission.status = ConversationInteractionStatus::Delivered;
+        assert!(validate_interaction_reply(&permission, &reply).is_err());
+
+        let question: ConversationInteraction = serde_json::from_value(serde_json::json!({
+            "request_id": "question-a", "kind": "question", "status": "pending", "actionable": true,
+            "questions": [
+                {"id":"choice", "prompt":"Choose", "required":true, "multiple":false,
+                 "allow_free_text":false,"options":[{"id":"native-id", "label":"Label"}]},
+                {"id":"details", "prompt":"Explain", "required":true, "multiple":false,
+                 "allow_free_text":true}
+            ]
+        }))
+        .unwrap();
+        let mut answer: ConversationInteractionReply = serde_json::from_value(serde_json::json!({
+            "request_id":"question-a", "answers":[
+                {"question_id":"choice", "values":["native-id"]},
+                {"question_id":"details", "values":["Native free text"]}
+            ]
+        }))
+        .unwrap();
+        validate_interaction_reply(&question, &answer).unwrap();
+        answer.answers[0].values = vec!["Label".into()];
+        assert!(validate_interaction_reply(&question, &answer).is_err());
+        answer.answers[0].values = vec!["native-id".into(), "native-id".into()];
+        assert!(validate_interaction_reply(&question, &answer).is_err());
+        answer.answers.remove(0);
+        assert!(validate_interaction_reply(&question, &answer).is_err());
+    }
+
+    #[tokio::test]
+    async fn uncertain_interaction_delivery_cannot_be_retried_or_changed() {
+        let port = LocalAgentRunPort::new(setup_runtime_db().await);
+        let (request, attempt) = persisted_codex_run(&port.db).await;
+        let interaction = permission_interaction();
+        port.append_event(
+            &request,
+            &attempt,
+            AgentEventPayload::Conversation {
+                update: Box::new(ConversationBlockUpdate {
+                    block_id: format!("{}:permission-a", attempt.run_attempt_id),
+                    kind: ConversationBlockKind::Interaction,
+                    role: None,
+                    native_id: None,
+                    parent_block_id: None,
+                    operation: ConversationBlockOperation::Snapshot {
+                        fields: ConversationBlockFields {
+                            interaction: Some(interaction),
+                            ..Default::default()
+                        },
+                    },
+                }),
+            },
+            Vec::new(),
+            Utc::now(),
+            None,
+        )
+        .await
+        .unwrap();
+        let reply_id = Uuid::new_v4();
+        let reply = permission_reply();
+        // A previous attempt may advertise the exact same native request ID.
+        // Its page must not claim or answer the current attempt's request.
+        let stale = port
+            .reply_interaction(request.agent_run_id, Uuid::new_v4(), reply_id, &reply)
+            .await
+            .unwrap_err();
+        assert!(stale.to_string().contains("different execution attempt"));
+        assert!(
+            ConversationInteractionReplyRecord::for_request(
+                &port.db.pool,
+                attempt.run_attempt_id,
+                &reply.request_id,
+            )
+            .await
+            .unwrap()
+            .is_none(),
+            "stale attempts must not consume the new native request"
+        );
+        assert!(
+            port.reply_interaction(
+                request.agent_run_id,
+                attempt.run_attempt_id,
+                reply_id,
+                &reply
+            )
+            .await
+            .is_err()
+        );
+        let record = ConversationInteractionReplyRecord::for_request(
+            &port.db.pool,
+            attempt.run_attempt_id,
+            &reply.request_id,
+        )
+        .await
+        .unwrap()
+        .expect("decision is durably claimed before attempting native delivery");
+        assert_eq!(record.delivery_status, "delivery_unknown");
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE agent_run_id = ?")
+                .bind(request.agent_run_id)
+                .fetch_one(&port.db.pool)
+                .await
+                .unwrap();
+        let error = port
+            .reply_interaction(
+                request.agent_run_id,
+                attempt.run_attempt_id,
+                reply_id,
+                &reply,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("will not be resent"));
+        let mut other = reply.clone();
+        other.option_id = Some("reject-once".into());
+        assert!(
+            port.reply_interaction(
+                request.agent_run_id,
+                attempt.run_attempt_id,
+                reply_id,
+                &other
+            )
+            .await
+            .is_err()
+        );
+        let after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE agent_run_id = ?")
+                .bind(request.agent_run_id)
+                .fetch_one(&port.db.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            event_count, after,
+            "a repeated decision must have no delivery side effects"
+        );
+        assert_eq!(
+            ConversationInteractionReplyRecord::for_request(
+                &port.db.pool,
+                attempt.run_attempt_id,
+                &reply.request_id
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .reply_id,
+            reply_id,
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupted_interaction_delivery_recovers_one_canonical_unknown_fact() {
+        let port = LocalAgentRunPort::new(setup_runtime_db().await);
+        let (request, attempt) = persisted_codex_run(&port.db).await;
+        let mut interaction = permission_interaction();
+        interaction.status = ConversationInteractionStatus::Delivering;
+        interaction.actionable = false;
+        let block_id = format!("{}:permission-a", attempt.run_attempt_id);
+        port.append_interaction_status(
+            &request,
+            &attempt,
+            &block_id,
+            &interaction,
+            ConversationInteractionStatus::Delivering,
+        )
+        .await
+        .unwrap();
+        let reply = permission_reply();
+        let (record, claimed) = ConversationInteractionReplyRecord::claim(
+            &port.db.pool,
+            request.session_id,
+            request.agent_run_id,
+            attempt.run_attempt_id,
+            &reply.request_id,
+            Uuid::new_v4(),
+            &serde_json::to_value(&reply).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(claimed);
+
+        port.reconcile_interaction_deliveries().await.unwrap();
+        let saved = ConversationInteractionReplyRecord::for_request(
+            &port.db.pool,
+            attempt.run_attempt_id,
+            &reply.request_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(saved.reply_id, record.reply_id);
+        assert_eq!(saved.delivery_status, "delivery_unknown");
+        let reader = AgentConversationService::new(&port.db.pool);
+        let (_, recovered) = reader
+            .interaction_block(
+                request.agent_run_id,
+                attempt.run_attempt_id,
+                &reply.request_id,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            recovered.status,
+            ConversationInteractionStatus::DeliveryUnknown
+        );
+        assert!(!recovered.actionable);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE agent_run_id = ?")
+                .bind(request.agent_run_id)
+                .fetch_one(&port.db.pool)
+                .await
+                .unwrap();
+        port.reconcile_interaction_deliveries().await.unwrap();
+        let after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE agent_run_id = ?")
+                .bind(request.agent_run_id)
+                .fetch_one(&port.db.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, after,
+            "restart recovery cannot repeat the decision or repair fact"
+        );
+    }
 
     async fn setup_runtime_db() -> DBService {
         let pool = SqlitePoolOptions::new()
@@ -3795,6 +4363,12 @@ mod tests {
         .execute(&pool)
         .await
         .expect("create runtime schema");
+        sqlx::raw_sql(include_str!(
+            "../../db/migrations/20261020000000_agent_conversation.sql"
+        ))
+        .execute(&pool)
+        .await
+        .expect("create conversation schema");
         DBService { pool }
     }
 

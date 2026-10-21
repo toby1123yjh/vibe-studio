@@ -25,6 +25,7 @@ import {
   AGENT_PROVIDER_BY_EXECUTOR,
   agentProviderForSettings,
 } from '../../../../packages/web-core/src/shared/lib/agentProviders';
+import type { ExecutorDiscoveryContext } from '../../../../packages/web-core/src/shared/lib/executorDiscovery';
 
 const providers = AGENT_PROVIDERS.map((provider) => provider.executor);
 
@@ -32,6 +33,13 @@ const params = new URLSearchParams(window.location.search);
 export class ApiError extends Error {}
 const calls = { relay: 0, paired: 0, garage: 0 };
 Object.assign(window, { agentCenterCalls: calls });
+const modelDiscoveryProbe: {
+  executor: BaseCodingAgent | null | undefined;
+  hostId: string | null;
+  context: ExecutorDiscoveryContext | undefined;
+  refreshCount: number;
+}[] = [];
+Object.assign(window, { modelDiscoveryProbe });
 const installProbe = {
   starts: 0,
   registry: null as string | null,
@@ -504,8 +512,15 @@ export const agentsApi = {
   }): Promise<ExecutorConfig> => ({ executor, variant }),
 };
 
-export function useModelSelectorConfig(executor?: BaseCodingAgent | null) {
+export function useModelSelectorConfig(
+  executor?: BaseCodingAgent | null,
+  context?: ExecutorDiscoveryContext
+) {
   const [refreshCount, setRefreshCount] = React.useState(0);
+  const hostId = useHostId();
+  React.useEffect(() => {
+    modelDiscoveryProbe.push({ executor, hostId, context, refreshCount });
+  }, [executor, hostId, context, refreshCount]);
   let config = executor
     ? (modelConfigByExecutor[executor] ?? {
         providers: [],
@@ -607,6 +622,28 @@ export function useModelSelectorConfig(executor?: BaseCodingAgent | null) {
     };
   }
   if (config && executor === BaseCodingAgent.CODEX) {
+    if (params.has('codexConfigError')) {
+      config = {
+        ...config,
+        models: config.models.map((model) => ({
+          ...model,
+          reasoning_options: [
+            { id: 'high', label: 'High', is_default: true },
+            { id: 'xhigh', label: 'Extra High', is_default: false },
+          ],
+          capabilities: {
+            reasoning: 'supported',
+            input_modalities:
+              model.id === 'gpt-6.1-sol' ? ['text', 'image'] : ['text'],
+            fast_mode: 'unknown',
+            auto_mode: 'unknown',
+            resolved_model: null,
+            is_default: false,
+            service_tiers: [],
+          },
+        })),
+      };
+    }
     if (params.has('builtin')) {
       config = {
         ...config,
@@ -632,11 +669,13 @@ export function useModelSelectorConfig(executor?: BaseCodingAgent | null) {
   }
   const discoveryError =
     refreshCount === 0
-      ? executor === BaseCodingAgent.CODEX && params.has('codexError')
-        ? 'Codex model discovery failed: native request timed out.'
-        : executor === BaseCodingAgent.GEMINI && params.has('geminiError')
-          ? 'Gemini model discovery failed: host connection unavailable.'
-          : null
+      ? executor === BaseCodingAgent.CODEX && params.has('codexConfigError')
+        ? 'Codex native configuration discovery failed: I/O error: config/read request failed: invalid configuration: unknown variant `max`, expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` in `model_reasoning_effort`'
+        : executor === BaseCodingAgent.CODEX && params.has('codexError')
+          ? 'Codex model discovery failed: native request timed out.'
+          : executor === BaseCodingAgent.GEMINI && params.has('geminiError')
+            ? 'Gemini model discovery failed: host connection unavailable.'
+            : null
       : null;
   if (discoveryError && params.has('noDiscoveryConfig')) config = null;
   return {

@@ -29,6 +29,26 @@ pub(crate) fn append_workflow_mcp(
     parts.extend_args(["-c".into(), format!("mcp_servers.{}={{command={command},args={args},env_vars={env_vars},enabled=true,required=true}}", config.server_name)])
 }
 
+/// Apply the selected run effort before app-server loads native configuration.
+/// Thread overrides arrive too late for startup and process-scoped config reads
+/// on CLIs that cannot parse the inherited effort. Discovery deliberately does
+/// not use these overrides: it must still report the native configuration.
+pub(crate) fn append_runtime_reasoning_overrides(
+    parts: CommandParts,
+    agent: &Codex,
+) -> CommandParts {
+    let Some(effort) = agent.active_reasoning_effort() else {
+        return parts;
+    };
+    let value = toml::Value::String(effort.to_string()).to_string();
+    let parts = parts.extend_args(["-c".into(), format!("model_reasoning_effort={value}")]);
+    if agent.plan {
+        parts.extend_args(["-c".into(), format!("plan_mode_reasoning_effort={value}")])
+    } else {
+        parts
+    }
+}
+
 impl<'a> CodexCommandAdapter<'a> {
     pub fn new(agent: &'a Codex) -> Self {
         Self { agent }
@@ -78,6 +98,7 @@ pub(crate) fn encode_control(control: DirectControl) -> Result<Vec<u8>, serde_js
             "method":"turn/steer",
             "params":{"threadId":"<active-thread>","expectedTurnId":"<active-turn>","input":[{"type":"text","text":text}]}
         }),
+        DirectControl::ReplyInteraction { .. } => return Ok(Vec::new()),
         DirectControl::Approve { .. } | DirectControl::Input { .. } => {
             return Err(serde_json::Error::io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
@@ -135,6 +156,101 @@ mod tests {
             .unwrap();
 
         assert_eq!(params.last().map(String::as_str), Some("--profile-flag"));
+    }
+
+    #[tokio::test]
+    async fn runtime_effort_overrides_invalid_native_or_command_defaults_without_changing_discovery()
+     {
+        let agent: Codex = serde_json::from_value(serde_json::json!({
+            "base_command_override": "node",
+            "model_reasoning_effort": "xhigh",
+            "additional_params": ["-c", "model_reasoning_effort=\"max\""]
+        }))
+        .unwrap();
+        let discovery = CodexCommandAdapter::new(&agent)
+            .build()
+            .unwrap()
+            .build_initial()
+            .unwrap();
+        let (_, discovery_args) = discovery.clone().into_resolved().await.unwrap();
+        assert_eq!(
+            discovery_args.last().unwrap(),
+            "model_reasoning_effort=\"max\""
+        );
+        let runtime = append_runtime_reasoning_overrides(discovery, &agent);
+        let (_, runtime_args) = runtime.into_resolved().await.unwrap();
+        assert_eq!(
+            &runtime_args[runtime_args.len() - 2..],
+            ["-c", "model_reasoning_effort=\"xhigh\""]
+        );
+    }
+
+    #[tokio::test]
+    async fn omitted_or_cleared_effort_keeps_native_startup_inheritance() {
+        for configuration in [
+            serde_json::json!({}),
+            serde_json::json!({"model_reasoning_effort": null}),
+            serde_json::json!({"plan": true, "model_reasoning_effort": "high"}),
+        ] {
+            let mut agent: Codex = serde_json::from_value(configuration).unwrap();
+            agent.cmd.base_command_override = Some("node".into());
+            let parts = CodexCommandAdapter::new(&agent)
+                .build()
+                .unwrap()
+                .build_initial()
+                .unwrap();
+            let (_, expected) = parts.clone().into_resolved().await.unwrap();
+            let (_, actual) = append_runtime_reasoning_overrides(parts, &agent)
+                .into_resolved()
+                .await
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn plan_runtime_uses_plan_effort_and_preserves_native_future_values() {
+        for effort in ["high", "max", "ultra", "future-effort"] {
+            let agent: Codex = serde_json::from_value(serde_json::json!({
+                "plan": true,
+                "model_reasoning_effort": "xhigh",
+                "plan_mode_reasoning_effort": effort,
+            }))
+            .unwrap();
+            let parts = append_runtime_reasoning_overrides(
+                CommandParts::new("node".into(), vec!["app-server".into()]),
+                &agent,
+            );
+            let (_, args) = parts.into_resolved().await.unwrap();
+            assert_eq!(
+                args,
+                [
+                    "app-server".to_string(),
+                    "-c".to_string(),
+                    format!("model_reasoning_effort=\"{effort}\""),
+                    "-c".to_string(),
+                    format!("plan_mode_reasoning_effort=\"{effort}\""),
+                ]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_effort_keeps_arbitrary_strings_inside_one_toml_value() {
+        let effort = "future-\"quoted\"\\effort\nfeatures.memories=true";
+        let agent: Codex = serde_json::from_value(serde_json::json!({
+            "model_reasoning_effort": effort,
+        }))
+        .unwrap();
+        let parts = append_runtime_reasoning_overrides(
+            CommandParts::new("node".into(), vec!["app-server".into()]),
+            &agent,
+        );
+        let (_, args) = parts.into_resolved().await.unwrap();
+        assert_eq!(args.len(), 3);
+        let parsed: toml::Value = toml::from_str(&args[2]).unwrap();
+        assert_eq!(parsed["model_reasoning_effort"].as_str(), Some(effort));
+        assert!(parsed.get("features").is_none());
     }
 
     #[test]

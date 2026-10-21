@@ -1,19 +1,52 @@
-import { describe, expect, it } from 'vitest';
-import {
-  AgentRuntimeToolStatus,
-  type AgentEventEnvelope,
-  type AgentEventPayload,
-  type AgentRunSummary,
-  type RunState,
+import { expect, test as it } from '@playwright/test';
+import { buildSync } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+import type {
+  AgentEventEnvelope,
+  AgentEventPayload,
+  AgentRunSummary,
+  RunState,
 } from 'shared/types';
-import { projectCanonicalAgentConversation } from './canonicalAgentConversation';
-import { buildCanonicalAgentSessionTimeline } from './canonicalAgentSessionTimeline';
-import {
+
+// Bundle the real pure models in memory so Node's mixed CommonJS/ESM handling
+// of generated shared/types.ts cannot replace or hide the production enums.
+const modelModule = { exports: {} };
+const bundle = buildSync({
+  stdin: {
+    contents: `
+      export { projectCanonicalAgentConversation } from './canonicalAgentConversation';
+      export { buildCanonicalAgentSessionTimeline } from './canonicalAgentSessionTimeline';
+      export { emptyCanonicalAgentTimeline, mergeCanonicalAgentTimeline } from './canonicalAgentTimeline';
+      export { AgentRuntimeToolStatus } from 'shared/types';
+    `,
+    resolveDir: fileURLToPath(new URL('.', import.meta.url)),
+    loader: 'ts',
+  },
+  tsconfig: fileURLToPath(
+    new URL('../../../../tsconfig.json', import.meta.url)
+  ),
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  write: false,
+});
+new Function('module', 'exports', bundle.outputFiles[0].text)(
+  modelModule,
+  modelModule.exports
+);
+const {
+  projectCanonicalAgentConversation,
+  buildCanonicalAgentSessionTimeline,
   emptyCanonicalAgentTimeline,
   mergeCanonicalAgentTimeline,
-} from './canonicalAgentTimeline';
+  AgentRuntimeToolStatus,
+} = modelModule.exports as typeof import('./canonicalAgentConversation') &
+  typeof import('./canonicalAgentSessionTimeline') &
+  typeof import('./canonicalAgentTimeline') &
+  Pick<typeof import('shared/types'), 'AgentRuntimeToolStatus'>;
 
 const SESSION_ID = 'session-1';
+const describe = it.describe;
 
 function state(runId: string, status: RunState['status']): RunState {
   return {
@@ -155,6 +188,164 @@ describe('projectCanonicalAgentConversation', () => {
         (entry) => entry.executionProcessId === undefined
       )
     ).toBe(true);
+  });
+
+  it('keeps one assistant reply when native metadata separates deltas from completion', () => {
+    const runId = 'run-stream-metadata';
+    const projection = projectRuns([
+      {
+        runId,
+        status: 'succeeded',
+        events: [
+          event(runId, 1, {
+            type: 'message',
+            data: {
+              message: {
+                message_id: 'reply',
+                role: 'assistant',
+                content: 'SMOKE_',
+              },
+              final_output: false,
+            },
+          }),
+          event(runId, 2, {
+            type: 'provider_extension',
+            data: {
+              provider_namespace: 'codex',
+              provider_event: 'turn/moderationMetadata',
+              payload: null,
+            },
+          }),
+          event(runId, 3, {
+            type: 'file_changes',
+            data: {
+              tool_call_id: 'patch-1',
+              changes: [{ path: 'smoke.txt', change_type: 'modified' }],
+            },
+          }),
+          event(runId, 4, {
+            type: 'message',
+            data: {
+              message: {
+                message_id: 'reply',
+                role: 'assistant',
+                content: 'OK',
+              },
+              final_output: false,
+            },
+          }),
+          event(runId, 5, {
+            type: 'lifecycle_changed',
+            data: { status: 'running' },
+          }),
+          event(runId, 6, {
+            type: 'message',
+            data: {
+              message: {
+                message_id: 'reply',
+                role: 'assistant',
+                content: 'SMOKE_OK',
+              },
+              final_output: true,
+            },
+          }),
+        ],
+      },
+    ]);
+    expect(projection.entries).toHaveLength(1);
+    const [reply] = projection.entries;
+    expect(reply.type === 'NORMALIZED_ENTRY' && reply.content.content).toBe(
+      'SMOKE_OK'
+    );
+    expect(reply.canonical?.eventIds).toEqual([
+      `${runId}-event-1`,
+      `${runId}-event-4`,
+      `${runId}-event-6`,
+    ]);
+  });
+
+  it('does not merge the same message id across process attempts', () => {
+    const runId = 'run-retried-message';
+    const projection = projectRuns([
+      {
+        runId,
+        status: 'succeeded',
+        events: [
+          event(runId, 1, {
+            type: 'message',
+            data: {
+              message: {
+                message_id: 'reply',
+                role: 'assistant',
+                content: 'First attempt',
+              },
+              final_output: false,
+            },
+          }),
+          {
+            ...event(runId, 2, {
+              type: 'message',
+              data: {
+                message: {
+                  message_id: 'reply',
+                  role: 'assistant',
+                  content: 'Second attempt',
+                },
+                final_output: true,
+              },
+            }),
+            run_attempt_id: 'attempt-2',
+            run_attempt_number: 2,
+            sequence: 1n,
+          },
+        ],
+      },
+    ]);
+    expect(projection.entries).toHaveLength(2);
+    expect(
+      projection.entries.map(
+        (entry) => entry.type === 'NORMALIZED_ENTRY' && entry.content.content
+      )
+    ).toEqual(['First attempt', 'Second attempt']);
+  });
+
+  it('uses the final message snapshot when it corrects streamed content', () => {
+    const runId = 'run-final-snapshot';
+    const projection = projectRuns([
+      {
+        runId,
+        status: 'succeeded',
+        events: [
+          event(runId, 1, {
+            type: 'message',
+            data: {
+              message: {
+                message_id: 'reply',
+                role: 'assistant',
+                content: 'draft',
+              },
+              final_output: false,
+            },
+          }),
+          event(runId, 2, {
+            type: 'message',
+            data: {
+              message: {
+                message_id: 'reply',
+                role: 'assistant',
+                content: 'final',
+              },
+              final_output: true,
+            },
+          }),
+        ],
+      },
+    ]);
+    expect(projection.entries).toHaveLength(1);
+    const [reply] = projection.entries;
+    expect(reply.type === 'NORMALIZED_ENTRY' && reply.content.content).toBe(
+      'final'
+    );
   });
 
   it('updates one visible status row for repeated provider retry notices', () => {

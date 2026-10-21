@@ -35,6 +35,7 @@ export interface AgentWorkbenchTimelineIdentity {
   runAttemptNumber: number | null;
   sequence: bigint | null;
   active: boolean;
+  parentBlockId?: string | null;
 }
 
 interface TimelineItemBase extends AgentWorkbenchTimelineIdentity {
@@ -124,6 +125,7 @@ function projectEntry(
   copy: AgentWorkbenchTimelineCopy
 ): Exclude<AgentWorkbenchTimelineItem, AgentWorkbenchToolGroupItem> {
   const base = identity(patch.patchKey, patch.canonical);
+  base.parentBlockId = patch.conversationParentBlockId;
   if (patch.type === 'STDERR') {
     return {
       ...base,
@@ -224,7 +226,9 @@ function groupAdjacentTools(
       result.push({
         ...first,
         kind: 'tool-group',
-        patchKey: `tool-group:${tools.map((tool) => tool.patchKey).join(':')}`,
+        patchKey: first.patchKey.startsWith('conversation-block:')
+          ? `tool-group:${first.patchKey}`
+          : `tool-group:${tools.map((tool) => tool.patchKey).join(':')}`,
         eventId: last.eventId,
         eventIds: tools.flatMap((tool) => tool.eventIds),
         active: tools.some((tool) => tool.active),
@@ -241,7 +245,8 @@ function groupAdjacentTools(
         previous &&
         (previous.agentRunId !== item.agentRunId ||
           previous.runAttemptId !== item.runAttemptId ||
-          previous.runAttemptNumber !== item.runAttemptNumber)
+          previous.runAttemptNumber !== item.runAttemptNumber ||
+          previous.parentBlockId !== item.parentBlockId)
       ) {
         flush();
       }

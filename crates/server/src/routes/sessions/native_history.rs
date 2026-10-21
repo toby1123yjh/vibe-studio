@@ -1138,10 +1138,23 @@ fn is_equal_or_descendant(path: &str, ancestor: &str) -> bool {
 }
 
 fn normalize_path_for_match(path: &Path) -> String {
-    path.to_string_lossy()
+    let normalized = path
+        .to_string_lossy()
         .replace('\\', "/")
         .trim_end_matches('/')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+
+    // Windows canonical paths use the verbatim prefix, while native agent
+    // history usually records an ordinary drive or UNC path. Compare them
+    // lexically so history remains discoverable even if a directory is absent.
+    if let Some(unc_path) = normalized.strip_prefix("//?/unc/") {
+        format!("//{unc_path}")
+    } else {
+        normalized
+            .strip_prefix("//?/")
+            .unwrap_or(&normalized)
+            .to_string()
+    }
 }
 
 fn collect_jsonl_files(root: &Path, max_depth: usize) -> Vec<(PathBuf, DateTime<Utc>)> {
@@ -1811,6 +1824,93 @@ mod tests {
             &scope,
             false
         ));
+    }
+
+    #[test]
+    fn workspace_scope_matches_windows_verbatim_drive_paths() {
+        let scope = vec![PathBuf::from(r"\\?\F:\Mydev2023\serverSpace\")];
+
+        assert!(matches_workspace_scope(
+            Some(Path::new("f:/mydev2023/serverSpace")),
+            &scope,
+            false
+        ));
+        assert!(matches_workspace_scope(
+            Some(Path::new(r"F:\Mydev2023\serverSpace\nested")),
+            &scope,
+            false
+        ));
+        assert!(matches_workspace_scope(
+            Some(Path::new(r"\\?\F:\Mydev2023\serverSpace")),
+            &[PathBuf::from("F:/Mydev2023/serverSpace")],
+            false
+        ));
+        assert!(!matches_workspace_scope(
+            Some(Path::new(r"F:\Mydev2023\serverSpace-other")),
+            &scope,
+            false
+        ));
+        assert!(!matches_workspace_scope(
+            Some(Path::new(r"G:\Mydev2023\serverSpace")),
+            &scope,
+            false
+        ));
+        assert!(!matches_workspace_scope(None, &scope, false));
+    }
+
+    #[test]
+    fn workspace_scope_matches_windows_verbatim_unc_paths() {
+        let scope = vec![PathBuf::from(r"\\?\UNC\Server\Share\repo")];
+
+        assert!(matches_workspace_scope(
+            Some(Path::new(r"\\server\share\repo")),
+            &scope,
+            false
+        ));
+        assert!(matches_workspace_scope(
+            Some(Path::new("//server/share/repo/nested")),
+            &scope,
+            false
+        ));
+        assert!(matches_workspace_scope(
+            Some(Path::new(r"\\?\UNC\Server\Share\repo")),
+            &[PathBuf::from(r"\\server\share\repo")],
+            false
+        ));
+        assert!(!matches_workspace_scope(
+            Some(Path::new(r"\\server\share\repo-other")),
+            &scope,
+            false
+        ));
+        assert!(!matches_workspace_scope(
+            Some(Path::new(r"\\other-server\share\repo")),
+            &scope,
+            false
+        ));
+    }
+
+    #[test]
+    fn codex_native_metadata_is_listed_in_verbatim_workspace_scope() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("rollout.jsonl");
+        fs::write(
+            &path,
+            r#"{"type":"session_meta","payload":{"id":"native-session","cwd":"F:\\Mydev2023\\serverSpace"}}"#,
+        )
+        .expect("write native metadata");
+
+        let mut drafts = HashMap::new();
+        read_codex_session_files(dir.path(), &mut drafts);
+        let sessions = finalize_sessions(
+            drafts,
+            DateTime::<Utc>::from(SystemTime::UNIX_EPOCH),
+            10,
+            &[PathBuf::from(r"\\?\F:\Mydev2023\serverSpace")],
+            false,
+        );
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].agent_session_id, "native-session");
     }
 
     #[test]

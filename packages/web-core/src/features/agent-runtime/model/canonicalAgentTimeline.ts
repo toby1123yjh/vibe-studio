@@ -73,6 +73,11 @@ function itemFromEvent(event: AgentEventEnvelope): CanonicalAgentTimelineItem {
   let status: AgentRunStatus | null = null;
 
   switch (payload.type) {
+    case 'conversation':
+      // Legacy run diagnostics keep the typed payload available. The session
+      // read model owns v2 content, ordering and streaming replacements.
+      kind = 'extension';
+      break;
     case 'message':
       kind = 'message';
       content = payload.data.message.content;

@@ -9,7 +9,7 @@ use axum::{
 use deployment::Deployment;
 use executors::runtime::{
     AgentEventEnvelope, AgentRunPortCommand, AgentRunPortCommandEnvelope, AgentRunPortError,
-    ORCHESTRATION_COMMAND_SCHEMA_VERSION, RunAttemptMode, RunState,
+    ConversationInteractionReply, ORCHESTRATION_COMMAND_SCHEMA_VERSION, RunAttemptMode, RunState,
 };
 use serde::{Deserialize, Serialize};
 use services::services::agent_runtime::{
@@ -65,6 +65,16 @@ pub struct ResolveAgentRunApprovalRequest {
     #[serde(default)]
     #[ts(optional)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct ReplyAgentRunInteractionRequest {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub identity: AgentRunControlIdentity,
+    pub run_attempt_id: Uuid,
+    pub reply_id: Uuid,
+    pub reply: ConversationInteractionReply,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -230,6 +240,24 @@ async fn retry_agent_run(
         AgentRunPortCommand::Retry {
             mode: request.mode,
             run_attempt_id: request.run_attempt_id,
+        },
+    )
+    .await
+}
+
+async fn reply_agent_run_interaction(
+    State(deployment): State<DeploymentImpl>,
+    Path(agent_run_id): Path<Uuid>,
+    axum::Json(request): axum::Json<ReplyAgentRunInteractionRequest>,
+) -> Result<ResponseJson<ApiResponse<RunState>>, ApiError> {
+    dispatch_control(
+        &deployment,
+        agent_run_id,
+        request.identity,
+        AgentRunPortCommand::ReplyInteraction {
+            run_attempt_id: request.run_attempt_id,
+            reply_id: request.reply_id,
+            reply: request.reply,
         },
     )
     .await
@@ -470,6 +498,10 @@ pub(super) fn router(_: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route(
             "/agent-runs/{agent_run_id}/approval",
             post(resolve_agent_run_approval),
+        )
+        .route(
+            "/agent-runs/{agent_run_id}/interaction",
+            post(reply_agent_run_interaction),
         )
         .route("/agent-runs/{agent_run_id}/retry", post(retry_agent_run))
         .route(

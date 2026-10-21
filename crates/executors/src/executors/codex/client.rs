@@ -57,6 +57,81 @@ struct PendingPlan {
     item_id: String,
 }
 
+fn encode_interaction_response(
+    request: &JSONRPCRequest,
+    reply: &crate::runtime::ConversationInteractionReply,
+) -> Result<JSONRPCResponse, ExecutorError> {
+    use crate::executors::provider_adapter::conversation::codex::{
+        approval_decisions, interaction_request,
+    };
+    let invalid = |message: &str| {
+        ExecutorError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            message.to_owned(),
+        ))
+    };
+    let payload = serde_json::to_value(request)?;
+    let interaction = interaction_request(&payload);
+    if reply.request_id != interaction.request_id {
+        return Err(invalid(
+            "Codex interaction id does not match its original request",
+        ));
+    }
+    let params = &payload["params"];
+    let result = if request.method == "item/tool/requestUserInput" {
+        let mut answers = serde_json::Map::new();
+        for answer in &reply.answers {
+            let question = interaction
+                .questions
+                .iter()
+                .find(|question| question.id == answer.question_id)
+                .ok_or_else(|| invalid("Unknown Codex question id"))?;
+            if answers.contains_key(&answer.question_id)
+                || (!question.multiple && answer.values.len() > 1)
+                || (question.required && answer.values.is_empty())
+                || (!question.allow_free_text
+                    && answer
+                        .values
+                        .iter()
+                        .any(|value| !question.options.iter().any(|option| option.id == *value)))
+            {
+                return Err(invalid("Invalid Codex question answer"));
+            }
+            answers.insert(
+                answer.question_id.clone(),
+                serde_json::json!({"answers":answer.values}),
+            );
+        }
+        if interaction
+            .questions
+            .iter()
+            .any(|question| question.required && !answers.contains_key(&question.id))
+        {
+            return Err(invalid("A required Codex question is unanswered"));
+        }
+        serde_json::json!({"answers":answers})
+    } else {
+        let selected = reply
+            .option_id
+            .as_deref()
+            .ok_or_else(|| invalid("Codex permission requires an advertised option"))?;
+        let decision = approval_decisions(params)
+            .into_iter()
+            .find(|decision| {
+                decision.as_str().is_some_and(|value| value == selected)
+                    || (!decision.is_string()
+                        && serde_json::from_str::<serde_json::Value>(selected)
+                            .is_ok_and(|value| value == *decision))
+            })
+            .ok_or_else(|| invalid("Codex permission option was not advertised"))?;
+        serde_json::json!({"decision":decision})
+    };
+    Ok(JSONRPCResponse {
+        id: request.id.clone(),
+        result,
+    })
+}
+
 /// Only the negotiated observation used by this adapter is required here.
 /// Newer bindings require metadata such as `codexHome`, which older compatible
 /// app-servers do not return. Method responses, not unused handshake metadata,
@@ -212,6 +287,8 @@ pub struct AppServerClient {
     commit_reminder_prompt: String,
     commit_reminder_sent: AtomicBool,
     cancel: CancellationToken,
+    native_interactions: AtomicBool,
+    native_pending: Mutex<HashMap<String, JSONRPCRequest>>,
 }
 
 impl std::fmt::Debug for AppServerClient {
@@ -252,7 +329,13 @@ impl AppServerClient {
             commit_reminder_prompt,
             commit_reminder_sent: AtomicBool::new(false),
             cancel,
+            native_interactions: AtomicBool::new(false),
+            native_pending: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub fn enable_native_interactions(&self, enabled: bool) {
+        self.native_interactions.store(enabled, Ordering::Release);
     }
 
     pub fn connect(&self, peer: JsonRpcPeer) {
@@ -383,6 +466,23 @@ impl AppServerClient {
         control: DirectControl,
     ) -> Result<Vec<u8>, ExecutorError> {
         match control {
+            DirectControl::ReplyInteraction { reply } => {
+                let response = {
+                    let mut pending = self.native_pending.lock().await;
+                    let request = pending.get(&reply.request_id).ok_or_else(|| {
+                        ExecutorError::Io(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            "Codex request is no longer pending",
+                        ))
+                    })?;
+                    let response = encode_interaction_response(request, &reply)?;
+                    // A request is consumed once. A failed flush is uncertain;
+                    // replaying it could execute an approval twice.
+                    pending.remove(&reply.request_id);
+                    response
+                };
+                self.rpc().send_with_raw(&response).await
+            }
             DirectControl::Cancel => {
                 let thread_id = self.thread_id.lock().await.clone().ok_or_else(|| {
                     ExecutorError::Io(io::Error::other("Codex has no active thread"))
@@ -1406,6 +1506,22 @@ impl JsonRpcCallbacks for AppServerClient {
         raw: &str,
         request: JSONRPCRequest,
     ) -> Result<(), ExecutorError> {
+        if self.native_interactions.load(Ordering::Acquire)
+            && matches!(
+                request.method.as_str(),
+                "item/commandExecution/requestApproval"
+                    | "item/fileChange/requestApproval"
+                    | "item/tool/requestUserInput"
+            )
+        {
+            let key = crate::executors::provider_adapter::conversation::codex::request_key(
+                &serde_json::to_value(&request.id)?,
+            );
+            // Register before publishing: the UI may answer as soon as the
+            // request observation reaches the host.
+            self.native_pending.lock().await.insert(key, request);
+            return self.log_writer.log_raw(raw).await;
+        }
         self.log_writer.log_raw(raw).await?;
         match ServerRequest::try_from(request.clone()) {
             Ok(server_request) => self.handle_server_request(peer, server_request).await,
@@ -1676,6 +1792,51 @@ mod version_check_tests {
         parse_turn_completed_params, reasoning_update_from_thread_settings,
         turn_completion_control_flow,
     };
+
+    #[test]
+    fn structured_native_replies_preserve_original_ids_and_exact_decisions() {
+        use crate::runtime::{ConversationInteractionReply, ConversationQuestionAnswer};
+        let request: super::JSONRPCRequest = serde_json::from_value(json!({
+            "id":41,"method":"item/commandExecution/requestApproval", "params":{
+                "itemId":"exec-1", "availableDecisions":["accept", {"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["cargo","test"]}}]
+            }
+        })).unwrap();
+        let selected = request.params.as_ref().unwrap()["availableDecisions"][1].to_string();
+        let mut reply = ConversationInteractionReply {
+            request_id: "codex:41".into(),
+            option_id: Some(selected),
+            answers: vec![],
+            text: None,
+        };
+        let response = super::encode_interaction_response(&request, &reply).unwrap();
+        let wire = serde_json::to_value(response).unwrap();
+        assert_eq!(wire["id"], 41);
+        assert_eq!(
+            wire["result"]["decision"],
+            request.params.as_ref().unwrap()["availableDecisions"][1]
+        );
+        reply.option_id = Some("acceptForSession".into());
+        assert!(super::encode_interaction_response(&request, &reply).is_err());
+        let question: super::JSONRPCRequest = serde_json::from_value(json!({
+            "id":"41","method":"item/tool/requestUserInput", "params":{"questions":[{"id":"choice","question":"Choose","options":[{"label":"A"}],"isOther":false}]}
+        })).unwrap();
+        reply = ConversationInteractionReply {
+            request_id: "codex:\"41\"".into(),
+            option_id: None,
+            answers: vec![ConversationQuestionAnswer {
+                question_id: "choice".into(),
+                values: vec!["A".into()],
+            }],
+            text: None,
+        };
+        let wire =
+            serde_json::to_value(super::encode_interaction_response(&question, &reply).unwrap())
+                .unwrap();
+        assert_eq!(wire["id"], "41");
+        assert_eq!(wire["result"]["answers"]["choice"]["answers"], json!(["A"]));
+        reply.answers[0].values = vec!["unadvertised".into()];
+        assert!(super::encode_interaction_response(&question, &reply).is_err());
+    }
 
     #[test]
     fn initialize_accepts_compatible_native_metadata_across_versions() {

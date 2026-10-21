@@ -32,7 +32,10 @@ use crate::{
     },
 };
 
+mod codex_items;
+pub(crate) mod conversation;
 mod file_evidence;
+pub use conversation::StatefulProviderMapper;
 
 /// Everything needed to launch one real provider process without constructing
 /// a legacy `ExecutorAction` or routing through `StandardCodingAgentExecutor`.
@@ -381,7 +384,7 @@ impl DirectProvider {
                 runtime: None,
                 protocol: Some("acp-0.8"),
                 adapter: "gemini-adapter-v1",
-                mapper: "gemini-mapper-v2",
+                mapper: "gemini-conversation-v2",
             },
             Self::Codex => DirectAdapterVersions {
                 executable: "codex",
@@ -390,35 +393,35 @@ impl DirectProvider {
                 runtime: None,
                 protocol: Some("rust-v0.144.1"),
                 adapter: "codex-adapter-v1",
-                mapper: "codex-mapper-v2",
+                mapper: "codex-conversation-v2",
             },
             Self::ClaudeCode => DirectAdapterVersions {
                 executable: "claude",
                 runtime: None,
                 protocol: Some("stream-json-v1"),
                 adapter: "claude-code-adapter-v1",
-                mapper: "claude-code-mapper-v1",
+                mapper: "claude-code-conversation-v2",
             },
             Self::OhMyPi => DirectAdapterVersions {
                 executable: "omp",
                 runtime: None,
                 protocol: Some("stdio-rpc-ndjson-v1"),
                 adapter: "oh-my-pi-adapter-v1",
-                mapper: "oh-my-pi-mapper-v1",
+                mapper: "oh-my-pi-conversation-v2",
             },
             Self::Opencode => DirectAdapterVersions {
                 executable: "opencode",
                 runtime: None,
                 protocol: Some("acp-v1"),
                 adapter: "opencode-adapter-v1",
-                mapper: "opencode-mapper-v1",
+                mapper: "opencode-conversation-v2",
             },
             Self::DeepseekHarness => DirectAdapterVersions {
                 executable: "dsh",
                 runtime: None,
                 protocol: Some("acp-v1"),
                 adapter: "deepseek-harness-adapter-v1",
-                mapper: "deepseek-harness-mapper-v1",
+                mapper: "deepseek-harness-conversation-v2",
             },
         }
     }
@@ -623,7 +626,7 @@ impl DirectProvider {
     }
 
     pub fn mapper(self) -> DirectProviderMapper {
-        DirectProviderMapper { provider: self }
+        DirectProviderMapper::new(self)
     }
 }
 
@@ -659,6 +662,9 @@ pub enum DirectControl {
         request_id: String,
         text: String,
     },
+    ReplyInteraction {
+        reply: crate::runtime::ConversationInteractionReply,
+    },
     Steer {
         text: String,
     },
@@ -670,6 +676,7 @@ impl DirectControl {
             Self::Cancel => None,
             Self::Approve { .. } => Some(crate::runtime::AgentCapability::Approval),
             Self::Input { .. } => None,
+            Self::ReplyInteraction { .. } => None,
             Self::Steer { .. } => Some(crate::runtime::AgentCapability::Steering),
         }
     }
@@ -841,9 +848,25 @@ impl DirectProvider {
 
 /// Replay mapper used by `AuditBundle::replay`; all six adapters share the
 /// canonical envelope construction while retaining provider-specific names.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct DirectProviderMapper {
     pub provider: DirectProvider,
+    state: std::sync::Mutex<StatefulProviderMapper>,
+}
+
+impl DirectProviderMapper {
+    pub fn new(provider: DirectProvider) -> Self {
+        Self {
+            provider,
+            state: std::sync::Mutex::new(StatefulProviderMapper::new(provider)),
+        }
+    }
+}
+
+impl Clone for DirectProviderMapper {
+    fn clone(&self) -> Self {
+        Self::new(self.provider)
+    }
 }
 
 impl NativeAuditReplayMapper for DirectProviderMapper {
@@ -852,7 +875,33 @@ impl NativeAuditReplayMapper for DirectProviderMapper {
     }
 
     fn decode(&self, frame: &NativeAuditFrame) -> Result<ProviderEvent, NativeAuditError> {
-        Ok(self.provider.decode_native_frame(frame)?.raw)
+        crate::runtime::DefaultNativeAuditMapper::new(self.versions()).decode(frame)
+    }
+
+    fn begin_replay(&self) {
+        *self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            StatefulProviderMapper::new(self.provider);
+    }
+
+    fn validate_manifest(&self, manifest: &NativeAuditManifest) -> Result<(), NativeAuditError> {
+        let mut expected = self.versions();
+        // Explicit supported historical mapper identities, not a generic
+        // accept-any-version bypass. Raw facts remain immutable.
+        let historical = match self.provider {
+            DirectProvider::Codex => "codex-mapper-v2",
+            DirectProvider::Gemini => "gemini-mapper-v2",
+            DirectProvider::ClaudeCode => "claude-code-mapper-v1",
+            DirectProvider::OhMyPi => "oh-my-pi-mapper-v1",
+            DirectProvider::Opencode => "opencode-mapper-v1",
+            DirectProvider::DeepseekHarness => "deepseek-harness-mapper-v1",
+        };
+        if manifest.provider_id == self.provider.id() && manifest.mapper_version == historical {
+            expected.mapper_version = historical.into();
+        }
+        crate::runtime::DefaultNativeAuditMapper::new(expected).validate_manifest(manifest)
     }
 
     fn map(
@@ -860,15 +909,10 @@ impl NativeAuditReplayMapper for DirectProviderMapper {
         event: &ProviderEvent,
         manifest: &NativeAuditManifest,
     ) -> Result<Vec<AgentEvent>, NativeAuditError> {
-        let typed = classify_payload(self.provider, event)?;
-        map_typed_event(
-            self.provider,
-            &DecodedProviderEvent {
-                raw: event.clone(),
-                typed,
-            },
-            manifest,
-        )
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map_event(event, manifest)
     }
 }
 
@@ -1071,6 +1115,12 @@ fn classify_payload(
 
     if provider == DirectProvider::OhMyPi
         && let Some(typed) = super::oh_my_pi::rpc::classify(payload)
+    {
+        return Ok(typed);
+    }
+
+    if provider == DirectProvider::Codex
+        && let Some(typed) = codex_items::classify(payload)
     {
         return Ok(typed);
     }
@@ -1596,23 +1646,31 @@ fn map_typed_event(
             },
         }
     };
-    Ok(vec![AgentEventEnvelope {
+    Ok(vec![envelope_for_payload(&event.raw, manifest, payload)])
+}
+
+fn envelope_for_payload(
+    event: &ProviderEvent,
+    manifest: &NativeAuditManifest,
+    payload: AgentEventPayload,
+) -> AgentEventEnvelope {
+    AgentEventEnvelope {
         schema_version: AGENT_EVENT_SCHEMA_VERSION,
         payload_version: AGENT_EVENT_PAYLOAD_VERSION,
-        event_id: event_id(manifest.run_attempt_id, event.raw.sequence),
+        event_id: event_id(manifest.run_attempt_id, event.sequence),
         session_id: manifest.session_id,
         agent_run_id: manifest.agent_run_id,
         turn_id: manifest.turn_id,
         run_attempt_id: manifest.run_attempt_id,
         run_attempt_number: manifest.run_attempt_number,
-        sequence: event.raw.sequence,
-        correlation_id: event.raw.correlation_id,
+        sequence: event.sequence,
+        correlation_id: event.correlation_id,
         orchestration_run_id: None,
         orchestration_node_execution_id: None,
-        timestamp: event.raw.timestamp,
-        native_refs: vec![event.raw.native_ref.clone()],
+        timestamp: event.timestamp,
+        native_refs: vec![event.native_ref.clone()],
         payload,
-    }])
+    }
 }
 
 fn event_id(run_attempt_id: Uuid, sequence: u64) -> Uuid {
@@ -1627,9 +1685,6 @@ fn event_id(run_attempt_id: Uuid, sequence: u64) -> Uuid {
 }
 
 fn canonical_message_id(run_attempt_id: Uuid, native_id: &str) -> Uuid {
-    if let Ok(id) = Uuid::parse_str(native_id) {
-        return id;
-    }
     let mut hasher = Sha256::new();
     hasher.update(run_attempt_id.as_bytes());
     hasher.update(b"canonical-message:");
@@ -2448,7 +2503,10 @@ mod tests {
             assert_eq!(first.agent_events, second.agent_events);
             assert_eq!(first.state, second.state);
             assert_eq!(first.state.status, AgentRunStatus::Succeeded);
-            assert_eq!(first.state.last_event_sequence, 3);
+            assert_eq!(
+                first.state.last_event_sequence,
+                first.agent_events.len() as u64
+            );
         }
     }
 
@@ -2469,9 +2527,12 @@ mod tests {
 
             assert_eq!(bundle.manifest().provider_id, provider.id());
             assert_eq!(replay.provider_events.len(), 3);
-            assert_eq!(replay.agent_events.len(), 3);
+            assert!(replay.agent_events.len() >= 3);
             assert_eq!(replay.state.status, AgentRunStatus::Succeeded);
-            assert_eq!(replay.state.last_event_sequence, 3);
+            assert_eq!(
+                replay.state.last_event_sequence,
+                replay.agent_events.len() as u64
+            );
         }
     }
 }

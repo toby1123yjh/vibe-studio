@@ -436,7 +436,7 @@ export function CreateChatBoxContainer({
 
   const projectSelector = (
     <label className="inline-flex min-w-0 max-w-[240px] items-center gap-half text-sm text-low">
-      <span>{t('sessionProject.label')}</span>
+      <span className="shrink-0">{t('sessionProject.label')}</span>
       <select
         aria-label={t('sessionProject.label')}
         value={project.projectId}
@@ -448,7 +448,7 @@ export function CreateChatBoxContainer({
           project.projects.isPending
         }
         onChange={(event) => project.selectProject(event.target.value)}
-        className="min-h-9 min-w-0 max-w-full rounded-sm bg-secondary px-half text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="min-h-8 min-w-0 max-w-full appearance-none rounded-sm bg-transparent px-half font-medium text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-default disabled:opacity-70"
       >
         {!project.exists && (
           <option value={project.projectId}>{t('sessionProject.label')}</option>

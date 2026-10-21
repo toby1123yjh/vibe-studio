@@ -42,6 +42,9 @@ import {
   getReasoningLabel,
   resolveNativeReasoningId,
   getCurrentObservedConfiguration,
+  isCodexReasoningConfigError,
+  resolveActiveReasoning,
+  buildReasoningSelectionOverride,
 } from '@/shared/lib/modelSelector';
 import { profilesApi } from '@/shared/lib/api';
 import { resolveModelDiscoveryVariant } from '@/shared/lib/executorDiscovery';
@@ -162,6 +165,17 @@ export function ModelSelectorContainer({
   }, [streamError]);
 
   const baseConfig = streamConfig;
+  const hasAdvertisedCatalog =
+    (baseConfig?.catalog_source === 'native' ||
+      baseConfig?.catalog_source === 'observed') &&
+    baseConfig.models.length > 0;
+  const hasReasoningConfigError = isCodexReasoningConfigError(
+    agent,
+    streamError
+  );
+  const discoveryErrorLabel = hasReasoningConfigError
+    ? t('modelSelector.nativeConfigError')
+    : t('modelSelector.discoveryWarning');
   // A failed/empty catalog is unknown, not a reason to hide native selection.
   // This UI-only shell never advertises model capabilities.
   const editableConfig =
@@ -200,7 +214,7 @@ export function ModelSelectorContainer({
     ? getSelectedModel(baseConfig.models, selectedProviderId, selectedModelId)
     : null;
   const inputModalities =
-    !streamError && !loadingModels
+    hasAdvertisedCatalog || (!streamError && !loadingModels)
       ? discoveredSelectedModel?.capabilities?.input_modalities
       : undefined;
   useEffect(() => {
@@ -209,10 +223,13 @@ export function ModelSelectorContainer({
 
   const selectedReasoningOptions =
     selectedModel?.reasoning_options ?? EMPTY_REASONING_OPTIONS;
-  const configuredReasoningId =
-    executorConfig?.reasoning_id !== undefined
-      ? executorConfig.reasoning_id
-      : presetOptions?.reasoning_id;
+  const { isCodexPlan, configuredReasoningId, inheritedReasoningId } =
+    resolveActiveReasoning(
+      agent,
+      executorConfig,
+      presetOptions,
+      resolveNativeReasoningId(config, requestedModelId)
+    );
   const hasConfiguredReasoning = configuredReasoningId !== undefined;
   const reasoningOverrideState = useMemo(
     () =>
@@ -224,17 +241,20 @@ export function ModelSelectorContainer({
     [configuredReasoningId, hasConfiguredReasoning, selectedReasoningOptions]
   );
   const selectedReasoningId = reasoningOverrideState.selectedReasoningId;
-  const inheritedReasoningId = resolveNativeReasoningId(
-    config,
-    requestedModelId
-  );
   const inheritedReasoningLabel = getReasoningLabel(
     selectedReasoningOptions,
     inheritedReasoningId
   );
-  const followCliReasoningLabel = inheritedReasoningLabel
-    ? t('modelSelector.followCliValue', { value: inheritedReasoningLabel })
+  const reasoningInheritanceLabel = isCodexPlan
+    ? t('modelSelector.inheritSettings')
     : t('modelSelector.followCliConfig');
+  const followCliReasoningLabel = isCodexPlan
+    ? inheritedReasoningLabel
+      ? `${reasoningInheritanceLabel} · ${inheritedReasoningLabel}`
+      : reasoningInheritanceLabel
+    : inheritedReasoningLabel
+      ? t('modelSelector.followCliValue', { value: inheritedReasoningLabel })
+      : reasoningInheritanceLabel;
 
   const providerOptions =
     executorConfig?.provider_options !== undefined
@@ -364,8 +384,15 @@ export function ModelSelectorContainer({
   };
 
   const handleReasoningSelect = (reasoningId: string | null) => {
-    onOverrideChange({ reasoning_id: reasoningId });
-    pendingReasoningRef.current = { reasoningId };
+    onOverrideChange(
+      buildReasoningSelectionOverride({
+        isCodexPlan,
+        reasoningId,
+        providerOptions,
+      })
+    );
+    // Recency stores ordinary effort; plan choices must not change that memory.
+    pendingReasoningRef.current = isCodexPlan ? null : { reasoningId };
   };
 
   const handleAgentSelect = (id: string | null) => {
@@ -471,6 +498,7 @@ export function ModelSelectorContainer({
                 : (displayModelId ?? unspecifiedModelLabel)
             }
             wrapLabel
+            showCaret={false}
             disabled
           />
         </DropdownMenu>
@@ -501,7 +529,7 @@ export function ModelSelectorContainer({
           selectedReasoningOptions,
           configuredReasoningId,
           hasConfiguredReasoning,
-          t('modelSelector.followCliConfig'),
+          reasoningInheritanceLabel,
           inheritedReasoningId
         );
   const modelLabelBase =
@@ -511,6 +539,18 @@ export function ModelSelectorContainer({
   const modelLabel = reasoningLabel
     ? `${modelLabelBase} · ${reasoningLabel}`
     : modelLabelBase;
+  const modelTriggerLabel = (
+    <span className="flex min-w-0 max-w-full items-center gap-half text-left">
+      <span className="min-w-0 whitespace-normal text-normal [overflow-wrap:anywhere]">
+        {modelLabelBase}
+      </span>
+      {reasoningLabel && (
+        <span className="shrink-0 border-l border-border pl-half text-low">
+          {reasoningLabel}
+        </span>
+      )}
+    </span>
+  );
 
   const agentLabel = selectedAgentId
     ? (config.agents.find((entry) => entry.id === selectedAgentId)?.label ??
@@ -549,7 +589,15 @@ export function ModelSelectorContainer({
   if (readOnly) {
     return (
       <DropdownMenu>
-        <DropdownMenuTriggerButton size="sm" label={modelLabel} wrapLabel />
+        <DropdownMenuTriggerButton
+          size="sm"
+          aria-label={modelLabel}
+          title={modelLabel}
+          showCaret={false}
+          wrapLabel
+        >
+          {modelTriggerLabel}
+        </DropdownMenuTriggerButton>
         <DropdownMenuContent align="start">
           {streamError && (
             <p
@@ -642,7 +690,7 @@ export function ModelSelectorContainer({
       {(streamError || capabilityWarning) && (
         <button
           type="button"
-          onClick={streamError ? refresh : () => setIsOpen(true)}
+          onClick={() => setIsOpen(true)}
           className="text-sm text-error focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
           title={
             streamError ??
@@ -651,11 +699,9 @@ export function ModelSelectorContainer({
             })
           }
         >
-          {t(
-            streamError
-              ? 'modelSelector.retryDiscovery'
-              : 'modelSelector.checkReasoning'
-          )}
+          {streamError
+            ? discoveryErrorLabel
+            : t('modelSelector.checkReasoning')}
         </button>
       )}
 
@@ -667,14 +713,30 @@ export function ModelSelectorContainer({
           trigger={
             <DropdownMenuTriggerButton
               size="sm"
-              label={modelLabel}
+              aria-label={modelLabel}
               title={modelLabel}
+              showCaret={false}
               wrapLabel
-              disabled={loadingModels && !streamError && !supportsManualModel}
-            />
+              disabled={
+                loadingModels &&
+                !streamError &&
+                !supportsManualModel &&
+                !hasAdvertisedCatalog
+              }
+            >
+              {modelTriggerLabel}
+            </DropdownMenuTriggerButton>
           }
           config={displayConfig}
           error={streamError}
+          errorSummary={
+            hasReasoningConfigError ? discoveryErrorLabel : undefined
+          }
+          errorHint={
+            hasReasoningConfigError
+              ? t('modelSelector.codexReasoningConfigHint')
+              : undefined
+          }
           onRetry={refresh}
           refreshing={loadingModels && !streamError}
           onManualModelSelect={
@@ -706,6 +768,7 @@ export function ModelSelectorContainer({
             label={modelLabel}
             title={modelLabel}
             wrapLabel
+            showCaret={false}
             disabled
           />
         </DropdownMenu>

@@ -159,6 +159,7 @@ pub(crate) fn encode_control(control: DirectControl) -> Result<Vec<u8>, serde_js
                 serde_json::json!({"behavior":"deny","message":reason.unwrap_or_else(|| "Denied by user".to_string())})
             }}
         }),
+        DirectControl::ReplyInteraction { .. } => return Ok(Vec::new()),
         DirectControl::Input { .. } => {
             return Err(serde_json::Error::io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,

@@ -1448,7 +1448,7 @@ export enum AgentRuntimeLaunchPhase { command_build = "command_build", process_s
 
 export enum AgentRuntimeMessageRole { user = "user", assistant = "assistant", system = "system" }
 
-export enum AgentRuntimeToolStatus { created = "created", running = "running", waiting_approval = "waiting_approval", approved = "approved", denied = "denied", succeeded = "succeeded", failed = "failed", timed_out = "timed_out" }
+export enum AgentRuntimeToolStatus { created = "created", running = "running", waiting_approval = "waiting_approval", approved = "approved", denied = "denied", succeeded = "succeeded", failed = "failed", cancelled = "cancelled", timed_out = "timed_out" }
 
 export enum AgentRunIntent { initial = "initial", follow_up = "follow_up", review = "review" }
 
@@ -1480,7 +1480,79 @@ export type RunAttemptRequest = { schema_version: number, payload_version: numbe
 
 export type NativeAuditReference = { stream_id: string, sequence: bigint, checksum?: string | null, };
 
-export type AgentEventPayload = { "type": "lifecycle_changed", "data": { status: AgentRunStatus, } } | { "type": "session_observed", "data": { provider_session: ProviderSessionReference, } } | { "type": "message", "data": { message: CanonicalMessage, final_output: boolean, } } | { "type": "thinking", "data": { content: string, } } | { "type": "file_changes", "data": { tool_call_id: string, changes: Array<AgentFileChange>, } } | { "type": "tool_call", "data": { tool_call_id?: string | null, tool_name: string, status: AgentRuntimeToolStatus, arguments?: JsonValue | null, result?: JsonValue | null, } } | { "type": "approval_requested", "data": { approval_id: string, tool_call_id?: string | null, tool_name: string, } } | { "type": "approval_resolved", "data": { approval_id: string, approved: boolean, reason?: string | null, } } | { "type": "input_requested", "data": { input_id: string, prompt: string, } } | { "type": "input_resolved", "data": { input_id: string, answered: boolean, } } | { "type": "token_usage", "data": { input_tokens: bigint, output_tokens: bigint, cached_input_tokens?: bigint | null, } } | { "type": "error", "data": { error: AgentRuntimeError, } } | { "type": "projection_degraded", "data": { reason: string, } } | { "type": "provider_extension", "data": { provider_namespace: string, provider_event: string, payload: JsonValue, } } | { "type": "unknown", "data": { event_type: string, payload: JsonValue, } };
+export type AgentEventPayload = { "type": "conversation", "data": { update: ConversationBlockUpdate, } } | { "type": "lifecycle_changed", "data": { status: AgentRunStatus, } } | { "type": "session_observed", "data": { provider_session: ProviderSessionReference, } } | { "type": "message", "data": { message: CanonicalMessage, final_output: boolean, } } | { "type": "thinking", "data": { content: string, } } | { "type": "file_changes", "data": { tool_call_id: string, changes: Array<AgentFileChange>, } } | { "type": "tool_call", "data": { tool_call_id?: string | null, tool_name: string, status: AgentRuntimeToolStatus, arguments?: JsonValue | null, result?: JsonValue | null, } } | { "type": "approval_requested", "data": { approval_id: string, tool_call_id?: string | null, tool_name: string, } } | { "type": "approval_resolved", "data": { approval_id: string, approved: boolean, reason?: string | null, } } | { "type": "input_requested", "data": { input_id: string, prompt: string, } } | { "type": "input_resolved", "data": { input_id: string, answered: boolean, } } | { "type": "token_usage", "data": { input_tokens: bigint, output_tokens: bigint, cached_input_tokens?: bigint | null, } } | { "type": "error", "data": { error: AgentRuntimeError, } } | { "type": "projection_degraded", "data": { reason: string, } } | { "type": "provider_extension", "data": { provider_namespace: string, provider_event: string, payload: JsonValue, } } | { "type": "unknown", "data": { event_type: string, payload: JsonValue, } };
+
+export type ConversationBlockKind = "text" | "reasoning" | "tool" | "plan" | "interaction" | "notice" | "resource" | "extension";
+
+export type ConversationTextField = "text" | "output_text" | "raw_arguments";
+
+export type ConversationReasoningSource = "summary" | "exposed_text" | "unknown";
+
+export type ConversationLocation = { path: string, line?: number | null, };
+
+export type ConversationPlanEntry = { content: string, status: string, priority?: string | null, };
+
+export type ConversationInteractionKind = "permission" | "question";
+
+export type ConversationInteractionOption = { id: string, label: string, kind?: string | null, description?: string | null, };
+
+export type ConversationQuestion = { id: string, prompt: string, options: Array<ConversationInteractionOption>, multiple: boolean, allow_free_text: boolean, required: boolean, };
+
+export type ConversationInteractionStatus = "pending" | "delivering" | "delivered" | "resolved" | "delivery_unknown" | "failed" | "cancelled";
+
+export type ConversationInteraction = { request_id: string, kind: ConversationInteractionKind, status: ConversationInteractionStatus, title?: string | null, prompt?: string | null, tool_call_id?: string | null, native_request_id?: JsonValue | null, options: Array<ConversationInteractionOption>, questions: Array<ConversationQuestion>, scope?: JsonValue | null,
+/**
+ * False for preserved historical/unsupported requests, even if their
+ * original native options are available for inspection.
+ */
+actionable: boolean, };
+
+export type ConversationQuestionAnswer = { question_id: string, values: Array<string>, };
+
+export type ConversationInteractionReply = { request_id: string, option_id?: string | null, answers: Array<ConversationQuestionAnswer>, text?: string | null, };
+
+export type ConversationBlockFields = { text?: string | null, output_text?: string | null, raw_arguments?: string | null, tool_call_id?: string | null, tool_name?: string | null, tool_kind?: string | null, status?: AgentRuntimeToolStatus | null, arguments?: JsonValue | null, result?: JsonValue | null, locations?: Array<ConversationLocation> | null, reasoning_source?: ConversationReasoningSource | null, plan_entries?: Array<ConversationPlanEntry> | null, interaction?: ConversationInteraction | null, resource?: JsonValue | null, extension?: JsonValue | null, };
+
+export type ConversationBlockOperation = { "op": "append", field: ConversationTextField, text: string, } | { "op": "snapshot", fields: ConversationBlockFields, } | { "op": "patch", fields: ConversationBlockFields,
+/**
+ * Explicit top-level field removal; missing fields never mean clear.
+ */
+clear_fields: Array<string>, } | { "op": "finish", reason?: string | null, };
+
+export type ConversationBlockUpdate = {
+/**
+ * Attempt-scoped deterministic identity. Text blocks use their canonical
+ * message UUID, allowing final-output facts to reference an existing body.
+ */
+block_id: string, kind: ConversationBlockKind, role?: AgentRuntimeMessageRole | null, native_id?: string | null, parent_block_id?: string | null, operation: ConversationBlockOperation, };
+
+export type ConversationCursor = { epoch: string,
+/**
+ * Decimal string: JavaScript must not round a SQLite integer cursor.
+ */
+revision: string, };
+
+export type ConversationBodyReference = {
+/**
+ * text/output_text/raw_arguments, or a large JSON field (e.g. result).
+ */
+field: string, byte_length: number, preview_offset: number, };
+
+export type ConversationBlock = { block_id: string, agent_run_id: string, run_attempt_id: string, kind: ConversationBlockKind, role: AgentRuntimeMessageRole | null, native_id: string | null, parent_block_id: string | null,
+/**
+ * Opaque first-appearance position. Updates never change this value.
+ */
+position: string, revision: string, fields: ConversationBlockFields, bodies: Array<ConversationBodyReference>, finished: boolean, finish_reason: string | null, source_event_id: string, created_at: string, updated_at: string, };
+
+export type ConversationPage = { session_id: string, cursor: ConversationCursor, blocks: Array<ConversationBlock>, runs: Array<AgentRunSummary>, pending_interactions: Array<ConversationBlock>, previous_cursor: string | null, has_more: boolean, };
+
+export type ConversationChangesPage = { session_id: string, cursor: ConversationCursor, blocks: Array<ConversationBlock>, tombstones: Array<string>, runs: Array<AgentRunSummary>, pending_interactions: Array<ConversationBlock>, has_more: boolean, reset_required: boolean, };
+
+export type ConversationBlockDetail = { block: ConversationBlock, field: string, content: string, offset: number, next_offset: number | null, total_length: number, };
+
+export type ConversationBlockAppend = { block_id: string, base_revision: string, revision: string, field: string, text: string, };
+
+export type ConversationStreamMessage = { "type": "snapshot", "data": ConversationPage } | { "type": "changes", "data": ConversationChangesPage } | { "type": "append", "data": { session_id: string, epoch: string, appends: Array<ConversationBlockAppend>, } } | { "type": "ready", "data": ConversationCursor } | { "type": "error", "data": { message: string, } };
 
 export type AgentEventEnvelope = { schema_version: number, payload_version: number, event_id: string, session_id: string, agent_run_id: string, turn_id: string, run_attempt_id: string, run_attempt_number: number, sequence: bigint, correlation_id: string, orchestration_run_id?: string | null, orchestration_node_execution_id?: string | null, timestamp: string, native_refs?: Array<NativeAuditReference>, payload: AgentEventPayload, };
 
@@ -1488,7 +1560,12 @@ export enum AgentRunStatus { pending = "pending", starting = "starting", running
 
 export enum ProjectionStatus { current = "current", projection_degraded = "projection_degraded", rebuilding = "rebuilding" }
 
-export type RunState = { state_schema_version: number, reducer_version: number, session_id: string, agent_run_id: string, turn_id: string, status: AgentRunStatus, projection_status: ProjectionStatus, last_run_attempt_id?: string | null, last_run_attempt_number: number, last_event_sequence: bigint, last_event_id?: string | null, provider_session?: ProviderSessionReference | null, terminal_output?: CanonicalMessage | null, last_error?: AgentRuntimeError | null, observed_configuration?: ObservedRuntimeConfiguration | null, unknown_event_count: bigint, updated_at: string, };
+export type RunState = { state_schema_version: number, reducer_version: number, session_id: string, agent_run_id: string, turn_id: string, status: AgentRunStatus, projection_status: ProjectionStatus, last_run_attempt_id?: string | null, last_run_attempt_number: number, last_event_sequence: bigint, last_event_id?: string | null, provider_session?: ProviderSessionReference | null, terminal_output?: CanonicalMessage | null, last_error?: AgentRuntimeError | null, observed_configuration?: ObservedRuntimeConfiguration | null, pending_interactions?: Array<ConversationInteraction>,
+/**
+ * Attempt-scoped tombstones prevent late delivery observations from
+ * reopening a request already delivered, resolved, or cancelled.
+ */
+closed_interaction_ids?: Array<string>, unknown_event_count: bigint, updated_at: string, };
 
 export type ObservedRuntimeConfiguration = { model_id?: string | null, reasoning_id?: string | null, source: string, event_id: string, run_attempt_id: string, };
 
@@ -1509,6 +1586,8 @@ export type CancelAgentRunRequest = { reason: string, command_id: string, idempo
 export type SubmitAgentRunInputRequest = { input_id: string, content: string, command_id: string, idempotency_key: string, correlation_id: string, created_at: string, };
 
 export type ResolveAgentRunApprovalRequest = { approval_id: string, approved: boolean, reason?: string, command_id: string, idempotency_key: string, correlation_id: string, created_at: string, };
+
+export type ReplyAgentRunInteractionRequest = { run_attempt_id: string, reply_id: string, reply: ConversationInteractionReply, command_id: string, idempotency_key: string, correlation_id: string, created_at: string, };
 
 export type RetryAgentRunRequest = { mode: RunAttemptMode, run_attempt_id: string, command_id: string, idempotency_key: string, correlation_id: string, created_at: string, };
 
@@ -1536,7 +1615,7 @@ export type UpstreamHandoff = { source_ref: UpstreamSourceReference, initiating_
 
 export type AgentRunPortCommandEnvelope = { schema_version: number, command_id: string, idempotency_key: string, agent_run_id: string, orchestration_run_id?: string | null, orchestration_node_execution_id?: string | null, correlation_id: string, created_at: string, command: AgentRunPortCommand, };
 
-export type AgentRunPortCommand = { "type": "create", "data": { request: AgentRunRequestEnvelope, attempt: RunAttemptRequest, } } | { "type": "cancel", "data": { reason: string, } } | { "type": "submit_input", "data": { input_id: string, content: string, } } | { "type": "resolve_approval", "data": { approval_id: string, approved: boolean, reason?: string | null, } } | { "type": "retry", "data": { mode: RunAttemptMode, run_attempt_id: string, } };
+export type AgentRunPortCommand = { "type": "create", "data": { request: AgentRunRequestEnvelope, attempt: RunAttemptRequest, } } | { "type": "cancel", "data": { reason: string, } } | { "type": "submit_input", "data": { input_id: string, content: string, } } | { "type": "reply_interaction", "data": { run_attempt_id: string, reply_id: string, reply: ConversationInteractionReply, } } | { "type": "resolve_approval", "data": { approval_id: string, approved: boolean, reason?: string | null, } } | { "type": "retry", "data": { mode: RunAttemptMode, run_attempt_id: string, } };
 
 export enum OrchestrationRunStatus { pending = "pending", running = "running", waiting_for_input = "waiting_for_input", waiting_for_approval = "waiting_for_approval", cancelling = "cancelling", succeeded = "succeeded", failed = "failed", cancelled = "cancelled" }
 

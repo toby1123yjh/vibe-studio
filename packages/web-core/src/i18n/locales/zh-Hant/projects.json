@@ -35,7 +35,7 @@
   },
   "createProjectDialog": {
     "workspaceLabel": "工作目錄（必選）",
-    "workspaceHint": "選擇專案目錄。開啟已有專案需要確認，不會啟動智能體。",
+    "workspaceHint": "選擇新專案使用的目錄，不會啟動智能體。",
     "chooseWorkspace": "選擇資料夾或 Git 儲存庫",
     "changeWorkspace": "更改位置",
     "machineLabel": "所屬機器",
@@ -54,14 +54,11 @@
     "selectColor": "選擇專案顏色",
     "creating": "正在建立…",
     "createButton": "建立專案",
-    "openedWorkspaceSaveFailed": "專案已開啟，但 Git 設定儲存失敗。可重試儲存；取消不會刪除專案和檔案。",
-    "existingProjectTitle": "開啟已有專案？",
-    "existingProjectDescription": "此目錄已包含專案「{{name}}」，是否開啟？將保留原專案名稱、任務和設定，不使用本次填寫的新專案資訊。",
-    "openExistingProject": "開啟已有專案"
+    "createdWorkspaceSaveFailed": "專案已建立，但 Git 設定儲存失敗。可重試儲存；取消不會刪除專案和檔案。"
   },
   "deleteProjectDialog": {
     "title": "刪除專案？",
-    "description": "從目前裝置移除「{{name}}」？專案目錄、檔案和任務資料會保留，只有主動重新開啟該目錄才會復原。",
+    "description": "從 Vibe Studio 移除「{{name}}」？目錄和檔案會保留。再次選擇此目錄將建立新專案，不會復原原任務和設定。",
     "cloudDescription": "這將永久刪除「{{name}}」及其所有任務。此操作無法復原。",
     "error": "刪除專案失敗，請重試。"
   },

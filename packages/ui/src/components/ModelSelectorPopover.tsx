@@ -46,6 +46,8 @@ export interface ModelSelectorPopoverProps {
   trigger: ReactElement;
   config: ModelSelectorConfigLike;
   error?: string | null;
+  errorSummary?: string;
+  errorHint?: string;
   onRetry?: () => void;
   refreshing?: boolean;
   onManualModelSelect?: (id: string) => void;
@@ -302,6 +304,8 @@ export function ModelSelectorPopover({
   trigger,
   config,
   error,
+  errorSummary,
+  errorHint,
   onRetry,
   refreshing = false,
   onManualModelSelect,
@@ -361,9 +365,11 @@ export function ModelSelectorPopover({
   const hasReasoning = models.some(
     (model) => model.reasoning_options.length > 0
   );
-  const popoverWidth = onManualModelSelect
-    ? 'w-[280px] max-w-[calc(100vw-24px)]'
-    : getPopoverWidth(hasProviders, hasReasoning);
+  const popoverWidth = error
+    ? 'w-[320px] max-w-[calc(100vw-24px)]'
+    : onManualModelSelect
+      ? 'w-[280px] max-w-[calc(100vw-24px)]'
+      : getPopoverWidth(hasProviders, hasReasoning);
   const popoverHeightClass = hasProviders ? 'h-[280px]' : '';
 
   let showSearch = true;
@@ -447,13 +453,28 @@ export function ModelSelectorPopover({
       >
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
           {error && (
-            <div className="shrink-0 border-b border-border bg-error/10 px-base py-half">
+            <div className="shrink-0 max-h-[180px] overflow-y-auto border-b border-border bg-error/10 px-base py-half">
               <p
                 role="alert"
                 className="text-sm text-error whitespace-normal [overflow-wrap:anywhere]"
               >
-                {error}
+                {errorSummary ?? error}
               </p>
+              {errorHint && (
+                <p className="mt-half text-sm text-normal whitespace-normal [overflow-wrap:anywhere]">
+                  {errorHint}
+                </p>
+              )}
+              {errorSummary && (
+                <details className="mt-half text-sm text-low">
+                  <summary className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand">
+                    {t('modelSelector.discoveryDetails')}
+                  </summary>
+                  <p className="mt-half whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {error}
+                  </p>
+                </details>
+              )}
               {onRetry && (
                 <button
                   type="button"

@@ -35,7 +35,7 @@
   },
   "createProjectDialog": {
     "workspaceLabel": "Working directory (required)",
-    "workspaceHint": "Choose a project directory. Opening an existing project requires confirmation; no agent is started.",
+    "workspaceHint": "Choose a directory for the new project. This does not start an agent.",
     "chooseWorkspace": "Choose folder or Git repository",
     "changeWorkspace": "Change location",
     "machineLabel": "Machine",
@@ -54,14 +54,11 @@
     "selectColor": "Select project color",
     "creating": "Creating...",
     "createButton": "Create Project",
-    "openedWorkspaceSaveFailed": "The project was opened, but its Git settings could not be saved. Retry to save them. Cancel keeps the project and its files.",
-    "existingProjectTitle": "Open existing project?",
-    "existingProjectDescription": "This directory already contains \"{{name}}\". Open it? Its name, tasks, and settings will be kept; the details entered for the new project will not be used.",
-    "openExistingProject": "Open existing project"
+    "createdWorkspaceSaveFailed": "The project was created, but its Git settings could not be saved. Retry to save them. Cancel keeps the project and its files."
   },
   "deleteProjectDialog": {
     "title": "Delete Project?",
-    "description": "Remove \"{{name}}\" from this device? Its directory, files, and task data will be kept. It will only return if you explicitly reopen its directory.",
+    "description": "Remove \"{{name}}\" from Vibe Studio? Its directory and files will be kept. Selecting this directory again creates a new project; previous tasks and settings will not be restored.",
     "cloudDescription": "This will permanently delete \"{{name}}\" and all its tasks. This action cannot be undone.",
     "error": "Failed to delete project. Please try again."
   },

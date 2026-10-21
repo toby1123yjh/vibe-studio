@@ -1,3 +1,4 @@
+pub mod agent_conversation;
 pub mod agent_run_preview;
 pub mod agent_runtime;
 pub mod arena_group;

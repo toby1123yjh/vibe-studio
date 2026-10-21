@@ -86,7 +86,7 @@ const DeleteRemoteProjectDialogImpl = create<DeleteRemoteProjectDialogProps>(
                   ? 'deleteProjectDialog.description'
                   : 'deleteProjectDialog.cloudDescription',
                 isLocalProject
-                  ? 'Remove "{{name}}" from this device? Its directory, files, and task data will be kept. It will only return if you explicitly reopen its directory.'
+                  ? 'Remove "{{name}}" from Vibe Studio? Its directory and files will be kept. Selecting this directory again creates a new project; previous tasks and settings will not be restored.'
                   : 'This will permanently delete "{{name}}" and all its tasks. This action cannot be undone.',
                 { name: projectName }
               )}

@@ -6,7 +6,6 @@ import { useHostId } from '@/shared/providers/HostIdProvider';
 import { Button } from '@vibe/ui/components/Button';
 import { Input } from '@vibe/ui/components/Input';
 import { Label } from '@vibe/ui/components/Label';
-import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 import {
   Dialog,
   DialogContent,
@@ -24,7 +23,6 @@ import { refreshShapeFallback } from '@/shared/lib/electric/collections';
 import {
   isLocalRemoteApiEnabled,
   openLocalProjectDirectory,
-  ProjectDirectoryExistsError,
 } from '@/shared/lib/remoteApi';
 import {
   PROJECTS_SHAPE,
@@ -82,7 +80,6 @@ function CreateRemoteProjectForm({
   const busyRef = useRef(false);
   const importedJobId = useRef<string | null>(null);
   const openedDirectory = useRef(false);
-  const openedExistingDirectory = useRef(false);
   const queryClient = useQueryClient();
   const routeHostId = useHostId();
   const { selectedHost, selectedHostId, availableHosts, setSelectedHostId } =
@@ -164,7 +161,6 @@ function CreateRemoteProjectForm({
       setIsCreating(false);
       setCreatedProject(null);
       openedDirectory.current = false;
-      openedExistingDirectory.current = false;
       setLocation(null);
       setIsChoosing(false);
       setSource('local');
@@ -174,10 +170,9 @@ function CreateRemoteProjectForm({
   }, [modal.visible]);
 
   useEffect(() => {
-    // Async confirmations and writes belong to the original machine/org only.
+    // Async writes belong to the original machine/org only.
     busyRef.current = false;
     openedDirectory.current = false;
-    openedExistingDirectory.current = false;
     setIsCreating(false);
     setIsChoosing(false);
     setCreatedProject(null);
@@ -321,53 +316,10 @@ function CreateRemoteProjectForm({
             name: name.trim(),
             color,
           };
-          let openedExisting = false;
-          try {
-            savedProject = await openLocalProjectDirectory(
-              input,
-              host.apiHostId
-            );
-          } catch (err) {
-            if (!(err instanceof ProjectDirectoryExistsError)) throw err;
-            if (!ownsScope(epoch)) return;
-            const confirmation = await ConfirmDialog.show({
-              title: t(
-                'createProjectDialog.existingProjectTitle',
-                'Open existing project?'
-              ),
-              message: t(
-                'createProjectDialog.existingProjectDescription',
-                'This directory already contains "{{name}}". Open it? Its name, tasks, and settings will be kept; the details entered for the new project will not be used.',
-                { name: err.project.name }
-              ),
-              confirmText: t(
-                'createProjectDialog.openExistingProject',
-                'Open existing project'
-              ),
-              cancelText: t('common:buttons.cancel', 'Cancel'),
-              variant: 'info',
-            });
-            if (!ownsScope(epoch) || confirmation !== 'confirmed') return;
-            if (!canUseProjectCreationHost(hostRef.current, host.id)) {
-              throw new Error(
-                t(
-                  'createProjectDialog.hostChanged',
-                  'The selected machine changed. Choose the working directory again.'
-                )
-              );
-            }
-            // Confirm exactly the identity the user saw, on the captured Host.
-            // A changed directory identity fails instead of being auto-confirmed.
-            savedProject = await openLocalProjectDirectory(
-              { ...input, confirmed_project_id: err.project.id },
-              host.apiHostId
-            );
-            openedExisting = true;
-          }
+          savedProject = await openLocalProjectDirectory(input, host.apiHostId);
           if (!ownsScope(epoch)) return;
-          // This may be an existing portable project, never a disposable draft.
+          // The directory now contains a persisted project, not a cloud draft.
           openedDirectory.current = true;
-          openedExistingDirectory.current = openedExisting;
           refreshShapeFallback(PROJECTS_SHAPE, params, host.apiHostId);
         } else {
           const { data: project, persisted } = insert({
@@ -390,11 +342,11 @@ function CreateRemoteProjectForm({
             )
           );
         }
-        // Opening already binds an ordinary folder. Git repository/base-branch
+        // Creation already binds an ordinary folder. Git repository/base-branch
         // enrichment still uses the existing host-aware defaults boundary.
         if (
-          !openedExistingDirectory.current &&
-          (!openedDirectory.current || location.selection.mode === 'worktree')
+          !openedDirectory.current ||
+          location.selection.mode === 'worktree'
         ) {
           await saveProjectWorkspaceDefault(
             savedProject.id,
@@ -416,8 +368,8 @@ function CreateRemoteProjectForm({
         savedProject
           ? openedDirectory.current
             ? t(
-                'createProjectDialog.openedWorkspaceSaveFailed',
-                'The project was opened, but its Git settings could not be saved. Retry to save them. Cancel keeps the project and its files.'
+                'createProjectDialog.createdWorkspaceSaveFailed',
+                'The project was created, but its Git settings could not be saved. Retry to save them. Cancel keeps the project and its files.'
               )
             : t(
                 'createProjectDialog.workspaceSaveFailed',

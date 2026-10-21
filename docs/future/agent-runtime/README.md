@@ -69,6 +69,7 @@
 
 - [竞品模型对比](./competitor-analysis.md)：AionUI、MultiCA、Happy、QM 的 runtime/session/turn/event/adapter 分析。
 - [VK 目标架构](./architecture.md)：组件边界、数据模型、审计双轨、直接替换和验证策略。
+- [智能体对话重构设计](../agent-chat-redesign/design.md)：六家原生协议、MindFS / Paseo / Multica / QM 的取舍，以及共享对话投影、工具交互、历史恢复和渲染性能的设计提案。
 
 ## 参考范围
 

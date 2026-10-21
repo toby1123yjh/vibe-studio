@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool, types::Json};
 use uuid::Uuid;
 
-pub const AGENT_RUN_PREVIEW_VERSION: i64 = 1;
+pub const AGENT_RUN_PREVIEW_VERSION: i64 = 2;
 pub const AGENT_RUN_PREVIEW_CHAR_LIMIT: usize = 600;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,6 +89,10 @@ pub struct AgentRunPreview {
     /// Only adjacency, not a second message history, is retained for replay.
     pub merge_message_id: Option<Uuid>,
     pub merge_role: Option<AgentRuntimeMessageRole>,
+    /// Native block identity survives tool events; it is not adjacency-based.
+    pub conversation_block_id: Option<String>,
+    pub conversation_tool_block_id: Option<String>,
+    pub conversation_tool_finished: bool,
 }
 
 #[derive(Debug, Clone, FromRow)]

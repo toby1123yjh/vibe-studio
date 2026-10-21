@@ -636,6 +636,10 @@ pub type AgentEvent = AgentEventEnvelope;
 
 pub trait NativeAuditReplayMapper {
     fn versions(&self) -> NativeAuditVersionSet;
+    fn begin_replay(&self) {}
+    fn validate_manifest(&self, manifest: &NativeAuditManifest) -> Result<(), NativeAuditError> {
+        compare_versions(&self.versions(), &manifest.versions())
+    }
     fn decode(&self, frame: &NativeAuditFrame) -> Result<ProviderEvent, NativeAuditError>;
     fn map(
         &self,
@@ -850,7 +854,8 @@ impl AuditBundle {
         &self,
         mapper: &M,
     ) -> Result<AuditReplayResult, NativeAuditError> {
-        self.validate_versions(&mapper.versions())?;
+        mapper.validate_manifest(&self.manifest)?;
+        mapper.begin_replay();
         let mut provider_events = Vec::with_capacity(self.frames.len());
         let mut agent_events = Vec::new();
         for frame in &self.frames {
@@ -876,6 +881,8 @@ impl AuditBundle {
             terminal_output: None,
             last_error: None,
             observed_configuration: None,
+            pending_interactions: Vec::new(),
+            closed_interaction_ids: Vec::new(),
             unknown_event_count: 0,
             updated_at: self.manifest.created_at,
         };

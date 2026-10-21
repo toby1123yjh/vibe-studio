@@ -26,11 +26,13 @@ import {
   type WorkspaceFilePreviewTarget,
 } from '@/features/workspace-files';
 import { cn } from '@/shared/lib/utils';
-import { useAgentRunCanonicalStream } from '@/features/agent-runtime/model/useAgentRunCanonicalStream';
 import {
-  isCanonicalProjectionAvailable,
-  type CanonicalAgentTimelineItem,
-} from '@/features/agent-runtime/model/canonicalAgentTimeline';
+  AgentRunSessionProvider,
+  useAgentRunSession,
+  type AgentRunSessionContextValue,
+} from '@/features/agent-runtime/model/AgentRunSessionContext';
+import { isCanonicalProjectionAvailable } from '@/features/agent-runtime/model/canonicalAgentTimeline';
+import { ConversationBlockEntry } from '@/features/workspace-chat/ui/ConversationBlockEntry';
 import type { WorkflowNodeData } from '../model/workflowGraph';
 import { getWorkflowAgentDisplay } from '../model/workflowAgentDisplay';
 import { coerceWorkflowNodeExecutorConfig } from '../model/workflowAgentNodeDraft';
@@ -100,7 +102,17 @@ const cockpitDotClassMap: Record<StatusTone, string> = {
   warning: 'bg-warning',
 };
 
-export function WorkflowNodeSessionPanel({
+export function WorkflowNodeSessionPanel(props: WorkflowNodeSessionPanelProps) {
+  return (
+    <AgentRunSessionProvider
+      sessionId={props.execution.session_id ?? undefined}
+    >
+      <WorkflowNodeSessionPanelContent {...props} />
+    </AgentRunSessionProvider>
+  );
+}
+
+function WorkflowNodeSessionPanelContent({
   execution,
   workspaceId,
   sessionHref,
@@ -124,10 +136,7 @@ export function WorkflowNodeSessionPanel({
   const projectionAvailable = Boolean(
     agentRunId && projectionStatus === 'current'
   );
-  const canonicalStream = useAgentRunCanonicalStream(
-    agentRunId ?? undefined,
-    projectionAvailable
-  );
+  const canonicalStream = useAgentRunSession();
   const [showFilesInspector, setShowFilesInspector] = useState(false);
   const { target, openTarget, clearTarget } = useWorkspaceFilePreviewState();
   const previewScopeKey = `${workspaceId ?? 'no-workspace'}:${nodeSessionId ?? 'no-session'}`;
@@ -221,6 +230,7 @@ export function WorkflowNodeSessionPanel({
               agentRunId={agentRunId}
               canonicalStream={canonicalStream}
               preferredExecutorConfig={preferredExecutorConfig}
+              workspaceId={workspaceId}
             />
           )}
         </WorkspaceFilePreviewActionsProvider>
@@ -573,18 +583,24 @@ function WorkflowNodeCanonicalSession({
   agentRunId,
   canonicalStream,
   preferredExecutorConfig,
+  workspaceId,
 }: {
   execution: WorkflowNodeExecutionResponse;
   agentRunId: string;
-  canonicalStream: ReturnType<typeof useAgentRunCanonicalStream>;
+  canonicalStream: AgentRunSessionContextValue;
   preferredExecutorConfig: ExecutorConfig | null;
+  workspaceId: string | null;
 }) {
   const { t } = useTranslation('common');
-  const timeline = canonicalStream.timeline;
-  const projectionAvailable = isCanonicalProjectionAvailable(
-    timeline?.state ?? null
+  const run = canonicalStream.timeline?.runs.find(
+    (item) => item.summary.agent_run_id === agentRunId
   );
-  const items = timeline?.items ?? [];
+  const projectionAvailable = isCanonicalProjectionAvailable(
+    run?.summary.state ?? null
+  );
+  const items = canonicalStream.conversation.entries.filter(
+    (item) => item.canonical?.agentRunId === agentRunId
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-primary p-base">
@@ -604,7 +620,7 @@ function WorkflowNodeCanonicalSession({
           {execution.session_id ?? t('workflow.dashboard.notAvailable')}
         </TechnicalDetailRow>
         <TechnicalDetailRow label={t('workflow.nodeSession.projection')}>
-          {timeline?.state?.projection_status ??
+          {run?.summary.state.projection_status ??
             t('workflow.dashboard.notAvailable')}
         </TechnicalDetailRow>
         <TechnicalDetailRow label={t('workflow.nodeSession.runtimeConnection')}>
@@ -627,7 +643,11 @@ function WorkflowNodeCanonicalSession({
           </div>
         ) : (
           items.map((item) => (
-            <CanonicalTimelineItemView key={item.eventId} item={item} />
+            <ConversationBlockEntry
+              key={item.patchKey}
+              blockId={item.conversationBlockId!}
+              workspaceId={workspaceId ?? undefined}
+            />
           ))
         )}
       </div>
@@ -644,46 +664,11 @@ function WorkflowNodeCanonicalSession({
   );
 }
 
-function CanonicalTimelineItemView({
-  item,
-}: {
-  item: CanonicalAgentTimelineItem;
-}) {
-  const { t, i18n } = useTranslation('common');
-  const label =
-    item.kind === 'status' && item.status
-      ? `${item.kind}: ${item.status}`
-      : item.kind;
-  return (
-    <div className="rounded border border-secondary bg-panel/60 p-half text-xs">
-      <div className="flex items-center justify-between gap-half text-[10px] uppercase text-low">
-        <span>{label}</span>
-        <time>
-          {formatWorkflowTimestamp(
-            item.timestamp,
-            i18n.resolvedLanguage || 'en'
-          ) ?? item.timestamp}
-        </time>
-      </div>
-      {item.content ? (
-        <p className="mt-1 whitespace-pre-wrap text-high">{item.content}</p>
-      ) : null}
-      {!item.content ? (
-        <p className="mt-1 text-low">
-          {t('workflow.nodeSession.eventRecorded', {
-            defaultValue: 'Canonical event recorded.',
-          })}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 type WorkflowNodeSessionFallbackProps = Omit<
   WorkflowNodeSessionPanelProps,
   'workspaceId'
 > & {
-  canonicalStream?: ReturnType<typeof useAgentRunCanonicalStream>;
+  canonicalStream?: AgentRunSessionContextValue;
   agentRunId?: string | null;
   projectionStatus?: string | null;
 };

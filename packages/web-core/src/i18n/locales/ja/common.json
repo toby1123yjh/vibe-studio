@@ -770,6 +770,10 @@
     }
   },
   "modelSelector": {
+    "nativeConfigError": "ネイティブ設定の読み取りエラー",
+    "discoveryWarning": "機能検出の警告",
+    "codexReasoningConfigHint": "このホストの Codex は設定された推論レベルを認識できません。このホストの Codex を更新するか、今回の実行で利用できるレベルを選んでください。読み込まれたモデルとレベルは引き続き選択でき、ネイティブ設定は変更されません。",
+    "discoveryDetails": "エラーの詳細",
     "configuredCatalog": "ローカル設定のモデルです。利用可能な全モデルの一覧ではありません。",
     "enterModelId": "モデル ID を入力…",
     "modelId": "モデル ID",

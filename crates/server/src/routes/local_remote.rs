@@ -1223,14 +1223,13 @@ struct OpenProjectRequest {
     name: String,
     color: String,
     id: Option<Uuid>,
-    confirmed_project_id: Option<Uuid>,
 }
 
 async fn open_project(
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<OpenProjectRequest>,
 ) -> Result<ResponseJson<MutationResponse<Project>>, ApiError> {
-    let data = super::project_store::open_with_confirmation(
+    let data = super::project_store::open(
         &deployment.db().pool,
         &request.directory_path,
         CreateProjectRequest {
@@ -1239,7 +1238,6 @@ async fn open_project(
             name: request.name,
             color: request.color,
         },
-        request.confirmed_project_id,
     )
     .await?;
     Ok(ResponseJson(MutationResponse { data, txid: txid() }))
@@ -3324,6 +3322,8 @@ mod tests {
             terminal_output: None,
             last_error: None,
             observed_configuration: None,
+            pending_interactions: Vec::new(),
+            closed_interaction_ids: Vec::new(),
             unknown_event_count: 0,
             updated_at: Utc::now(),
         }

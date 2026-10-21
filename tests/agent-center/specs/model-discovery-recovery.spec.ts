@@ -35,7 +35,10 @@ test('Gemini cold empty catalog keeps manual entry and native inheritance access
   await selectAgent(page, 'GEMINI');
   await openEmptyGemini(page);
   await expect(
-    picker(page).getByRole('button', { name: 'Follow CLI config', exact: true })
+    picker(page).getByRole('button', {
+      name: 'Follow CLI config',
+      exact: true,
+    })
   ).toBeVisible();
   await expect(await openManualEntry(page)).toBeFocused();
   await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
@@ -118,7 +121,10 @@ test('Gemini rejects blank manual IDs inline and cancelling never modifies the r
     .click();
   await expect(picker(page).getByRole('textbox')).toHaveCount(0);
   await expect(
-    picker(page).getByRole('button', { name: 'Enter a model ID…', exact: true })
+    picker(page).getByRole('button', {
+      name: 'Enter a model ID…',
+      exact: true,
+    })
   ).toBeFocused();
   await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
   await expect(page.getByTestId('session-submit-count')).toHaveText('0');
@@ -304,7 +310,10 @@ test('Codex discovery failure shows actual details and retry without losing expl
     'Codex model discovery failed: native request timed out.'
   );
   await expect(
-    picker(page).getByRole('button', { name: 'Enter a model ID…', exact: true })
+    picker(page).getByRole('button', {
+      name: 'Enter a model ID…',
+      exact: true,
+    })
   ).toHaveCount(0);
   const expectedConfig = {
     executor: 'CODEX',
@@ -320,4 +329,254 @@ test('Codex discovery failure shows actual details and retry without losing expl
   await expect(picker(page).locator('[data-model-id="gpt-6.0"]')).toBeVisible();
   expect(await currentConfig(page)).toEqual(expectedConfig);
   await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
+});
+
+test('Codex incompatible inherited effort keeps real models and efforts editable, with scoped retry', async ({
+  page,
+}) => {
+  await selectAgent(
+    page,
+    'CODEX',
+    '&codexConfigError=true&codexPreserveSettings=true&scopeControls=true&host=remote-fixture&discoveryLoadingError=true'
+  );
+  await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
+  await expect(page.getByTestId('input-modalities')).toHaveText(
+    '["text","image"]'
+  );
+  const original = await currentConfig(page);
+  await session(page)
+    .getByRole('button', {
+      name: 'Native configuration needs attention',
+      exact: true,
+    })
+    .click();
+  await expect(picker(page).getByRole('alert')).toHaveText(
+    'Native configuration needs attention'
+  );
+  await expect(picker(page)).toContainText('Update Codex on this host');
+  const raw = picker(page).getByText(
+    'Codex native configuration discovery failed:',
+    { exact: false }
+  );
+  await expect(raw).not.toBeVisible();
+  await picker(page).getByText('Error details', { exact: true }).click();
+  await expect(raw).toBeVisible();
+  await expect(raw).toContainText('unknown variant `max`');
+  await picker(page).getByText('Error details', { exact: true }).click();
+
+  const currentRow = picker(page).locator('[data-model-id="gpt-6.1-sol"]');
+  await currentRow.getByRole('button', { name: /Follow CLI.*Max/ }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Max', exact: true })
+  ).toHaveCount(0);
+  await page.getByRole('menuitem', { name: 'Extra High', exact: true }).click();
+  expect(await currentConfig(page)).toEqual({
+    ...original,
+    reasoning_id: 'xhigh',
+  });
+  await picker(page)
+    .locator('[data-model-id="gpt-6.0"]')
+    .getByRole('button', { name: 'gpt-6.0', exact: true })
+    .click();
+  expect(await currentConfig(page)).toEqual({
+    ...original,
+    model_id: 'gpt-6.0',
+    reasoning_id: 'xhigh',
+  });
+  await expect(page.getByTestId('input-modalities')).toHaveText('["text"]');
+  await picker(page)
+    .getByRole('button', { name: 'Refresh native capabilities', exact: true })
+    .click();
+  await expect(picker(page).getByRole('alert')).toHaveCount(0);
+  expect(await currentConfig(page)).toEqual({
+    ...original,
+    model_id: 'gpt-6.0',
+    reasoning_id: 'xhigh',
+  });
+  await expect(page.getByTestId('selector-overrides')).toHaveText(
+    JSON.stringify([{ reasoning_id: 'xhigh' }, { model_id: 'gpt-6.0' }])
+  );
+  const discoveries = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          modelDiscoveryProbe: unknown[];
+        }
+      ).modelDiscoveryProbe
+  );
+  expect(discoveries).toContainEqual({
+    executor: 'CODEX',
+    hostId: 'remote-fixture',
+    context: {
+      workspaceId: 'fixture-workspace-a',
+      sessionId: 'fixture-session-a',
+      variant: 'DEFAULT',
+    },
+    refreshCount: 1,
+  });
+  await expect(page.getByTestId('session-submit-count')).toHaveText('0');
+});
+
+test('Codex explicit unsupported effort is retained until a user chooses a reported effort', async ({
+  page,
+}) => {
+  await selectAgent(
+    page,
+    'CODEX',
+    '&codexConfigError=true&codexExplicitMax=true'
+  );
+  expect((await currentConfig(page)).reasoning_id).toBe('max');
+  await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
+  await session(page)
+    .getByRole('button', { name: /gpt-6\.1-sol.*Max/, exact: true })
+    .click();
+  await picker(page)
+    .locator('[data-model-id="gpt-6.1-sol"]')
+    .getByRole('button', { name: 'Max', exact: true })
+    .click();
+  await page.getByRole('menuitem', { name: 'High', exact: true }).click();
+  expect(await currentConfig(page)).toEqual({
+    executor: 'CODEX',
+    variant: null,
+    model_id: 'gpt-6.1-sol',
+    reasoning_id: 'high',
+  });
+  await expect(page.getByTestId('selector-overrides')).toHaveText(
+    JSON.stringify([{ reasoning_id: 'high' }])
+  );
+  await expect(page.getByTestId('session-submit-count')).toHaveText('0');
+});
+
+test('Codex plan displays and edits plan effort while preserving ordinary effort and service tier', async ({
+  page,
+}) => {
+  await selectAgent(page, 'CODEX', '&codexPlan=true&codexConfigError=true');
+  await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
+  await session(page)
+    .getByRole('button', { name: /gpt-6\.1-sol.*High/, exact: true })
+    .click();
+  const row = picker(page).locator('[data-model-id="gpt-6.1-sol"]');
+  await row
+    .getByRole('button', {
+      name: 'Inherit profile / native settings · High',
+      exact: true,
+    })
+    .click();
+  await page.getByRole('menuitem', { name: 'Extra High', exact: true }).click();
+  expect(await currentConfig(page)).toEqual({
+    executor: 'CODEX',
+    variant: null,
+    reasoning_id: 'medium',
+    provider_options: {
+      provider: 'codex',
+      service_tier: 'priority',
+      plan_mode_reasoning_effort: 'xhigh',
+    },
+  });
+  await page.keyboard.press('Escape');
+  await expect(
+    session(page).getByRole('button', {
+      name: /gpt-6\.1-sol.*Extra High/,
+      exact: true,
+    })
+  ).toBeVisible();
+  await session(page)
+    .getByRole('button', {
+      name: /gpt-6\.1-sol.*Extra High/,
+      exact: true,
+    })
+    .click();
+  await row.getByRole('button', { name: 'Extra High', exact: true }).click();
+  await page
+    .getByRole('menuitem', {
+      name: 'Inherit profile / native settings · High',
+      exact: true,
+    })
+    .click();
+  expect((await currentConfig(page)).provider_options).toEqual({
+    provider: 'codex',
+    service_tier: 'priority',
+    plan_mode_reasoning_effort: null,
+  });
+  expect((await currentConfig(page)).reasoning_id).toBe('medium');
+  await page.keyboard.press('Escape');
+  await expect(
+    session(page).getByRole('button', {
+      name: /gpt-6\.1-sol.*High/,
+      exact: true,
+    })
+  ).toBeVisible();
+  await expect(page.getByTestId('session-submit-count')).toHaveText('0');
+});
+
+test('Codex plan does not present ordinary native effort as its unknown plan default', async ({
+  page,
+}) => {
+  await selectAgent(page, 'CODEX', '&codexPlanUnknown=true');
+  await session(page)
+    .getByRole('button', {
+      name: /gpt-6\.1-sol.*Inherit profile \/ native settings/,
+      exact: true,
+    })
+    .click();
+  await picker(page)
+    .locator('[data-model-id="gpt-6.1-sol"]')
+    .getByRole('button', {
+      name: 'Inherit profile / native settings',
+      exact: true,
+    })
+    .click();
+  await page.getByRole('menuitem', { name: 'High', exact: true }).click();
+  expect(await currentConfig(page)).toEqual({
+    executor: 'CODEX',
+    variant: null,
+    permission_policy: 'PLAN',
+    reasoning_id: 'medium',
+    provider_options: {
+      provider: 'codex',
+      service_tier: 'priority',
+      plan_mode_reasoning_effort: 'high',
+    },
+  });
+  await expect(page.getByTestId('session-submit-count')).toHaveText('0');
+});
+
+test('Codex complete config failure stays openable without advertising guessed effort options', async ({
+  page,
+}) => {
+  await selectAgent(
+    page,
+    'CODEX',
+    '&codexConfigError=true&codexExplicitMax=true&noDiscoveryConfig=true&discoveryLoadingError=true'
+  );
+  await session(page)
+    .getByRole('button', {
+      name: 'Native configuration needs attention',
+      exact: true,
+    })
+    .click();
+  await expect(picker(page).getByRole('alert')).toHaveText(
+    'Native configuration needs attention'
+  );
+  await expect(picker(page).getByTitle('Reasoning supported')).toHaveCount(0);
+  await expect(
+    picker(page).getByRole('button', {
+      name: 'Follow CLI config',
+      exact: true,
+    })
+  ).toBeVisible();
+  await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
+  await expect(page.getByTestId('input-modalities')).toHaveText('null');
+  expect((await currentConfig(page)).reasoning_id).toBe('max');
+  await picker(page)
+    .getByRole('button', { name: 'Refresh native capabilities', exact: true })
+    .click();
+  await expect(picker(page).getByRole('alert')).toHaveCount(0);
+  await picker(page)
+    .locator('[data-model-id="gpt-6.1-sol"]')
+    .getByRole('button', { name: 'Max', exact: true })
+    .click();
+  await page.getByRole('menuitem', { name: 'Extra High', exact: true }).click();
+  expect((await currentConfig(page)).reasoning_id).toBe('xhigh');
+  await expect(page.getByTestId('session-submit-count')).toHaveText('0');
 });

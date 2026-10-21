@@ -6,7 +6,7 @@ import {
   AgentRunSessionProvider,
   useAgentRunSession,
   type AgentRunSessionContextValue,
-} from '@/features/agent-runtime';
+} from '@/features/agent-runtime/model/AgentRunSessionContext';
 
 // ---------------------------------------------------------------------------
 // Entries context — changes on every streaming update

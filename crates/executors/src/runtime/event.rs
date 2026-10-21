@@ -87,6 +87,7 @@ pub enum AgentRuntimeToolStatus {
     Denied,
     Succeeded,
     Failed,
+    Cancelled,
     TimedOut,
 }
 

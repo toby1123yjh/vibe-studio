@@ -129,10 +129,9 @@ pub async fn delete_scratch(
             ));
         }
     }
-    let rows = Scratch::delete(&deployment.db().pool, id, &scratch_type).await?;
-    if rows == 0 {
-        return Err(ApiError::BadRequest("Scratch not found".to_string()));
-    }
+    // A fast send can cancel the first debounced save. Clearing that unsaved
+    // draft, or clearing it again after an acknowledgement, is still success.
+    Scratch::delete(&deployment.db().pool, id, &scratch_type).await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }
 

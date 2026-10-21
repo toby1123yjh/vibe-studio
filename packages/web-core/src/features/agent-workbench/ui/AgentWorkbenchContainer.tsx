@@ -167,7 +167,7 @@ export function AgentWorkbenchContainer({
             </button>
           )}
         </header>
-        <div className="min-h-0 flex-1">{conversation}</div>
+        <div className="flex min-h-0 flex-1 flex-col">{conversation}</div>
       </section>
 
       <div

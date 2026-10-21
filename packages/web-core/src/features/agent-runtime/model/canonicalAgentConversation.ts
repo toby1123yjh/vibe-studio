@@ -63,6 +63,9 @@ function toolStatus(
     case AgentRuntimeToolStatus.created:
     case AgentRuntimeToolStatus.running:
     case AgentRuntimeToolStatus.approved:
+    case AgentRuntimeToolStatus.cancelled:
+      // The legacy row type has no cancelled state. Its canonical active flag
+      // stays false; the shared block renderer exposes cancellation explicitly.
       return { status: 'created' };
     case AgentRuntimeToolStatus.waiting_approval:
       return approvalId
@@ -162,7 +165,7 @@ function appendRunEntries(
   const inputIndexes = new Map<string, number>();
   const systemMessageIndexes = new Map<string, number>();
   let previousMessage:
-    | { index: number; messageId: string; role: string }
+    | { index: number; messageId: string; role: string; runAttemptId: string }
     | undefined;
 
   const resetMessageMerge = () => {
@@ -172,6 +175,11 @@ function appendRunEntries(
   for (const event of events) {
     const payload = event.payload;
     switch (payload.type) {
+      case 'conversation':
+        // v2 bodies belong to the server projection/session store. Do not
+        // create a second frontend projection beside the shared block list.
+        resetMessageMerge();
+        break;
       case 'message': {
         const message = payload.data.message;
         const entryType =
@@ -185,7 +193,8 @@ function appendRunEntries(
             ? systemMessageIndexes.get(message.message_id)
             : message.role === 'assistant' &&
                 previousMessage?.messageId === message.message_id &&
-                previousMessage.role === message.role
+                previousMessage.role === message.role &&
+                previousMessage.runAttemptId === event.run_attempt_id
               ? previousMessage.index
               : undefined;
         if (mergeIndex !== undefined) {
@@ -196,7 +205,8 @@ function appendRunEntries(
               ...previous.content,
               content:
                 message.role === 'assistant'
-                  ? message.content.startsWith(previousContent)
+                  ? payload.data.final_output ||
+                    message.content.startsWith(previousContent)
                     ? message.content
                     : `${previousContent}${message.content}`
                   : message.content,
@@ -208,6 +218,7 @@ function appendRunEntries(
             index: mergeIndex,
             messageId: message.message_id,
             role: message.role,
+            runAttemptId: event.run_attempt_id,
           };
           break;
         }
@@ -222,6 +233,7 @@ function appendRunEntries(
           index: output.length - 1,
           messageId: message.message_id,
           role: message.role,
+          runAttemptId: event.run_attempt_id,
         };
         if (message.role === 'system') {
           systemMessageIndexes.set(message.message_id, output.length - 1);
@@ -441,9 +453,12 @@ function appendRunEntries(
           })
         );
         break;
+      case 'file_changes':
       case 'lifecycle_changed':
       case 'provider_extension':
-        resetMessageMerge();
+        // These events have no conversation row. Native metadata can arrive
+        // between text deltas and their completed snapshot without starting
+        // a second visible message.
         break;
     }
   }

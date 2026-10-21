@@ -38,80 +38,41 @@ export async function makeLocalApiRequest(
         { status: 409 },
       );
     }
-    if (query.has("message-conflict")) {
+    if (query.has("text-conflict")) {
+      return new Response("PROJECT_DIRECTORY_EXISTS", { status: 409 });
+    }
+    if (query.has("legacy-conflict")) {
       return Response.json(
         {
           success: false,
-          message: JSON.stringify({
+          data: null,
+          message: "Project directory already exists",
+          error_data: {
             code: "PROJECT_DIRECTORY_EXISTS",
             project: existing,
-          }),
+          },
         },
         { status: 409 },
       );
     }
-    if (query.has("text-conflict")) {
-      return new Response("PROJECT_DIRECTORY_EXISTS", { status: 409 });
-    }
-    if (
-      query.has("existing") &&
-      (!input.confirmed_project_id ||
-        query.has("identity-changed") ||
-        query.has("malformed-conflict"))
-    ) {
-      const malformed = query.get("malformed-conflict");
-      return Response.json(
-        {
-          success: malformed === "success" ? true : false,
-          data: null,
-          message: "Project directory already exists",
-          error_data: {
-            code:
-              malformed === "code"
-                ? "OTHER_CONFLICT"
-                : "PROJECT_DIRECTORY_EXISTS",
-            project: {
-              ...existing,
-              ...(query.has("identity-changed") && input.confirmed_project_id
-                ? {
-                    id: "de0f22f7-3004-4729-8cda-ff2d0f6059b0",
-                    name: "Changed project",
-                  }
-                : {}),
-              ...(query.has("malformed-conflict") &&
-              (!malformed || malformed === "id")
-                ? { id: "not-a-uuid" }
-                : {}),
-              ...(malformed === "name" ? { name: null } : {}),
-            },
-          },
-        },
-        { status: malformed === "status" ? 400 : 409 },
-      );
-    }
-    if (input.confirmed_project_id && query.has("confirmed-open-fails")) {
-      return Response.json(
-        { success: false, message: "Could not open the project." },
-        { status: 500 },
-      );
-    }
-    if (input.confirmed_project_id && query.has("hold-confirmed-open")) {
+    if (query.has("hold-open")) {
       await new Promise<void>((resolve) =>
         window.addEventListener("fixture-open-release", () => resolve(), {
           once: true,
         }),
       );
     }
+    // Even when detached metadata exists, create returns the new draft's
+    // identity and fields. Recovery is not a supported server operation.
+    if (query.has("detached-project")) record("detachedProject", existing);
     return Response.json({
       success: true,
-      data: query.has("existing")
-        ? existing
-        : {
-            ...existing,
-            id: "directory-project",
-            name: input.name,
-            color: input.color,
-          },
+      data: {
+        id: "directory-project",
+        organization_id: "org-fixture",
+        name: input.name,
+        color: input.color,
+      },
       txid: 1,
     });
   }

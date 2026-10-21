@@ -27,12 +27,107 @@ use crate::{
 };
 
 /// Handles bidirectional control protocol communication
+fn encode_interaction_response(
+    payload: &serde_json::Value,
+    reply: &crate::runtime::ConversationInteractionReply,
+) -> Result<ControlResponseMessage, ExecutorError> {
+    use crate::executors::provider_adapter::conversation::claude::interaction_request;
+    let invalid = |message: &str| {
+        ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            message.to_owned(),
+        ))
+    };
+    let interaction = interaction_request(payload);
+    if reply.request_id != interaction.request_id {
+        return Err(invalid(
+            "Claude interaction does not match its original request",
+        ));
+    }
+    let request = &payload["request"];
+    let mut input = request["input"].clone();
+    let response = if interaction.kind == crate::runtime::ConversationInteractionKind::Question {
+        let mut answers = serde_json::Map::new();
+        for answer in &reply.answers {
+            let question = interaction
+                .questions
+                .iter()
+                .find(|question| question.id == answer.question_id)
+                .ok_or_else(|| invalid("Unknown Claude question id"))?;
+            if answers.contains_key(&question.id)
+                || (!question.multiple && answer.values.len() > 1)
+                || (question.required && answer.values.is_empty())
+            {
+                return Err(invalid("Invalid Claude question answer"));
+            }
+            answers.insert(
+                question.prompt.clone(),
+                serde_json::Value::String(answer.values.join(", ")),
+            );
+        }
+        if interaction
+            .questions
+            .iter()
+            .any(|question| question.required && !answers.contains_key(&question.prompt))
+        {
+            return Err(invalid("A required Claude question is unanswered"));
+        }
+        input
+            .as_object_mut()
+            .ok_or_else(|| invalid("Claude tool input is not an object"))?
+            .insert("answers".into(), serde_json::Value::Object(answers));
+        serde_json::json!({"behavior":"allow", "updatedInput":input})
+    } else {
+        match reply.option_id.as_deref() {
+            Some("allow") => serde_json::json!({"behavior":"allow", "updatedInput":input}),
+            Some("deny") => {
+                serde_json::json!({"behavior":"deny", "message":reply.text.as_deref().unwrap_or("Denied by user"), "interrupt":false})
+            }
+            _ => return Err(invalid("Claude permission option was not advertised")),
+        }
+    };
+    Ok(ControlResponseMessage::new(ControlResponseType::Success {
+        request_id: interaction.request_id,
+        response: Some(response),
+    }))
+}
+
+fn encode_legacy_native_approval(
+    payload: &serde_json::Value,
+    request_id: String,
+    approved: bool,
+    reason: Option<String>,
+) -> Result<ControlResponseMessage, ExecutorError> {
+    use crate::{
+        executors::provider_adapter::conversation::claude::interaction_request,
+        runtime::{ConversationInteractionKind, ConversationInteractionReply},
+    };
+
+    if interaction_request(payload).kind != ConversationInteractionKind::Permission {
+        return Err(ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Claude question requests require a structured interaction reply with answers",
+        )));
+    }
+    encode_interaction_response(
+        payload,
+        &ConversationInteractionReply {
+            request_id,
+            option_id: Some(if approved { "allow" } else { "deny" }.into()),
+            answers: Vec::new(),
+            text: reason,
+        },
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct ProtocolPeer {
     stdin: Arc<Mutex<ChildStdin>>,
     interrupt_sent: Arc<AtomicBool>,
     startup_failure: Option<StartupFailureSignal>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, String>>>>>,
+    native_interactions: bool,
+    native_pending: Arc<Mutex<HashMap<String, serde_json::Value>>>,
 }
 
 /// A failure-only signal retained by the real peer/control lifetime. Successful
@@ -63,6 +158,21 @@ impl crate::executors::ExecutorControl for ProtocolPeer {
         use crate::executors::provider_adapter::DirectControl;
 
         match control {
+            DirectControl::ReplyInteraction { reply } => {
+                let response = {
+                    let mut pending = self.native_pending.lock().await;
+                    let request = pending.get(&reply.request_id).ok_or_else(|| {
+                        ExecutorError::Io(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "Claude request is no longer pending",
+                        ))
+                    })?;
+                    let response = encode_interaction_response(request, &reply)?;
+                    pending.remove(&reply.request_id);
+                    response
+                };
+                self.send_json_bytes(&response).await
+            }
             DirectControl::Cancel => self.send_interrupt_once().await,
             DirectControl::Steer { text } => self.send_user_message_bytes(text).await,
             DirectControl::Approve {
@@ -70,6 +180,26 @@ impl crate::executors::ExecutorControl for ProtocolPeer {
                 approved,
                 reason,
             } => {
+                if self.native_interactions {
+                    let response = {
+                        let mut pending = self.native_pending.lock().await;
+                        let request = pending.get(&request_id).ok_or_else(|| {
+                            ExecutorError::Io(std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                "Claude request is no longer pending; use a structured interaction reply for the original request",
+                            ))
+                        })?;
+                        let response = encode_legacy_native_approval(
+                            request,
+                            request_id.clone(),
+                            approved,
+                            reason,
+                        )?;
+                        pending.remove(&request_id);
+                        response
+                    };
+                    return self.send_json_bytes(&response).await;
+                }
                 let response = if approved {
                     serde_json::json!({
                         "behavior": "allow",
@@ -102,12 +232,15 @@ impl ProtocolPeer {
         client: Arc<ClaudeAgentClient>,
         cancel: CancellationToken,
         startup_failure: Option<StartupFailureSignal>,
+        native_interactions: bool,
     ) -> Self {
         let peer = Self {
             stdin: Arc::new(Mutex::new(stdin)),
             interrupt_sent: Arc::new(AtomicBool::new(false)),
             startup_failure,
             pending: Arc::new(Mutex::new(HashMap::new())),
+            native_interactions,
+            native_pending: Arc::new(Mutex::new(HashMap::new())),
         };
 
         let reader_peer = peer.clone();
@@ -156,7 +289,27 @@ impl ProtocolPeer {
                             if line.is_empty() {
                                 continue;
                             }
+                            let observed = serde_json::from_str::<serde_json::Value>(line).ok();
+                            let native_request = self.native_interactions && observed.as_ref().is_some_and(|value| {
+                                value["type"] == "control_request" && value["request"]["subtype"] == "can_use_tool"
+                            });
+                            if native_request && let Some(value) = &observed
+                                && let Some(id) = value["request_id"].as_str()
+                            {
+                                self.native_pending.lock().await.insert(id.to_owned(), value.clone());
+                            }
+                            if let Some(value) = &observed
+                                && value["type"] == "control_cancel_request"
+                                && let Some(id) = value["request_id"].as_str()
+                            {
+                                self.native_pending.lock().await.remove(id);
+                            }
                             client.log_message(line).await?;
+                            if native_request {
+                                // Keep reading: other tool requests and native
+                                // controls may arrive while this one waits.
+                                continue;
+                            }
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
                                 if let Some(observation) = runtime_configuration_observation(&value) {
                                     client.log_message(&observation.to_string()).await?;
@@ -200,6 +353,7 @@ impl ProtocolPeer {
         // Wake setup requests immediately on EOF; do not send a prompt after a
         // failed initialize/resume or leave it waiting for a timeout.
         self.pending.lock().await.clear();
+        self.native_pending.lock().await.clear();
         Ok(())
     }
 
@@ -408,6 +562,61 @@ fn runtime_configuration_observation(value: &serde_json::Value) -> Option<serde_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_responses_preserve_tool_input_and_question_answers() {
+        use crate::runtime::{ConversationInteractionReply, ConversationQuestionAnswer};
+        let payload = serde_json::json!({"type":"control_request","request_id":"native-1", "request":{
+            "subtype":"can_use_tool", "tool_name":"Bash", "input":{"command":"pwd", "timeout":123}, "tool_use_id":"tool-1"
+        }});
+        let reply = ConversationInteractionReply {
+            request_id: "native-1".into(),
+            option_id: Some("allow".into()),
+            answers: vec![],
+            text: None,
+        };
+        let response =
+            serde_json::to_value(encode_interaction_response(&payload, &reply).unwrap()).unwrap();
+        assert_eq!(response["response"]["request_id"], "native-1");
+        assert_eq!(
+            response["response"]["response"]["updatedInput"],
+            payload["request"]["input"]
+        );
+        let legacy = serde_json::to_value(
+            encode_legacy_native_approval(&payload, "native-1".into(), true, None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(legacy, response);
+        assert!(
+            encode_legacy_native_approval(&payload, "other-request".into(), true, None).is_err()
+        );
+        let question = serde_json::json!({"type":"control_request","request_id":"q-1", "request":{
+            "subtype":"can_use_tool", "tool_name":"AskUserQuestion", "input":{"questions":[{"question":"Which?", "options":[{"label":"A"}], "multiSelect":true}]}
+        }});
+        let reply = ConversationInteractionReply {
+            request_id: "q-1".into(),
+            option_id: None,
+            answers: vec![ConversationQuestionAnswer {
+                question_id: "Which?".into(),
+                values: vec!["A".into(), "custom choice".into()],
+            }],
+            text: None,
+        };
+        let response =
+            serde_json::to_value(encode_interaction_response(&question, &reply).unwrap()).unwrap();
+        assert_eq!(
+            response["response"]["response"]["updatedInput"]["answers"]["Which?"],
+            "A, custom choice"
+        );
+        assert_eq!(
+            response["response"]["response"]["updatedInput"]["questions"],
+            question["request"]["input"]["questions"]
+        );
+        assert!(encode_legacy_native_approval(&question, "q-1".into(), true, None).is_err());
+        let mut invalid = reply;
+        invalid.request_id = "other-request".into();
+        assert!(encode_interaction_response(&question, &invalid).is_err());
+    }
 
     #[test]
     fn observations_only_report_main_model_and_never_guess_effort() {

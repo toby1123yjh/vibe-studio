@@ -215,6 +215,11 @@ pub enum AgentRunPortCommand {
         input_id: String,
         content: String,
     },
+    ReplyInteraction {
+        run_attempt_id: Uuid,
+        reply_id: Uuid,
+        reply: super::ConversationInteractionReply,
+    },
     ResolveApproval {
         approval_id: String,
         approved: bool,
@@ -478,6 +483,32 @@ mod tests {
 
         assert_eq!(policy.max_run_attempts, 1);
         assert!(!policy.is_automatic_retry_enabled());
+    }
+
+    #[test]
+    fn interaction_reply_requires_and_preserves_the_target_attempt() {
+        let run_attempt_id = Uuid::new_v4();
+        let command = AgentRunPortCommand::ReplyInteraction {
+            run_attempt_id,
+            reply_id: Uuid::new_v4(),
+            reply: super::super::ConversationInteractionReply {
+                request_id: "codex:0".into(),
+                option_id: Some("accept".into()),
+                answers: Vec::new(),
+                text: None,
+            },
+        };
+        let mut wire = serde_json::to_value(&command).unwrap();
+        assert_eq!(wire["data"]["run_attempt_id"], json!(run_attempt_id));
+        assert_eq!(
+            serde_json::from_value::<AgentRunPortCommand>(wire.clone()).unwrap(),
+            command
+        );
+        wire["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("run_attempt_id");
+        assert!(serde_json::from_value::<AgentRunPortCommand>(wire).is_err());
     }
 
     #[test]

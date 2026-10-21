@@ -7,13 +7,12 @@
     "selectColor": "Select project color",
     "creating": "Creating...",
     "createButton": "Create Project",
-    "existingProjectTitle": "¿Abrir proyecto existente?",
-    "existingProjectDescription": "Este directorio ya contiene «{{name}}». ¿Abrirlo? Se conservarán su nombre, tareas y configuración; no se usarán los datos introducidos para el proyecto nuevo.",
-    "openExistingProject": "Abrir proyecto existente"
+    "workspaceHint": "Elige un directorio para el nuevo proyecto. Esto no inicia ningún agente.",
+    "createdWorkspaceSaveFailed": "El proyecto se ha creado, pero no se pudo guardar su configuración de Git. Reintenta guardarla. Cancelar conserva el proyecto y sus archivos."
   },
   "deleteProjectDialog": {
     "title": "Delete Project?",
-    "description": "¿Quitar «{{name}}» de este dispositivo? Se conservarán el directorio, los archivos y los datos de las tareas. Solo reaparecerá si abres explícitamente su directorio.",
+    "description": "¿Quitar «{{name}}» de Vibe Studio? Se conservarán el directorio y los archivos. Si vuelves a elegir este directorio se creará un proyecto nuevo, sin restaurar las tareas ni la configuración anteriores.",
     "cloudDescription": "Esto eliminará permanentemente «{{name}}» y todas sus tareas. Esta acción no se puede deshacer.",
     "error": "Failed to delete project. Please try again."
   },

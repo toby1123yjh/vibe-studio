@@ -150,6 +150,10 @@ pub struct ClaudeCode {
     #[ts(skip)]
     #[derivative(Debug = "ignore", PartialEq = "ignore")]
     approvals_service: Option<Arc<dyn ExecutorApprovalService>>,
+    #[serde(skip)]
+    #[ts(skip)]
+    #[derivative(Debug = "ignore", PartialEq = "ignore")]
+    native_interactions: bool,
 }
 
 impl ClaudeCode {
@@ -273,7 +277,10 @@ impl ClaudeCode {
             session_id,
             reset_to_message_id,
         )?;
-        self.spawn_internal(current_dir, prompt, command_parts, env)
+        let mut direct = self.clone();
+        direct.native_interactions = true;
+        direct
+            .spawn_internal(current_dir, prompt, command_parts, env)
             .await
     }
 
@@ -1112,6 +1119,7 @@ impl ClaudeCode {
             client.clone(),
             cancel.clone(),
             startup_failure,
+            self.native_interactions,
         );
         let control = prompt_gate.wrap(Arc::new(protocol_peer.clone()));
         let cancel_for_startup = cancel.clone();
@@ -3344,6 +3352,7 @@ mod tests {
             dangerously_skip_permissions: None,
             cmd: crate::command::CmdOverrides::default(),
             approvals_service: None,
+            native_interactions: false,
             disable_api_key: None,
         }
     }
@@ -3881,6 +3890,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
                 env: None,
             },
             approvals_service: None,
+            native_interactions: false,
             disable_api_key: None,
         };
         let msg_store = Arc::new(MsgStore::new());

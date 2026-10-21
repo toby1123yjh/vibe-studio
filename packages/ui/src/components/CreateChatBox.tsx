@@ -208,7 +208,7 @@ export function CreateChatBox<TExecutor extends string = string>({
             title={t('tasks:taskFormDialog.attachFile')}
             onClick={handleAttachClick}
             disabled={isDisabled}
-            className="mr-half min-h-8 min-w-8 shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+            className="min-h-8 min-w-8 shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
           />
           <input
             ref={fileInputRef}
@@ -217,14 +217,14 @@ export function CreateChatBox<TExecutor extends string = string>({
             className="hidden"
             onChange={handleFileInputChange}
           />
-          {projectSelector}
-          {linkedTask && (
-            <>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-base gap-y-half">
+            {projectSelector}
+            {linkedTask && (
               <div
-                className="inline-flex items-center gap-half whitespace-nowrap text-sm text-low"
+                className="inline-flex items-center gap-half border-l border-border pl-base whitespace-nowrap text-sm text-low"
                 title={linkedTask.title}
               >
-                <span className="font-mono text-xs text-normal">
+                <span className="font-mono text-sm text-normal">
                   {linkedTask.simpleId}
                 </span>
                 {linkedTask.onRemove && (
@@ -239,8 +239,8 @@ export function CreateChatBox<TExecutor extends string = string>({
                   </button>
                 )}
               </div>
-            </>
-          )}
+            )}
+          </div>
         </>
       }
       footerRight={

@@ -1,4 +1,5 @@
 mod contracts;
+mod conversation;
 mod error;
 mod event;
 mod launch_phase;
@@ -9,6 +10,7 @@ mod orchestration_reducer;
 mod reducer;
 
 pub use contracts::*;
+pub use conversation::*;
 pub use error::{AgentRuntimeError, AgentRuntimeErrorKind};
 pub use event::{AgentRuntimeEvent, AgentRuntimeMessageRole, AgentRuntimeToolStatus};
 pub use launch_phase::AgentRuntimeLaunchPhase;

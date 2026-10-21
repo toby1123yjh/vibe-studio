@@ -9,12 +9,15 @@ use std::{
 use db::models::{
     agent_run_preview::{
         AGENT_RUN_PREVIEW_CHAR_LIMIT, AGENT_RUN_PREVIEW_VERSION, AgentPreviewActivityKind,
-        AgentRunActivity, AgentRunPreviewRecord, AgentToolPreview, AssistantReplyPreview,
+        AgentRunActivity, AgentRunPreview, AgentRunPreviewRecord, AgentToolPreview,
+        AssistantReplyPreview,
     },
     agent_runtime::subscribe_agent_event_changes,
 };
 use executors::runtime::{
     AgentEventEnvelope, AgentEventPayload, AgentRuntimeMessageRole, AgentRuntimeToolStatus,
+    ConversationBlockKind, ConversationBlockOperation, ConversationBlockUpdate,
+    ConversationInteractionKind, ConversationInteractionStatus, ConversationTextField,
 };
 use futures::TryStreamExt;
 use sqlx::{SqlitePool, types::Json};
@@ -249,6 +252,193 @@ fn activity(
     }
 }
 
+fn tool_active(status: AgentRuntimeToolStatus) -> bool {
+    matches!(
+        status,
+        AgentRuntimeToolStatus::Created
+            | AgentRuntimeToolStatus::Running
+            | AgentRuntimeToolStatus::WaitingApproval
+            | AgentRuntimeToolStatus::Approved
+    )
+}
+
+/// Keep only bounded display summaries. Large arguments, results and reasoning
+/// remain in the conversation read model, never in dashboard preview JSON.
+fn apply_conversation_preview(
+    preview: &mut AgentRunPreview,
+    event: &AgentEventEnvelope,
+    update: &ConversationBlockUpdate,
+) {
+    let fields = match &update.operation {
+        ConversationBlockOperation::Snapshot { fields }
+        | ConversationBlockOperation::Patch { fields, .. } => Some(fields),
+        _ => None,
+    };
+    let cleared = |name: &str| {
+        matches!(&update.operation,
+        ConversationBlockOperation::Patch { clear_fields, .. }
+            if clear_fields.iter().any(|field| field == name))
+    };
+    match update.kind {
+        ConversationBlockKind::Text
+            if update.role.unwrap_or(AgentRuntimeMessageRole::Assistant)
+                == AgentRuntimeMessageRole::Assistant =>
+        {
+            let same = preview.conversation_block_id.as_deref() == Some(&update.block_id)
+                && preview
+                    .assistant
+                    .as_ref()
+                    .is_some_and(|previous| previous.run_attempt_id == event.run_attempt_id);
+            let replacement = fields.and_then(|fields| fields.text.as_deref());
+            let appended = match &update.operation {
+                ConversationBlockOperation::Append {
+                    field: ConversationTextField::Text,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            };
+            // A status-only Finish does not invent a new visible answer.
+            if same || replacement.is_some() || appended.is_some() || cleared("text") {
+                let (text, truncated) = if let Some(text) = replacement {
+                    bounded(text, AGENT_RUN_PREVIEW_CHAR_LIMIT)
+                } else if cleared("text") {
+                    (String::new(), false)
+                } else if let Some(text) = appended {
+                    match preview.assistant.as_ref().filter(|_| same) {
+                        Some(previous) if previous.truncated => (previous.text.clone(), true),
+                        Some(previous) => {
+                            let remaining = AGENT_RUN_PREVIEW_CHAR_LIMIT
+                                .saturating_sub(previous.text.chars().count());
+                            let (suffix, truncated) = bounded(text, remaining);
+                            let mut merged = previous.text.clone();
+                            merged.push_str(&suffix);
+                            (merged, truncated)
+                        }
+                        None => bounded(text, AGENT_RUN_PREVIEW_CHAR_LIMIT),
+                    }
+                } else {
+                    let previous = preview
+                        .assistant
+                        .as_ref()
+                        .expect("same preview has an assistant");
+                    (previous.text.clone(), previous.truncated)
+                };
+                let message_id = Uuid::parse_str(&update.block_id).unwrap_or_else(|_| {
+                    preview
+                        .assistant
+                        .as_ref()
+                        .filter(|_| same)
+                        .map_or(event.event_id, |previous| previous.message_id)
+                });
+                preview.assistant = Some(AssistantReplyPreview {
+                    message_id,
+                    run_attempt_id: event.run_attempt_id,
+                    run_attempt_number: event.run_attempt_number,
+                    sequence: event.sequence,
+                    event_id: event.event_id,
+                    timestamp: event.timestamp,
+                    text,
+                    truncated,
+                });
+                preview.conversation_block_id = Some(update.block_id.clone());
+            }
+            preview.activity = Some(activity(event, AgentPreviewActivityKind::Message, "", None));
+        }
+        ConversationBlockKind::Reasoning => {
+            preview.activity = Some(activity(
+                event,
+                AgentPreviewActivityKind::Thinking,
+                "",
+                None,
+            ));
+        }
+        ConversationBlockKind::Tool => {
+            let same = preview.conversation_tool_block_id.as_deref() == Some(&update.block_id)
+                && preview
+                    .latest_tool
+                    .as_ref()
+                    .is_some_and(|previous| previous.run_attempt_id == event.run_attempt_id);
+            let previous = preview.latest_tool.as_ref().filter(|_| same);
+            let name = fields
+                .and_then(|fields| fields.tool_name.as_deref())
+                .or_else(|| previous.map(|tool| tool.tool_name.as_str()))
+                .unwrap_or("");
+            let name = if cleared("tool_name") {
+                String::new()
+            } else {
+                bounded(name, ACTIVITY_CHAR_LIMIT).0
+            };
+            let requested_status = fields.and_then(|fields| fields.status).unwrap_or_else(|| {
+                previous.map_or(AgentRuntimeToolStatus::Created, |tool| tool.status)
+            });
+            let status = match previous {
+                Some(tool) if !tool_active(tool.status) => tool.status,
+                _ => requested_status,
+            };
+            let finished = (same && preview.conversation_tool_finished)
+                || matches!(update.operation, ConversationBlockOperation::Finish { .. });
+            preview.latest_tool = Some(AgentToolPreview {
+                tool_name: name.clone(),
+                status,
+                active: !finished && tool_active(status),
+                timestamp: event.timestamp,
+                event_id: event.event_id,
+                run_attempt_id: event.run_attempt_id,
+                run_attempt_number: event.run_attempt_number,
+                sequence: event.sequence,
+            });
+            preview.conversation_tool_block_id = Some(update.block_id.clone());
+            preview.conversation_tool_finished = finished;
+            preview.activity = Some(activity(
+                event,
+                AgentPreviewActivityKind::Tool,
+                &name,
+                serialized_status(status),
+            ));
+        }
+        ConversationBlockKind::Interaction => {
+            if let Some(interaction) = fields.and_then(|fields| fields.interaction.as_ref()) {
+                let resolved = matches!(
+                    interaction.status,
+                    ConversationInteractionStatus::Resolved
+                        | ConversationInteractionStatus::Cancelled
+                );
+                let kind = match (interaction.kind, resolved) {
+                    (ConversationInteractionKind::Permission, false) => {
+                        AgentPreviewActivityKind::ApprovalRequested
+                    }
+                    (ConversationInteractionKind::Permission, true) => {
+                        AgentPreviewActivityKind::ApprovalResolved
+                    }
+                    (ConversationInteractionKind::Question, false) => {
+                        AgentPreviewActivityKind::InputRequested
+                    }
+                    (ConversationInteractionKind::Question, true) => {
+                        AgentPreviewActivityKind::InputResolved
+                    }
+                };
+                preview.activity = Some(activity(
+                    event,
+                    kind,
+                    interaction
+                        .title
+                        .as_deref()
+                        .or(interaction.prompt.as_deref())
+                        .unwrap_or(""),
+                    serialized_status(interaction.status),
+                ));
+            }
+        }
+        // These carry inspectable conversation content without inventing a
+        // dashboard activity type or copying their potentially large bodies.
+        ConversationBlockKind::Text
+        | ConversationBlockKind::Plan
+        | ConversationBlockKind::Notice
+        | ConversationBlockKind::Resource
+        | ConversationBlockKind::Extension => {}
+    }
+}
+
 fn apply_preview_event(
     record: &mut AgentRunPreviewRecord,
     event: &AgentEventEnvelope,
@@ -265,6 +455,13 @@ fn apply_preview_event(
         return Ok(false);
     }
     let preview = &mut record.preview.0;
+    if record.last_run_attempt_id != Some(event.run_attempt_id) {
+        preview.conversation_block_id = None;
+        preview.conversation_tool_block_id = None;
+        preview.conversation_tool_finished = false;
+        preview.merge_message_id = None;
+        preview.merge_role = None;
+    }
     // Match canonicalAgentConversation's event-boundary rules. FileChanges
     // has no rendered conversation entry and therefore preserves adjacency.
     if !matches!(
@@ -275,8 +472,31 @@ fn apply_preview_event(
         preview.merge_role = None;
     }
     match &event.payload {
-        AgentEventPayload::Message { message, .. } => {
+        AgentEventPayload::Conversation { update } => {
+            apply_conversation_preview(preview, event, update)
+        }
+        AgentEventPayload::Message {
+            message,
+            final_output,
+        } => {
+            if event.payload_version >= 2
+                && *final_output
+                && preview.conversation_block_id.is_some()
+                && preview
+                    .assistant
+                    .as_ref()
+                    .is_some_and(|previous| previous.run_attempt_id == event.run_attempt_id)
+            {
+                // The final output may aggregate text around tools; it is an
+                // orchestration fact referencing an already rendered body.
+                record.last_run_attempt_id = Some(event.run_attempt_id);
+                record.last_run_attempt_number = attempt;
+                record.last_sequence = sequence;
+                record.last_event_id = Some(event.event_id);
+                return Ok(true);
+            }
             if message.role == AgentRuntimeMessageRole::Assistant {
+                preview.conversation_block_id = None;
                 let can_merge = preview.merge_message_id == Some(message.message_id)
                     && preview.merge_role == Some(message.role);
                 let (text, truncated) = match &preview.assistant {
@@ -329,6 +549,8 @@ fn apply_preview_event(
         AgentEventPayload::ToolCall {
             tool_name, status, ..
         } => {
+            preview.conversation_tool_block_id = None;
+            preview.conversation_tool_finished = false;
             preview.latest_tool = Some(AgentToolPreview {
                 tool_name: bounded(tool_name, ACTIVITY_CHAR_LIMIT).0,
                 status: *status,
@@ -397,6 +619,7 @@ fn apply_preview_event(
                 && let Some(tool) = &mut preview.latest_tool
             {
                 tool.active = false;
+                preview.conversation_tool_finished = true;
             }
             preview.activity = Some(activity(
                 event,
@@ -440,6 +663,7 @@ mod tests {
     use chrono::Utc;
     use executors::runtime::{
         AGENT_EVENT_PAYLOAD_VERSION, AGENT_EVENT_SCHEMA_VERSION, AgentRunStatus, CanonicalMessage,
+        ConversationBlockFields,
     };
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -487,6 +711,209 @@ mod tests {
             .assistant
             .as_ref()
             .expect("assistant preview")
+    }
+
+    #[test]
+    fn rich_preview_replaces_snapshots_preserves_tool_details_and_bounds_final_output() {
+        let run = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
+        let block_id = message_id.to_string();
+        let mut record = AgentRunPreviewRecord::empty(run);
+        let rich = |sequence, id: &str, kind, operation| {
+            event(
+                run,
+                sequence,
+                AgentEventPayload::Conversation {
+                    update: Box::new(ConversationBlockUpdate {
+                        block_id: id.into(),
+                        kind,
+                        role: None,
+                        native_id: None,
+                        parent_block_id: None,
+                        operation,
+                    }),
+                },
+            )
+        };
+        apply_preview_event(
+            &mut record,
+            &rich(
+                1,
+                &block_id,
+                ConversationBlockKind::Text,
+                ConversationBlockOperation::Append {
+                    field: ConversationTextField::Text,
+                    text: "before ".into(),
+                },
+            ),
+        )
+        .unwrap();
+        apply_preview_event(
+            &mut record,
+            &rich(
+                2,
+                "tool",
+                ConversationBlockKind::Tool,
+                ConversationBlockOperation::Snapshot {
+                    fields: ConversationBlockFields {
+                        tool_name: Some("Read".into()),
+                        status: Some(AgentRuntimeToolStatus::Running),
+                        arguments: Some(serde_json::json!({"path": "private-arguments"})),
+                        ..Default::default()
+                    },
+                },
+            ),
+        )
+        .unwrap();
+        assert!(record.preview.0.latest_tool.as_ref().unwrap().active);
+        apply_preview_event(
+            &mut record,
+            &rich(
+                3,
+                "tool",
+                ConversationBlockKind::Tool,
+                ConversationBlockOperation::Patch {
+                    fields: ConversationBlockFields {
+                        result: Some(serde_json::json!("private-result".repeat(10_000))),
+                        ..Default::default()
+                    },
+                    clear_fields: Vec::new(),
+                },
+            ),
+        )
+        .unwrap();
+        let tool = record.preview.0.latest_tool.as_ref().unwrap();
+        assert_eq!(tool.tool_name, "Read");
+        assert_eq!(tool.status, AgentRuntimeToolStatus::Running);
+        apply_preview_event(
+            &mut record,
+            &rich(
+                4,
+                "tool",
+                ConversationBlockKind::Tool,
+                ConversationBlockOperation::Finish {
+                    reason: Some("completed".into()),
+                },
+            ),
+        )
+        .unwrap();
+        assert!(!record.preview.0.latest_tool.as_ref().unwrap().active);
+        // A partial update after Finish neither erases the label nor restarts
+        // the spinner, and Finish alone never fabricates a success status.
+        apply_preview_event(
+            &mut record,
+            &rich(
+                5,
+                "tool",
+                ConversationBlockKind::Tool,
+                ConversationBlockOperation::Patch {
+                    fields: ConversationBlockFields {
+                        status: Some(AgentRuntimeToolStatus::Running),
+                        ..Default::default()
+                    },
+                    clear_fields: Vec::new(),
+                },
+            ),
+        )
+        .unwrap();
+        let tool = record.preview.0.latest_tool.as_ref().unwrap();
+        assert_eq!(tool.tool_name, "Read");
+        assert_eq!(tool.status, AgentRuntimeToolStatus::Running);
+        assert!(!tool.active);
+        apply_preview_event(
+            &mut record,
+            &rich(
+                6,
+                &block_id,
+                ConversationBlockKind::Text,
+                ConversationBlockOperation::Append {
+                    field: ConversationTextField::Text,
+                    text: "after".into(),
+                },
+            ),
+        )
+        .unwrap();
+        assert_eq!(assistant(&record).text, "before after");
+
+        let prefix = "\u{1f9ea}".repeat(AGENT_RUN_PREVIEW_CHAR_LIMIT);
+        apply_preview_event(
+            &mut record,
+            &rich(
+                7,
+                &block_id,
+                ConversationBlockKind::Text,
+                ConversationBlockOperation::Snapshot {
+                    fields: ConversationBlockFields {
+                        text: Some(format!("{prefix}tail")),
+                        ..Default::default()
+                    },
+                },
+            ),
+        )
+        .unwrap();
+        apply_preview_event(
+            &mut record,
+            &rich(
+                8,
+                &block_id,
+                ConversationBlockKind::Text,
+                ConversationBlockOperation::Append {
+                    field: ConversationTextField::Text,
+                    text: "more".into(),
+                },
+            ),
+        )
+        .unwrap();
+        assert_eq!(assistant(&record).text, prefix);
+        assert_eq!(assistant(&record).text.chars().count(), 600);
+        assert!(assistant(&record).truncated);
+        // An explicit shorter snapshot can replace an already truncated body.
+        apply_preview_event(
+            &mut record,
+            &rich(
+                9,
+                &block_id,
+                ConversationBlockKind::Text,
+                ConversationBlockOperation::Snapshot {
+                    fields: ConversationBlockFields {
+                        text: Some("final answer".into()),
+                        ..Default::default()
+                    },
+                },
+            ),
+        )
+        .unwrap();
+        apply_preview_event(
+            &mut record,
+            &rich(
+                10,
+                &block_id,
+                ConversationBlockKind::Text,
+                ConversationBlockOperation::Finish { reason: None },
+            ),
+        )
+        .unwrap();
+        let displayed = assistant(&record).clone();
+        assert_eq!(displayed.text, "final answer");
+        assert!(!displayed.truncated);
+        let final_output = event(
+            run,
+            11,
+            AgentEventPayload::Message {
+                message: CanonicalMessage {
+                    message_id,
+                    role: AgentRuntimeMessageRole::Assistant,
+                    content: "before after\nfinal answer".into(),
+                },
+                final_output: true,
+            },
+        );
+        apply_preview_event(&mut record, &final_output).unwrap();
+        assert_eq!(*assistant(&record), displayed);
+        assert_eq!(record.last_sequence, 11);
+        let summary = serde_json::to_string(&record.preview.0).unwrap();
+        assert!(!summary.contains("private-arguments"));
+        assert!(!summary.contains("private-result"));
     }
 
     #[test]

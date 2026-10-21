@@ -575,6 +575,16 @@ impl OrchestrationOutboxRecord {
         let mut transaction = pool.begin().await?;
         let stale_before = now - redelivery_after;
         sqlx::query(
+            "UPDATE orchestration_outbox SET delivery_status='failed',
+             last_error='native interaction delivery is unconfirmed',updated_at=?
+             WHERE delivery_status='delivering' AND updated_at<=?
+             AND json_extract(command_envelope,'$.command.type')='reply_interaction'",
+        )
+        .bind(now)
+        .bind(stale_before)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
             "UPDATE orchestration_outbox SET delivery_status = 'pending', updated_at = ? WHERE delivery_status = 'delivering' AND updated_at <= ?",
         )
         .bind(now)
@@ -586,6 +596,7 @@ impl OrchestrationOutboxRecord {
             SELECT id
             FROM orchestration_outbox
             WHERE delivery_status IN ('pending', 'failed')
+              AND NOT (delivery_status='failed' AND json_extract(command_envelope,'$.command.type')='reply_interaction')
               AND available_at <= ?
             ORDER BY available_at ASC, created_at ASC
             LIMIT 1
@@ -630,13 +641,25 @@ impl OrchestrationOutboxRecord {
         redelivery_after: Duration,
     ) -> Result<u64, OrchestrationPersistenceError> {
         let stale_before = now - redelivery_after;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query(
+            "UPDATE orchestration_outbox SET delivery_status='failed',
+             last_error='native interaction delivery is unconfirmed after restart',updated_at=?
+             WHERE delivery_status='delivering' AND updated_at<=?
+             AND json_extract(command_envelope,'$.command.type')='reply_interaction'",
+        )
+        .bind(now)
+        .bind(stale_before)
+        .execute(&mut *transaction)
+        .await?;
         let result = sqlx::query(
             "UPDATE orchestration_outbox SET delivery_status = 'pending', updated_at = ? WHERE delivery_status = 'delivering' AND updated_at <= ?",
         )
         .bind(now)
         .bind(stale_before)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await?;
+        transaction.commit().await?;
         Ok(result.rows_affected())
     }
 
