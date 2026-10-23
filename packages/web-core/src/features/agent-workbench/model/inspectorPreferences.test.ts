@@ -26,6 +26,6 @@ describe('Agent Workbench Inspector preferences', () => {
         activeTab: 'unknown' as 'files',
         width: 999,
       })
-    ).toEqual({ visible: true, activeTab: 'changes', width: 480 });
+    ).toEqual({ visible: false, activeTab: 'files', width: 480 });
   });
 });

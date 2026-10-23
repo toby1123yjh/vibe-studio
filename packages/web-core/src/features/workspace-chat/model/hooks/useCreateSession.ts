@@ -77,7 +77,7 @@ export function useCreateSession(options: UseCreateSessionOptions = {}) {
       } finally {
         // The selected session can have loaded null before its initial run was
         // persisted. A failed launch may also leave a durable run or binding.
-        await queryClient.invalidateQueries({
+        void queryClient.invalidateQueries({
           queryKey: sessionExecutorConfigKey(hostId, session.id),
         });
       }

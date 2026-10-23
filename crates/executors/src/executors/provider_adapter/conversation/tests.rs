@@ -338,6 +338,11 @@ fn codex_transport_housekeeping_does_not_create_conversation_blocks() {
     for method in [
         "thread/status/changed",
         "turn/started",
+        "remoteControl/status/changed",
+        "thread/settings/updated",
+        "turn/moderationMetadata",
+        "thread/readState/changed",
+        "thread/goal/cleared",
         "thread/name/updated",
         "thread/closed",
         "thread/compacted",
@@ -362,26 +367,133 @@ fn codex_transport_housekeeping_does_not_create_conversation_blocks() {
 }
 
 #[test]
-fn codex_mcp_failure_is_visible_without_terminating_the_turn() {
+fn codex_startup_diagnostics_stay_in_audit_without_polluting_conversation() {
     let events = transcript(
         DirectProvider::Codex,
-        vec![json!({"method":"mcpServer/startupStatus/updated","params":{
-            "name":"expired-oauth","status":"failed","error":"OAuth credentials expired",
-            "failureReason":"reauthenticationRequired"
-        }})],
+        vec![
+            json!({"method":"configWarning","params":{"summary":"Ignored legacy setting","details":"legacy_key is ignored"}}),
+            json!({"method":"warning","params":{"threadId":"thread-1","message":"Ignored legacy setting"}}),
+            json!({"method":"warning","params":{"threadId":"thread-1","message":"Ignored legacy setting\n\nlegacy_key is ignored"}}),
+            json!({"method":"configWarning","params":{"summary":"Unknown configuration\n  legacy_key is ignored","details":null}}),
+            json!({"method":"warning","params":{"threadId":"thread-1","message":"Unknown configuration\n  legacy_key is ignored"}}),
+            json!({"method":"deprecationNotice","params":{"summary":"Legacy hydration is deprecated","details":"Use paginated reads"}}),
+            json!({"method":"mcpServer/startupStatus/updated","params":{
+                "name":"expired-oauth","status":"failed","error":"OAuth credentials expired",
+                "failureReason":"reauthenticationRequired"
+            }}),
+            json!({"method":"configWarning","params":{"summary":"Ignored legacy setting","details":"legacy_key is ignored"}}),
+        ],
+    );
+    assert!(
+        events.is_empty(),
+        "startup diagnostics are audit-only in live and replay"
+    );
+    assert_eq!(
+        super::codex::startup_diagnostic(
+            "configWarning",
+            &json!({"summary":"Ignored legacy setting","details":"legacy_key is ignored"})
+        ),
+        Some("Ignored legacy setting\n\nlegacy_key is ignored".into())
+    );
+    assert_eq!(
+        super::codex::startup_diagnostic(
+            "mcpServer/startupStatus/updated",
+            &json!({"name":"expired-oauth","status":"failed","error":"OAuth credentials expired"})
+        ),
+        Some("MCP server expired-oauth: OAuth credentials expired".into())
+    );
+}
+
+#[test]
+fn codex_required_mcp_failure_preserves_the_fatal_startup_error() {
+    let diagnostic = "thread/start failed: required MCP server tavily failed to initialize";
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![
+            json!({"method":"mcpServer/startupStatus/updated","params":{
+                "name":"tavily","status":"failed","error":"connection closed"
+            }}),
+            json!({"LaunchError":{"error":diagnostic}}),
+        ],
+    );
+    assert_eq!(events.len(), 1);
+    assert!(matches!(&events[0].payload,
+        AgentEventPayload::Error { error }
+            if error.kind == crate::runtime::AgentRuntimeErrorKind::StartupFailed
+                && error.message == diagnostic
+    ));
+}
+
+#[test]
+fn codex_runtime_warnings_remain_visible_without_duplicate_rows_or_terminal_errors() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![
+            json!({"method":"warning","params":{"threadId":"thread-1","message":"Model changed for this thread"}}),
+            json!({"method":"warning","params":{"threadId":"thread-1","message":"Model changed for this thread"}}),
+            json!({"method":"warning","params":{"threadId":"thread-1","message":"Another runtime warning","details":"Additional context"}}),
+            json!({"method":"item/completed","params":{"item":{"type":"agentMessage","id":"reply","text":"Still completed"}}}),
+        ],
     );
     assert!(!events.iter().any(|event| matches!(
         event.payload,
         AgentEventPayload::Error { .. } | AgentEventPayload::LifecycleChanged { .. }
     )));
     let visible = blocks(&events);
-    assert_eq!(visible.len(), 1);
-    let (kind, fields) = visible.values().next().unwrap();
-    assert_eq!(*kind, ConversationBlockKind::Notice);
-    assert_eq!(
-        fields["text"],
-        "MCP server expired-oauth: OAuth credentials expired"
+    let notices: Vec<_> = visible
+        .values()
+        .filter(|(kind, _)| *kind == ConversationBlockKind::Notice)
+        .collect();
+    assert_eq!(notices.len(), 2);
+    assert!(
+        notices
+            .iter()
+            .any(|(_, fields)| fields["text"] == "Model changed for this thread")
     );
+    assert!(
+        notices
+            .iter()
+            .any(|(_, fields)| fields["text"] == "Another runtime warning\n\nAdditional context")
+    );
+    assert!(
+        visible
+            .values()
+            .any(|(kind, fields)| *kind == ConversationBlockKind::Text
+                && fields["text"] == "Still completed")
+    );
+}
+
+#[test]
+fn codex_standalone_warning_is_not_hidden_by_message_content() {
+    let events = transcript(
+        DirectProvider::Codex,
+        vec![json!({"method":"warning","params":{
+            "threadId":"thread-1",
+            "message":"Codex is ignoring 6 unrecognized configuration settings. Check for typos or deprecated settings."
+        }})],
+    );
+    let visible = blocks(&events);
+    assert_eq!(visible.len(), 1);
+    assert_eq!(
+        visible.values().next().unwrap().0,
+        ConversationBlockKind::Notice
+    );
+}
+
+#[test]
+fn codex_unrecognized_warning_shapes_remain_diagnosable_extensions() {
+    for frame in [
+        json!({"method":"configWarning","params":{"newDiagnostic":"Keep this"}}),
+        json!({"method":"warning","params":{"message":""}}),
+        json!({"method":"deprecationNotice","params":{"summary":42}}),
+        json!({"method":"configWarning","params":{"summary":"Unknown detail schema","details":{"future":true}}}),
+        json!({"method":"mcpServer/startupStatus/updated","params":{"name":"tools","status":"failed","error":{"future":true}}}),
+    ] {
+        let events = transcript(DirectProvider::Codex, vec![frame.clone()]);
+        assert!(events.iter().any(|event| matches!(&event.payload,
+            AgentEventPayload::ProviderExtension { payload, .. } if payload == &frame
+        )));
+    }
 }
 
 #[test]

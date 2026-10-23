@@ -134,6 +134,7 @@ interface SharedProps {
   /** Default executor config supplied by an embedding workflow/node context. */
   preferredExecutorConfig?: ExecutorConfig | null;
   presentation?: 'full-page' | 'embedded';
+  showSessionControls?: boolean;
   workspace?: Workspace | null;
   diffPaths?: Set<string>;
 }
@@ -186,6 +187,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     showOpenWorkspaceButton,
     preferredExecutorConfig,
     presentation = 'full-page',
+    showSessionControls = presentation !== 'embedded',
     workspace: explicitWorkspace,
     diffPaths,
   } = props;
@@ -257,16 +259,11 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   const appNavigation = useAppNavigation();
 
   const actionsContext = useContext(ActionsContext);
-  const { rightMainPanelMode, setRightMainPanelMode } =
-    useWorkspacePanelState(workspaceId);
+  const { setRightMainPanelMode } = useWorkspacePanelState(workspaceId);
 
   const handleViewCode = useCallback(() => {
-    setRightMainPanelMode(
-      rightMainPanelMode === RIGHT_MAIN_PANEL_MODES.CHANGES
-        ? null
-        : RIGHT_MAIN_PANEL_MODES.CHANGES
-    );
-  }, [rightMainPanelMode, setRightMainPanelMode]);
+    setRightMainPanelMode(RIGHT_MAIN_PANEL_MODES.CHANGES);
+  }, [setRightMainPanelMode]);
 
   const handleOpenWorkspace = useCallback(() => {
     if (!workspaceId) return;
@@ -516,6 +513,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   // Unified executor + variant + model selector options resolution
   const {
     executorConfig,
+    displayExecutorConfig,
     effectiveExecutor,
     selectedVariant,
     executorOptions,
@@ -550,8 +548,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     config: executorConfig,
   });
   if (liveExecutorConfigRef.current.scope !== draftScope || executorConfig) {
-    // A refetch temporarily gates sending with null; retain the latest choice
-    // only for acknowledgement of this same draft, never for another session.
+    // A refetch temporarily gates sending with null. Retain this scope's latest
+    // choice for draft persistence and acknowledgement while it refreshes.
     liveExecutorConfigRef.current = {
       scope: draftScope,
       config: executorConfig,
@@ -643,9 +641,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     });
     if (success) {
       if (!owner.active || draftOwnerRef.current !== owner) return;
-      // Refresh the canonical snapshot before deleting the submitted draft.
-      if (sessionId) await refetchConfig();
-      if (!owner.active || draftOwnerRef.current !== owner) return;
       if (draftIdentityRef.current.sessionId !== submission.sessionId) return;
       cancelDebouncedSave();
       const currentMessage = localMessageRef.current;
@@ -658,23 +653,29 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         )
       ) {
         draftIdentityRef.current.revision += 1;
+        localMessageRef.current = '';
         setLocalMessage('');
-        await clearDraft();
+        // The server has accepted the message. A slow config refresh or scratch
+        // DELETE must not leave the submitted text in the live composer.
+        void clearDraft().catch((error) => {
+          console.error('Failed to clear submitted follow-up draft', error);
+        });
+        setSelectedSkills([]);
+        setStagedResumeSession(null);
+        clearUploadedAttachments();
+        if (!isSlashCommand) {
+          reviewContext?.clearComments();
+        }
       } else if (
         liveExecutorConfigRef.current.config &&
         draftIdentityRef.current.sessionId === submission.sessionId
       ) {
-        await saveToScratch(
+        void saveToScratch(
           currentMessage,
           liveExecutorConfigRef.current.config
         );
       }
-      setSelectedSkills([]);
-      setStagedResumeSession(null);
-      clearUploadedAttachments();
-      if (!isSlashCommand) {
-        reviewContext?.clearComments();
-      }
+      if (sessionId) void refetchConfig();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           onScrollToBottom('auto');
@@ -778,10 +779,19 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   // Editor change handler
   const handleEditorChange = useCallback(
     (value: string) => {
+      // Keyboard submission may re-emit the current markdown. Only real edits
+      // advance the revision so the accepted submission can still clear it.
+      if (value === localMessageRef.current) return;
       draftIdentityRef.current.revision += 1;
+      localMessageRef.current = value;
       if (isQueued) cancelQueue();
-      if (executorConfig) {
-        handleMessageChange(value, executorConfig);
+      const draftConfig =
+        executorConfig ??
+        (liveExecutorConfigRef.current.scope === draftScope
+          ? liveExecutorConfigRef.current.config
+          : null);
+      if (draftConfig) {
+        handleMessageChange(value, draftConfig);
       } else {
         setLocalMessage(value);
       }
@@ -792,6 +802,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       cancelQueue,
       handleMessageChange,
       executorConfig,
+      draftScope,
       sendError,
       clearError,
       setLocalMessage,
@@ -1070,11 +1081,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         onChange={onChange}
         onCmdEnter={onCmdEnter}
         disabled={disabled}
-        className={
-          presentation === 'embedded'
-            ? 'min-h-8 max-h-[min(160px,25vh)] overflow-y-auto'
-            : 'min-h-double max-h-[50vh] overflow-y-auto'
-        }
+        className="min-h-[3lh] min-w-0 [&_code.block]:whitespace-pre-wrap [&_code.block]:[overflow-wrap:anywhere]"
         repoIds={repoIds}
         executor={executor}
         selectedSkills={selectedSkills}
@@ -1093,7 +1100,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       selectedSkills,
       sessionId,
       workspaceId,
-      presentation,
       diffPaths,
     ]
   );
@@ -1109,11 +1115,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       />
     ) : undefined;
 
-  const modelSelectorNode = isConfigLoading ? (
-    <span className="text-low text-sm" role="status">
-      {t('common:sessionConfig.loading', 'Restoring session configuration…')}
-    </span>
-  ) : configError ? (
+  const modelSelectorNode = configError ? (
     <button
       type="button"
       className="text-error text-sm"
@@ -1121,24 +1123,36 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     >
       {t('common:sessionConfig.retry', 'Retry loading session configuration')}
     </button>
+  ) : isConfigLoading && !displayExecutorConfig ? (
+    <span className="text-low text-sm" role="status">
+      {t('common:sessionConfig.loading', 'Restoring session configuration…')}
+    </span>
   ) : effectiveExecutor || stagedResumeSession ? (
     <>
       {effectiveExecutor && (
-        <ModelSelectorContainer
-          key={`${hostId ?? 'local'}:${sessionId ?? workspaceId}`}
-          agent={effectiveExecutor}
-          workspaceId={workspaceId}
-          sessionId={sessionId}
-          onAdvancedSettings={handleCustomise}
-          presets={variantOptions}
-          selectedPreset={selectedVariant}
-          onPresetSelect={setSelectedVariant}
-          onOverrideChange={setExecutorOverrides}
-          executorConfig={executorConfig}
-          presetOptions={presetOptions}
-          readOnly={configurationLocked}
-          onInputModalitiesChange={attachmentGuard.onInputModalitiesChange}
-        />
+        <fieldset
+          disabled={isConfigLoading}
+          aria-busy={isConfigLoading}
+          // Refresh gates edits without flashing the cached controls as unavailable.
+          // Controls disabled for their own capability/readiness retain that style.
+          className="flex min-w-0 max-w-full flex-wrap items-center gap-half border-0 p-0 [&_button:disabled:not([disabled])]:opacity-100"
+        >
+          <ModelSelectorContainer
+            key={`${hostId ?? 'local'}:${sessionId ?? workspaceId}`}
+            agent={effectiveExecutor}
+            workspaceId={workspaceId}
+            sessionId={sessionId}
+            onAdvancedSettings={handleCustomise}
+            presets={variantOptions}
+            selectedPreset={selectedVariant}
+            onPresetSelect={setSelectedVariant}
+            onOverrideChange={setExecutorOverrides}
+            executorConfig={displayExecutorConfig}
+            presetOptions={presetOptions}
+            readOnly={configurationLocked}
+            onInputModalitiesChange={attachmentGuard.onInputModalitiesChange}
+          />
+        </fieldset>
       )}
       {attachmentGuard.notice && (
         <span role="status" className="text-sm text-low">
@@ -1159,6 +1173,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     return (
       <SessionChatBox<BaseCodingAgent>
         status="idle"
+        compact={presentation === 'embedded'}
+        showSessionControls={showSessionControls}
         renderEditor={renderEditor}
         repoIds={repoIds}
         tokenUsageInfo={tokenUsageInfo}
@@ -1207,7 +1223,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     <SessionChatBox<BaseCodingAgent>
       status={status}
       compact={presentation === 'embedded'}
-      showSessionControls={presentation !== 'embedded'}
+      showSessionControls={showSessionControls}
       isMobile={isMobile}
       onViewCode={disableViewCode ? undefined : handleViewCode}
       onOpenWorkspace={
@@ -1245,18 +1261,17 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         onPasteFiles: attachmentGuard.uploadFiles,
       }}
       actionPolicy={runtimeActionPolicy}
+      isConfigLoading={isConfigLoading}
       session={{
         sessions,
         selectedSessionId: sessionId,
         onSelectSession: onSelectSession ?? (() => {}),
         isInitialSendMode: isNewSessionMode,
         isNewSessionMode: needsExecutorSelection,
-        onNewSession:
-          presentation === 'embedded' ? undefined : onStartNewSession,
-        onRenameSession:
-          presentation === 'embedded' ? undefined : handleRenameSession,
+        onNewSession: showSessionControls ? onStartNewSession : undefined,
+        onRenameSession: showSessionControls ? handleRenameSession : undefined,
         onDeleteSession:
-          mode === 'existing-session' && presentation !== 'embedded'
+          mode === 'existing-session' && showSessionControls
             ? handleDeleteSession
             : undefined,
         deletingSessionId,

@@ -96,14 +96,12 @@ export const ChatToolSummary = forwardRef<
         handleClick();
       }}
     >
-      <span className="relative shrink-0 pt-0.5">
+      <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
         <Icon className="size-icon-base" />
         {status && (
-          <ToolStatusDot
-            status={status}
-            active={isActive}
-            className="absolute -bottom-0.5 -left-0.5"
-          />
+          <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
+            <ToolStatusDot status={status} active={isActive} />
+          </span>
         )}
       </span>
       <ActivityText

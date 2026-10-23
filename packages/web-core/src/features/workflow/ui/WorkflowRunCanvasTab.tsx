@@ -58,6 +58,7 @@ import { useHostId } from '@/shared/providers/HostIdProvider';
 import { useWorkflowRunMutations } from '@/shared/hooks/useWorkflowRun';
 import { useWorkflowTemplate } from '@/shared/hooks/useWorkflowTemplates';
 import { cn } from '@/shared/lib/utils';
+import { TASK_PANEL_SIZING } from '@/shared/lib/floatingPanelSizing';
 import {
   getConditionRouterHumanPrompt,
   getConditionRouterReason,
@@ -1197,7 +1198,11 @@ function WorkflowRunNodeDetailsDialog({
       autoFocus={false}
       restoreFocus={false}
       closeLabel={t('workflow.runCanvas.closeNodeDetails')}
-      className="absolute bottom-6 right-6 top-6 [--vk-floating-panel-width:440px] !max-w-[calc(100%_-_3rem)] max-md:inset-0 max-md:[--vk-floating-panel-width:100%] max-md:!max-w-none max-md:rounded-none"
+      resize={{
+        ...TASK_PANEL_SIZING,
+        label: t('panels.resizeWidth', { defaultValue: 'Resize panel width' }),
+      }}
+      className="absolute bottom-6 right-6 top-6 !max-w-[calc(100%_-_3rem)] max-md:!max-w-none"
       contentClassName="flex min-h-0 flex-col overflow-hidden"
       data-testid="workflow-run-node-details"
     >

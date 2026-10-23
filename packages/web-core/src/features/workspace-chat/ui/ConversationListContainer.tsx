@@ -49,8 +49,6 @@ import { useSetTokenUsageInfo } from '../model/contexts/EntriesContext';
 import type { WorkspaceWithSession } from '@/shared/types/attempt';
 import type { RepoWithTargetBranch } from 'shared/types';
 import { ChatEmptyState } from '@vibe/ui/components/ChatEmptyState';
-import { ChatScriptPlaceholder } from '@vibe/ui/components/ChatScriptPlaceholder';
-import { ScriptFixerDialog } from '@/shared/dialogs/scripts/ScriptFixerDialog';
 import { useWorkflowNotifications } from '@/shared/hooks/useWorkflowManagement';
 import { workflowNotificationEntries } from '@/features/workflow/model/workflowNotifications';
 import { Button } from '@vibe/ui/components/Button';
@@ -63,7 +61,6 @@ interface ConversationListProps {
   sessionScopeId?: string;
   initialViewState?: WorkspaceConversationViewState;
   onViewStateChange?: (state: WorkspaceConversationViewState) => void;
-  showScriptSetup?: boolean;
   readOnly?: boolean;
 }
 
@@ -210,7 +207,6 @@ export const ConversationList = forwardRef<
     sessionScopeId,
     initialViewState,
     onViewStateChange,
-    showScriptSetup = true,
     readOnly = false,
   },
   ref
@@ -272,8 +268,6 @@ export const ConversationList = forwardRef<
   const conversationScopeKey = `${attempt.id}:${sessionScopeId ?? attempt.session?.id ?? 'new'}`;
   const [dataVersion, setDataVersion] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [hasSetupScriptRun, setHasSetupScriptRun] = useState(false);
-  const [hasCleanupScriptRun, setHasCleanupScriptRun] = useState(false);
   const [hasRunningProcess, setHasRunningProcess] = useState(false);
   const { setEntries, reset } = useEntriesActions();
   const setTokenUsageInfo = useSetTokenUsageInfo();
@@ -305,42 +299,6 @@ export const ConversationList = forwardRef<
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const pendingInteractionAnchorDeadlineRef = useRef(0);
 
-  // Use ref to access current repos without causing callback recreation
-  const reposRef = useRef(repos);
-  reposRef.current = repos;
-
-  // Check if any repo has setup or cleanup scripts configured
-  const hasSetupScript = repos.some((repo) => repo.setup_script);
-  const hasCleanupScript = repos.some((repo) => repo.cleanup_script);
-
-  // Handlers to open script fixer dialog for setup/cleanup scripts
-  const handleConfigureSetup = useCallback(() => {
-    const currentRepos = reposRef.current;
-    if (readOnly || currentRepos.length === 0) return;
-
-    ScriptFixerDialog.show({
-      scriptType: 'setup',
-      repos: currentRepos,
-      workspaceId: attempt.id,
-      sessionId: attempt.session?.id,
-    });
-  }, [attempt.id, attempt.session?.id, readOnly]);
-
-  const handleConfigureCleanup = useCallback(() => {
-    const currentRepos = reposRef.current;
-    if (readOnly || currentRepos.length === 0) return;
-
-    ScriptFixerDialog.show({
-      scriptType: 'cleanup',
-      repos: currentRepos,
-      workspaceId: attempt.id,
-      sessionId: attempt.session?.id,
-    });
-  }, [attempt.id, attempt.session?.id, readOnly]);
-
-  // Determine if configure buttons should be shown
-  const canConfigure = !readOnly && repos.length > 0;
-
   useEffect(() => {
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
@@ -353,8 +311,6 @@ export const ConversationList = forwardRef<
       planRevealSpacerRef.current.style.height = '0px';
     }
     setLoading(true);
-    setHasSetupScriptRun(false);
-    setHasCleanupScriptRun(false);
     setHasRunningProcess(false);
     setDataVersion(0);
     reset();
@@ -511,8 +467,6 @@ export const ConversationList = forwardRef<
       workflowSystemEntries: workflowSystemEntriesRef.current,
     });
 
-    setHasSetupScriptRun(derivedEntries.hasSetupScriptRun);
-    setHasCleanupScriptRun(derivedEntries.hasCleanupScriptRun);
     setHasRunningProcess(derivedEntries.hasRunningProcess);
     setTokenUsageInfo(derivedEntries.latestTokenUsageInfo);
 
@@ -586,7 +540,7 @@ export const ConversationList = forwardRef<
     }
   };
 
-  const { isFirstTurn, isLoadingHistory } = useConversationHistory({
+  const { isLoadingHistory } = useConversationHistory({
     attempt,
     onTimelineUpdated,
     scopeKey: conversationScopeKey,
@@ -835,20 +789,6 @@ export const ConversationList = forwardRef<
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [dataVersion]);
-
-  // Determine if there are entries to show placeholders
-  const hasEntries = conversationRows.length > 0;
-
-  // Show placeholders only if script not configured AND not already run AND first turn
-  const showSetupPlaceholder =
-    showScriptSetup && !hasSetupScript && !hasSetupScriptRun && hasEntries;
-  const showCleanupPlaceholder =
-    showScriptSetup &&
-    !hasCleanupScript &&
-    !hasCleanupScriptRun &&
-    !hasRunningProcess &&
-    hasEntries &&
-    isFirstTurn;
 
   // Expose scroll functionality via ref — delegates to TanStack Virtual
   const scrollToPreviousUserMessage = useCallback(() => {
@@ -1145,14 +1085,6 @@ export const ConversationList = forwardRef<
                 </Button>
               </div>
             ) : null}
-            {showSetupPlaceholder && (
-              <div className="my-base px-double">
-                <ChatScriptPlaceholder
-                  type="setup"
-                  onConfigure={canConfigure ? handleConfigureSetup : undefined}
-                />
-              </div>
-            )}
           </div>
 
           {isLoadingHistory &&
@@ -1257,20 +1189,6 @@ export const ConversationList = forwardRef<
               can align the plan entry to the top of the viewport. Height is set
               imperatively in scrollToAbsoluteIndex and cleared on scrollToBottom. */}
           <div ref={planRevealSpacerRef} style={{ height: 0 }} />
-
-          {/* Footer placeholder */}
-          <div className="pb-2">
-            {showCleanupPlaceholder && (
-              <div className="my-base px-double">
-                <ChatScriptPlaceholder
-                  type="cleanup"
-                  onConfigure={
-                    canConfigure ? handleConfigureCleanup : undefined
-                  }
-                />
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </ApprovalFormProvider>

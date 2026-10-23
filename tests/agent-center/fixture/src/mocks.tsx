@@ -19,6 +19,7 @@ import {
   SettingSection,
   SettingValueType,
   BaseCodingAgent,
+  PermissionPolicy,
 } from 'shared/types';
 import {
   AGENT_PROVIDERS,
@@ -63,6 +64,11 @@ export const useAuth = () => ({
 });
 export const useHostId = () =>
   new URLSearchParams(window.location.search).get('host');
+export const getRemoteApiUrl = () =>
+  new URLSearchParams(window.location.search).get('remoteConfigured') ===
+  'false'
+    ? ''
+    : 'https://relay.example.test';
 const pairedHosts = [
   { host_id: 'remote-fixture', host_name: 'Remote fixture', paired_at: '' },
 ];
@@ -175,8 +181,16 @@ const modelConfigByExecutor: Partial<
       model_reasoning: {},
     },
     catalog_source: 'native',
-    agents: [],
-    permissions: [],
+    agents: params.has('composerSettings')
+      ? [{ id: 'reviewer', label: 'Review agent', is_default: false }]
+      : [],
+    permissions: params.has('composerSettings')
+      ? [
+          PermissionPolicy.AUTO,
+          PermissionPolicy.SUPERVISED,
+          PermissionPolicy.PLAN,
+        ]
+      : [],
   },
   [BaseCodingAgent.CLAUDE_CODE]: {
     providers: [],

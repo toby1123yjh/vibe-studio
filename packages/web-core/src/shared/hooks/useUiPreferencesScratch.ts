@@ -103,7 +103,6 @@ function scratchDataToStore(data: UiPreferencesData): {
   collapsedPaths: Record<string, string[]>;
   fileSearchRepoId: string | null;
   isLeftSidebarVisible: boolean;
-  isRightSidebarVisible: boolean;
   isTerminalVisible: boolean;
   workspacePanelStates: Record<string, WorkspacePanelState>;
   workspaceFilters: WorkspaceFilterState;
@@ -151,7 +150,6 @@ function scratchDataToStore(data: UiPreferencesData): {
     collapsedPaths: (data.collapsed_paths ?? {}) as Record<string, string[]>,
     fileSearchRepoId: data.file_search_repo_id ?? legacyFileSearchRepoId,
     isLeftSidebarVisible: data.is_left_sidebar_visible ?? true,
-    isRightSidebarVisible: data.is_right_sidebar_visible ?? true,
     isTerminalVisible: data.is_terminal_visible ?? true,
     workspacePanelStates,
     workspaceFilters: {
@@ -266,7 +264,8 @@ export function useUiPreferencesScratch() {
       isApplyingServerDataRef.current = true;
       const serverState = scratchDataToStore(scratchData);
 
-      // Merge server state into the store
+      // Inspector visibility belongs to this browser session. Hydration must
+      // not reopen a saved panel or undo an explicit action during loading.
       useUiPreferencesStore.setState({
         repoActions: serverState.repoActions,
         expanded: serverState.expanded,
@@ -275,7 +274,6 @@ export function useUiPreferencesScratch() {
         collapsedPaths: serverState.collapsedPaths,
         fileSearchRepoId: serverState.fileSearchRepoId,
         isLeftSidebarVisible: serverState.isLeftSidebarVisible,
-        isRightSidebarVisible: serverState.isRightSidebarVisible,
         isTerminalVisible: serverState.isTerminalVisible,
         workspacePanelStates: serverState.workspacePanelStates,
         workspaceFilters: serverState.workspaceFilters,

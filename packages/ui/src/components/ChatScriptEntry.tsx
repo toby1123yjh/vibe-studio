@@ -69,13 +69,11 @@ export function ChatScriptEntry({
         }
       }}
     >
-      <span className="relative shrink-0 pt-0.5">
+      <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
         <TerminalIcon className="size-icon-base text-low" />
-        <ToolStatusDot
-          status={status}
-          active={isRunning}
-          className="absolute -bottom-0.5 -left-0.5"
-        />
+        <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
+          <ToolStatusDot status={status} active={isRunning} />
+        </span>
       </span>
       <div className="flex flex-col min-w-0 flex-1">
         <span className="text-normal font-medium">{title}</span>

@@ -50,6 +50,7 @@ import { OAuthDialog } from '@/shared/dialogs/global/OAuthDialog';
 import { CreateRemoteProjectDialog } from '@/shared/dialogs/org/CreateRemoteProjectDialog';
 import { ProjectActionsMenu } from '@/shared/components/ProjectActionsMenu';
 import { isDefaultProject } from '@/shared/lib/defaultProject';
+import { formatWorkspacePathForDisplay } from '@/shared/lib/workspaceContext';
 import { useDeleteProject } from '@/shared/hooks/useDeleteProject';
 import { useShape } from '@/shared/integrations/electric/hooks';
 import { bulkUpdateProjectStatuses } from '@/shared/lib/remoteApi';
@@ -801,6 +802,13 @@ export function RemoteProjectsSettingsSection({
   const workspaceDefaultRepo = gitWorkspaceDefault
     ? allRepos.find((repo) => repo.id === gitWorkspaceDefault.repo_id)
     : undefined;
+  const workspaceDirectoryPath =
+    workspaceDefault?.kind === 'direct_folder'
+      ? workspaceDefault.path
+      : workspaceDefaultRepo?.path;
+  const workspaceDirectoryLabel = workspaceDirectoryPath
+    ? formatWorkspacePathForDisplay(workspaceDirectoryPath)
+    : undefined;
 
   const isDirty = isProjectDirty || hasStatusChanges || hasDefaultRepoChanges;
 
@@ -1407,19 +1415,22 @@ export function RemoteProjectsSettingsSection({
                   )}
                 </p>
               )}
-              <p className="text-sm font-medium text-normal">
-                {t('settings:settings.remoteProjects.form.defaultRepos.label')}
-              </p>
-              <p className="text-sm text-low mt-1">
-                {t(
-                  'settings:settings.remoteProjects.form.defaultRepos.description',
-                  {
-                    host:
-                      selectedHost?.label ??
-                      t('settings:hostPicker.thisMachine'),
-                  }
-                )}
-              </p>
+              <div className="flex items-center justify-between gap-base">
+                <p className="text-sm font-medium text-normal">
+                  {t(
+                    'settings:settings.remoteProjects.form.defaultRepos.label'
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleChooseProjectWorkspace()}
+                  className="shrink-0 cursor-pointer rounded-sm px-base py-half text-sm text-normal transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t(
+                    'settings:settings.remoteProjects.form.defaultRepos.addButton'
+                  )}
+                </button>
+              </div>
             </div>
 
             {!isLoadingDefaults && defaultReposError && (
@@ -1447,9 +1458,9 @@ export function RemoteProjectsSettingsSection({
               <div className="flex items-center gap-base rounded-sm bg-secondary px-base py-half">
                 <p
                   className="min-w-0 flex-1 truncate font-mono text-sm text-high"
-                  title={workspaceDefault.path}
+                  title={workspaceDirectoryLabel}
                 >
-                  {workspaceDefault.path}
+                  {workspaceDirectoryLabel}
                 </p>
                 <button
                   type="button"
@@ -1470,9 +1481,9 @@ export function RemoteProjectsSettingsSection({
                 <div className="min-w-0 flex-1">
                   <p
                     className="truncate font-mono text-sm text-high"
-                    title={workspaceDefaultRepo?.path}
+                    title={workspaceDirectoryLabel}
                   >
-                    {workspaceDefaultRepo?.path ||
+                    {workspaceDirectoryLabel ||
                       workspaceDefaultRepo?.display_name ||
                       workspaceDefaultRepo?.name ||
                       workspaceDefault.repo.repo_id}
@@ -1581,6 +1592,12 @@ export function RemoteProjectsSettingsSection({
               </div>
             )}
 
+            <p className="text-sm text-low">
+              {t(
+                'settings:settings.remoteProjects.form.defaultRepos.description'
+              )}
+            </p>
+
             {gitWorkspaceDefault && workspaceDefaultRepo && (
               <Accordion type="single" collapsible>
                 <AccordionItem
@@ -1631,21 +1648,6 @@ export function RemoteProjectsSettingsSection({
                 </AccordionItem>
               </Accordion>
             )}
-
-            <button
-              type="button"
-              onClick={() => void handleChooseProjectWorkspace()}
-              className="flex items-center gap-half rounded-sm px-base py-half text-high transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
-            >
-              <div className="flex size-icon-sm items-center justify-center">
-                <PlusIcon className="size-icon-xs" weight="bold" />
-              </div>
-              <span className="text-xs font-light">
-                {t(
-                  'settings:settings.remoteProjects.form.defaultRepos.addButton'
-                )}
-              </span>
-            </button>
           </fieldset>
         )}
 

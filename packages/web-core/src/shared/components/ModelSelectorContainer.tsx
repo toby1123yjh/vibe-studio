@@ -59,6 +59,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTriggerButton,
 } from '@vibe/ui/components/Dropdown';
 
@@ -560,7 +563,7 @@ export function ModelSelectorContainer({
   const permissionMeta = permissionPolicy
     ? (permissionMetaByPolicy[permissionPolicy] ?? null)
     : null;
-  const permissionIcon = permissionMeta?.icon ?? HandIcon;
+  const PermissionIcon = permissionMeta?.icon ?? HandIcon;
 
   const observationDetails = (
     <>
@@ -613,98 +616,140 @@ export function ModelSelectorContainer({
     );
   }
 
+  const settingsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTriggerButton
+        size="sm"
+        className="min-h-8"
+        icon={SlidersHorizontalIcon}
+        label={
+          resolvedPreset && resolvedPreset.toLowerCase() !== 'default'
+            ? presetLabel
+            : undefined
+        }
+        showCaret={false}
+        aria-label={t('modelSelector.runSettings')}
+        title={t('modelSelector.runSettings')}
+      />
+      <DropdownMenuContent align="start">
+        <DropdownMenuLabel>{t('modelSelector.preset')}</DropdownMenuLabel>
+        {presets.length > 0 ? (
+          presets.map((preset) => (
+            <DropdownMenuItem
+              key={preset}
+              icon={preset === resolvedPreset ? CheckIcon : undefined}
+              onClick={() => onPresetSelect?.(preset)}
+            >
+              {toPrettyCase(preset)}
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled>{presetLabel}</DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>{t('modelSelector.requested')}</DropdownMenuLabel>
+        <p className="max-w-72 break-words px-base pb-half text-sm text-normal">
+          {modelLabel}
+        </p>
+        {capabilityWarning && (
+          <p
+            role="status"
+            className="max-w-72 px-base pb-half text-sm text-error"
+          >
+            {t('modelSelector.reasoningUnverified', {
+              value: configuredReasoningId,
+            })}
+          </p>
+        )}
+        {configuredReasoningId != null && (
+          <DropdownMenuItem onClick={() => handleReasoningSelect(null)}>
+            {t('modelSelector.clearReasoning')}
+          </DropdownMenuItem>
+        )}
+        {observationDetails}
+        <ProviderRunOptionsMenu
+          agent={agent}
+          options={providerOptions}
+          model={discoveredSelectedModel}
+          onChange={onOverrideChange}
+        />
+        {permissionPolicy && config.permissions.length > 0 && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <PermissionIcon />
+              {t('modelSelector.permissions')}
+              <span className="text-low">
+                {permissionMetaByPolicy[permissionPolicy]?.label}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {config.permissions.map((policy) => {
+                const meta = permissionMetaByPolicy[policy];
+                return (
+                  <DropdownMenuItem
+                    key={policy}
+                    icon={
+                      policy === permissionPolicy
+                        ? CheckIcon
+                        : (meta?.icon ?? HandIcon)
+                    }
+                    onClick={() => handlePermissionPolicyChange(policy)}
+                  >
+                    {meta?.label ?? toPrettyCase(policy)}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+        {config.agents.length > 0 && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              {t('modelSelector.agent')}
+              <span className="text-low">{agentLabel}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem
+                icon={selectedAgentId === null ? CheckIcon : undefined}
+                onClick={() => handleAgentSelect(null)}
+              >
+                {t('modelSelector.default')}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {config.agents.map((agentOption) => (
+                <DropdownMenuItem
+                  key={agentOption.id}
+                  icon={
+                    agentOption.id === selectedAgentId ? CheckIcon : undefined
+                  }
+                  onClick={() => handleAgentSelect(agentOption.id)}
+                >
+                  {agentOption.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+        {agent === 'GEMINI' && (
+          <p className="max-w-72 px-base py-half text-sm text-low">
+            {t('modelSelector.geminiNativeThinking')}
+          </p>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={refresh} disabled={loadingModels}>
+          {t('modelSelector.refreshDiscovery')}
+        </DropdownMenuItem>
+        <p className="max-w-72 px-base pb-half text-sm text-low">
+          {t('modelSelector.refreshScope')}
+        </p>
+        <DropdownMenuItem icon={GearIcon} onClick={onAdvancedSettings}>
+          {t('modelSelector.custom')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTriggerButton
-          size="sm"
-          icon={SlidersHorizontalIcon}
-          label={
-            resolvedPreset?.toLowerCase() !== 'default'
-              ? presetLabel
-              : undefined
-          }
-          showCaret={false}
-          aria-label={t('modelSelector.custom')}
-        />
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>{t('modelSelector.preset')}</DropdownMenuLabel>
-          {presets.length > 0 ? (
-            presets.map((preset) => (
-              <DropdownMenuItem
-                key={preset}
-                icon={preset === resolvedPreset ? CheckIcon : undefined}
-                onClick={() => onPresetSelect?.(preset)}
-              >
-                {toPrettyCase(preset)}
-              </DropdownMenuItem>
-            ))
-          ) : (
-            <DropdownMenuItem disabled>{presetLabel}</DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>{t('modelSelector.requested')}</DropdownMenuLabel>
-          <p className="max-w-72 break-words px-base pb-half text-sm text-normal">
-            {modelLabel}
-          </p>
-          {capabilityWarning && (
-            <p
-              role="status"
-              className="max-w-72 px-base pb-half text-sm text-error"
-            >
-              {t('modelSelector.reasoningUnverified', {
-                value: configuredReasoningId,
-              })}
-            </p>
-          )}
-          {configuredReasoningId != null && (
-            <DropdownMenuItem onClick={() => handleReasoningSelect(null)}>
-              {t('modelSelector.clearReasoning')}
-            </DropdownMenuItem>
-          )}
-          {observationDetails}
-          <ProviderRunOptionsMenu
-            agent={agent}
-            options={providerOptions}
-            model={discoveredSelectedModel}
-            onChange={onOverrideChange}
-          />
-          {agent === 'GEMINI' && (
-            <p className="max-w-72 px-base py-half text-sm text-low">
-              {t('modelSelector.geminiNativeThinking')}
-            </p>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={refresh} disabled={loadingModels}>
-            {t('modelSelector.refreshDiscovery')}
-          </DropdownMenuItem>
-          <p className="max-w-72 px-base pb-half text-sm text-low">
-            {t('modelSelector.refreshScope')}
-          </p>
-          <DropdownMenuItem icon={GearIcon} onClick={onAdvancedSettings}>
-            {t('modelSelector.custom')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {(streamError || capabilityWarning) && (
-        <button
-          type="button"
-          onClick={() => setIsOpen(true)}
-          className="text-sm text-error focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
-          title={
-            streamError ??
-            t('modelSelector.reasoningUnverified', {
-              value: configuredReasoningId,
-            })
-          }
-        >
-          {streamError
-            ? discoveryErrorLabel
-            : t('modelSelector.checkReasoning')}
-        </button>
-      )}
-
       {showModelSelector && displayConfig && (
         <ModelSelectorPopover
           key={selectionScope}
@@ -713,6 +758,7 @@ export function ModelSelectorContainer({
           trigger={
             <DropdownMenuTriggerButton
               size="sm"
+              className="min-h-8"
               aria-label={modelLabel}
               title={modelLabel}
               showCaret={false}
@@ -765,6 +811,7 @@ export function ModelSelectorContainer({
         <DropdownMenu>
           <DropdownMenuTriggerButton
             size="sm"
+            className="min-h-8"
             label={modelLabel}
             title={modelLabel}
             wrapLabel
@@ -773,59 +820,23 @@ export function ModelSelectorContainer({
           />
         </DropdownMenu>
       )}
-
-      {permissionPolicy && config.permissions.length > 0 && (
-        <DropdownMenu>
-          <DropdownMenuTriggerButton
-            size="sm"
-            icon={permissionIcon}
-            showCaret={false}
-          />
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>
-              {t('modelSelector.permissions')}
-            </DropdownMenuLabel>
-            {config.permissions.map((policy) => {
-              const meta = permissionMetaByPolicy[policy];
-              return (
-                <DropdownMenuItem
-                  key={policy}
-                  icon={meta?.icon ?? HandIcon}
-                  onClick={() => handlePermissionPolicyChange(policy)}
-                >
-                  {meta?.label ?? toPrettyCase(policy)}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-
-      {config.agents.length > 0 && (
-        <DropdownMenu>
-          <DropdownMenuTriggerButton size="sm" label={agentLabel} />
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>{t('modelSelector.agent')}</DropdownMenuLabel>
-            <DropdownMenuItem
-              icon={selectedAgentId === null ? CheckIcon : undefined}
-              onClick={() => handleAgentSelect(null)}
-            >
-              {t('modelSelector.default')}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {config.agents.map((agentOption) => (
-              <DropdownMenuItem
-                key={agentOption.id}
-                icon={
-                  agentOption.id === selectedAgentId ? CheckIcon : undefined
-                }
-                onClick={() => handleAgentSelect(agentOption.id)}
-              >
-                {agentOption.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+      {settingsMenu}
+      {(streamError || capabilityWarning) && (
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="min-w-0 text-sm text-error [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+          title={
+            streamError ??
+            t('modelSelector.reasoningUnverified', {
+              value: configuredReasoningId,
+            })
+          }
+        >
+          {streamError
+            ? discoveryErrorLabel
+            : t('modelSelector.checkReasoning')}
+        </button>
       )}
     </>
   );

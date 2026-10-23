@@ -17,6 +17,7 @@ import type { Workspace, Session, RepoWithTargetBranch } from 'shared/types';
 import { createWorkspaceWithSession } from '@/shared/types/attempt';
 import { WorkspacesMain } from '@vibe/ui/components/WorkspacesMain';
 import { Button } from '@vibe/ui/components/Button';
+import { cn } from '@vibe/ui/lib/cn';
 import { ErrorState, LoadingState } from '@vibe/ui/components/StateSurface';
 import {
   ConversationList,
@@ -67,6 +68,7 @@ function ConversationComposer({
   getActiveTurnPatchKey,
   workspace,
   presentation,
+  showSessionControls,
   diffStats,
   diffError,
   diffPaths,
@@ -86,6 +88,7 @@ function ConversationComposer({
   getActiveTurnPatchKey: () => string | null;
   workspace: Workspace | null;
   presentation: 'full-page' | 'embedded';
+  showSessionControls?: boolean;
   diffStats: {
     files_changed: number;
     lines_added: number;
@@ -99,7 +102,10 @@ function ConversationComposer({
   if (isSessionsLoading) {
     return (
       <LoadingState
-        className="w-chat max-w-full min-h-24"
+        className={cn(
+          'max-w-full min-h-24',
+          presentation === 'embedded' ? 'w-full' : 'w-chat'
+        )}
         title={t('agentSessionResume.loading', {
           defaultValue: 'Loading sessions...',
         })}
@@ -110,7 +116,10 @@ function ConversationComposer({
   if (sessionsError && sessions.length === 0) {
     return (
       <ErrorState
-        className="w-chat max-w-full min-h-24"
+        className={cn(
+          'max-w-full min-h-24',
+          presentation === 'embedded' ? 'w-full' : 'w-chat'
+        )}
         title={t('agentSessionResume.error', {
           defaultValue: 'Failed to load sessions',
         })}
@@ -154,6 +163,7 @@ function ConversationComposer({
       disableViewCode={presentation === 'embedded'}
       showOpenWorkspaceButton={false}
       presentation={presentation}
+      showSessionControls={showSessionControls}
       workspace={workspace}
       diffPaths={diffPaths}
       onScrollToPreviousMessage={onScrollToPreviousMessage}
@@ -238,6 +248,8 @@ export interface WorkspaceConversationContentProps {
   isNewSessionMode: boolean;
   onStartNewSession: () => void;
   presentation?: 'full-page' | 'embedded';
+  /** Allow workspace session selection when the embedding surface has no selector. */
+  showSessionControls?: boolean;
   readOnly?: boolean;
   beforeConversation?: ReactNode;
   previewContent?: ReactNode;
@@ -267,6 +279,7 @@ export const WorkspaceConversationContent = forwardRef<
     isNewSessionMode,
     onStartNewSession,
     presentation = 'full-page',
+    showSessionControls,
     readOnly = false,
     beforeConversation,
     previewContent,
@@ -372,10 +385,8 @@ export const WorkspaceConversationContent = forwardRef<
 
     let previousHeight = chatBoxContainer.getBoundingClientRect().height;
 
-    const observer = new ResizeObserver((entries) => {
-      const nextHeight =
-        entries[0]?.contentRect.height ??
-        chatBoxContainer.getBoundingClientRect().height;
+    const observer = new ResizeObserver(() => {
+      const nextHeight = chatBoxContainer.getBoundingClientRect().height;
 
       if (Math.abs(nextHeight - previousHeight) < 0.5) return;
       const heightDelta = nextHeight - previousHeight;
@@ -389,7 +400,7 @@ export const WorkspaceConversationContent = forwardRef<
       });
     });
 
-    observer.observe(chatBoxContainer);
+    observer.observe(chatBoxContainer, { box: 'border-box' });
 
     return () => {
       observer.disconnect();
@@ -409,7 +420,12 @@ export const WorkspaceConversationContent = forwardRef<
         className="flex-1 min-h-0 overflow-hidden flex justify-center"
         onWheel={(e) => forwardWheelToScroller(e, conversationListRef)}
       >
-        <div className="w-chat max-w-full h-full">
+        <div
+          className={cn(
+            'max-w-full h-full',
+            presentation === 'embedded' ? 'w-full' : 'w-chat'
+          )}
+        >
           <RetryUiProvider workspaceId={workspaceWithSession.id}>
             <ConversationList
               key={entriesProviderKey}
@@ -420,7 +436,6 @@ export const WorkspaceConversationContent = forwardRef<
               sessionScopeId={selectedSessionId}
               initialViewState={viewState}
               onViewStateChange={onViewStateChange}
-              showScriptSetup={presentation !== 'embedded' && !readOnly}
               readOnly={readOnly}
             />
           </RetryUiProvider>
@@ -449,6 +464,7 @@ export const WorkspaceConversationContent = forwardRef<
       getActiveTurnPatchKey={handleGetActiveTurnPatchKey}
       workspace={selectedWorkspace}
       presentation={presentation}
+      showSessionControls={showSessionControls}
     />
   );
 
@@ -458,7 +474,9 @@ export const WorkspaceConversationContent = forwardRef<
       : null;
 
   const approvalBannerContent =
-    workspaceWithSession && !readOnly ? <ConversationInteractionPanel /> : null;
+    workspaceWithSession && !readOnly ? (
+      <ConversationInteractionPanel compact={presentation === 'embedded'} />
+    ) : null;
 
   useImperativeHandle(
     ref,

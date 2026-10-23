@@ -655,10 +655,10 @@
           "description": "Manage kanban columns for this project."
         },
         "defaultRepos": {
-          "label": "Workspace on this device",
-          "description": "The local code directory and base branch this project uses on {{host}}. New executions are prefilled with these values and still require confirmation.",
-          "empty": "No workspace configured on this device",
-          "addButton": "Choose or change",
+          "label": "Répertoire de travail",
+          "description": "Prérempli au démarrage d’une nouvelle exécution.",
+          "empty": "Aucun répertoire de travail configuré",
+          "addButton": "Modifier",
           "addNew": "Choose project workspace",
           "branchLabel": "Branch",
           "remove": "Remove the current working folder",

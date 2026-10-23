@@ -458,7 +458,7 @@ export const useUiPreferencesStore = create<State>()((set, get) => ({
   // Global layout state
   layoutMode: 'workspaces' as LayoutMode,
   isLeftSidebarVisible: true,
-  isRightSidebarVisible: true,
+  isRightSidebarVisible: false,
   isTerminalVisible: true,
   previewRefreshKey: 0,
 
@@ -553,7 +553,8 @@ export const useUiPreferencesStore = create<State>()((set, get) => ({
     const state = get();
     const wsState =
       state.workspacePanelStates[workspaceId] ?? DEFAULT_WORKSPACE_PANEL_STATE;
-    const isCurrentlyActive = wsState.rightMainPanelMode === mode;
+    const isCurrentlyActive =
+      wsState.rightMainPanelMode === mode && state.isRightSidebarVisible;
     const isMobile = window.matchMedia('(max-width: 767px)').matches;
     set({
       workspacePanelStates: {
@@ -563,6 +564,7 @@ export const useUiPreferencesStore = create<State>()((set, get) => ({
           rightMainPanelMode: isCurrentlyActive ? null : mode,
         },
       },
+      isRightSidebarVisible: !isCurrentlyActive,
       isLeftSidebarVisible: isCurrentlyActive
         ? true
         : isWideScreen()
@@ -588,6 +590,7 @@ export const useUiPreferencesStore = create<State>()((set, get) => ({
         },
       },
       ...(mode !== null && {
+        isRightSidebarVisible: true,
         isLeftSidebarVisible: isWideScreen()
           ? state.isLeftSidebarVisible
           : false,

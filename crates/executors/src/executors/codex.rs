@@ -39,6 +39,10 @@ pub(crate) fn resume_params_from(
 ) -> ThreadResumeParams {
     ThreadResumeParams {
         thread_id,
+        // Vibe reads its persisted conversation separately. Hydrating the
+        // entire native history here is unused and deprecated by Codex for
+        // paginated threads; this does not change the model's context.
+        exclude_turns: true,
         model: params.model,
         model_provider: params.model_provider,
         service_tier: params.service_tier,
@@ -1973,6 +1977,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         assert_eq!(resume.service_tier, expected_service_tier);
         assert!(resume.path.is_none());
         assert!(resume.history.is_none());
+        assert!(resume.exclude_turns);
     }
 
     #[test]

@@ -30,7 +30,7 @@ interface ShortcutGroup {
 function useShortcutGroups(): ShortcutGroup[] {
   const { config } = useUserSystem();
   const { t } = useTranslation('common');
-  const sendShortcut = config?.send_message_shortcut ?? 'ModifierEnter';
+  const sendShortcut = config?.send_message_shortcut ?? 'Enter';
 
   return useMemo(() => {
     const mod = getModifierKey();

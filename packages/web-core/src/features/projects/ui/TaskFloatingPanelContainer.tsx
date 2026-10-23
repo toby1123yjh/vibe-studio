@@ -107,7 +107,7 @@ export function TaskFloatingPanelContainer({
         routeState.hostId
       );
       const createState = buildWorkspaceCreateInitialState({
-        prompt: buildWorkspaceCreatePrompt(task.title, task.description),
+        prompt: null,
         defaults,
         linkedTask: buildLinkedTaskCreateState(task, projectId),
       });

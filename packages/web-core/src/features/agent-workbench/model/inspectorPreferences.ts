@@ -16,11 +16,12 @@ export interface AgentWorkbenchInspectorPreferences {
   readonly width: number;
 }
 
-export const AGENT_WORKBENCH_INSPECTOR_MIN_WIDTH = 320;
+export const AGENT_WORKBENCH_INSPECTOR_MIN_WIDTH = 360;
 export const AGENT_WORKBENCH_INSPECTOR_MAX_WIDTH = 480;
+export const AGENT_WORKBENCH_CONVERSATION_MIN_WIDTH = 480;
 
 export const DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES: AgentWorkbenchInspectorPreferences =
-  { visible: true, activeTab: 'changes', width: 380 };
+  { visible: false, activeTab: 'files', width: 380 };
 
 export function normalizeAgentWorkbenchInspectorPreferences(
   value: Partial<AgentWorkbenchInspectorPreferences> | null | undefined
@@ -39,7 +40,12 @@ export function normalizeAgentWorkbenchInspectorPreferences(
         )
       )
     : DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES.width;
-  return { visible: value?.visible ?? true, activeTab, width };
+  return {
+    visible:
+      value?.visible ?? DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES.visible,
+    activeTab,
+    width,
+  };
 }
 
 export function setAgentWorkbenchInspectorVisibility(

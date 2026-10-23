@@ -2,31 +2,29 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowDownIcon, ArrowsOutIcon, XIcon } from '@phosphor-icons/react';
+import { ArrowsOutIcon, XIcon } from '@phosphor-icons/react';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useUserContext } from '@/shared/hooks/useUserContext';
-import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
+import {
+  findAppShellRecentSession,
+  useAppShellRecentSessions,
+} from '@/shared/hooks/useAppShellRecentSessions';
 import { ExecutionProcessesProvider } from '@/shared/providers/ExecutionProcessesProvider';
-import { ApprovalFeedbackProvider } from '@/features/workspace-chat/model/contexts/ApprovalFeedbackContext';
-import { EntriesProvider } from '@/features/workspace-chat/model/contexts/EntriesContext';
-import { MessageEditProvider } from '@/features/workspace-chat/model/contexts/MessageEditContext';
 import { CreateModeProvider } from '@/features/create-mode/model/CreateModeProvider';
 import { useWorkspaceSessions } from '@/shared/hooks/useWorkspaceSessions';
 import { useWorkspaceRecord } from '@/shared/hooks/useWorkspaceRecord';
-import { SessionChatBoxContainer } from '@/features/workspace-chat/ui/SessionChatBoxContainer';
+import { useWorkspaceRepo } from '@/shared/hooks/useWorkspaceRepo';
+import { useHostId } from '@/shared/providers/HostIdProvider';
+import { WorkspaceConversationContent } from '@/features/workspace-chat/ui/WorkspaceConversationContent';
+import { deriveAgentWorkbenchHeader } from '@/features/agent-workbench/model/agentWorkbenchHeader';
+import { deriveWorkspaceDetailState } from '@/shared/lib/workspaceDetailState';
+import { buildWorkspaceContext } from '@/shared/lib/workspaceContext';
 import { CreateChatBoxContainer } from '@/shared/components/CreateChatBoxContainer';
 import { KanbanTaskPanelContainer } from './KanbanTaskPanelContainer';
-import {
-  ConversationList,
-  type ConversationListHandle,
-} from '@/features/workspace-chat/ui/ConversationListContainer';
-import { RetryUiProvider } from '@/features/workspace-chat/model/contexts/RetryUiContext';
-import { createWorkspaceWithSession } from '@/shared/types/attempt';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 import { useCurrentKanbanRouteState } from '@/shared/hooks/useCurrentKanbanRouteState';
 import {
@@ -140,34 +138,29 @@ function WorkspaceSessionPanel({
   workspaceId,
   onClose,
 }: WorkspaceSessionPanelProps) {
+  const { t } = useTranslation('common');
+  const hostId = useHostId();
   const appNavigation = useAppNavigation();
   const { projectId, getTask } = useProjectContext();
   const routeState = useCurrentKanbanRouteState();
   const { workspaces: remoteWorkspaces } = useUserContext();
-  const { activeWorkspaces, archivedWorkspaces } = useWorkspaceContext();
-  const conversationListRef = useRef<ConversationListHandle>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const { data: workspace, isLoading: isWorkspaceLoading } = useWorkspaceRecord(
-    workspaceId,
-    { enabled: !!workspaceId }
-  );
+  const recentSessions = useAppShellRecentSessions();
+  const workspaceQuery = useWorkspaceRecord(workspaceId, {
+    enabled: !!workspaceId,
+  });
+  const workspace = workspaceQuery.data;
+  const reposQuery = useWorkspaceRepo(workspaceId);
   const {
     sessions,
     selectedSession,
     selectedSessionId,
     selectSession,
     isLoading: isSessionsLoading,
+    error: sessionsError,
+    retry: retrySessions,
     isNewSessionMode,
     startNewSession,
   } = useWorkspaceSessions(workspaceId, { enabled: !!workspaceId });
-
-  const workspaceSummary = useMemo(
-    () =>
-      [...activeWorkspaces, ...archivedWorkspaces].find(
-        (workspace) => workspace.id === workspaceId
-      ),
-    [activeWorkspaces, archivedWorkspaces, workspaceId]
-  );
 
   const linkedWorkspace = useMemo(
     () =>
@@ -186,7 +179,37 @@ function WorkspaceSessionPanel({
     return getTask(breadcrumbTaskId)?.simple_id ?? null;
   }, [breadcrumbTaskId, getTask]);
 
-  const workspaceBranch = workspace?.branch ?? workspaceSummary?.branch ?? null;
+  const canonicalSession = findAppShellRecentSession(
+    recentSessions,
+    selectedSessionId
+  );
+  const workbenchHeader = deriveAgentWorkbenchHeader({
+    canonicalSession:
+      canonicalSession?.workspace_id === workspaceId
+        ? canonicalSession
+        : undefined,
+    fallbackTitle: isNewSessionMode
+      ? t('agentWorkbench.header.newSession', { defaultValue: 'New session' })
+      : selectedSession?.name?.trim() ||
+        t('agentWorkbench.header.untitledTask', {
+          defaultValue: 'Untitled task',
+        }),
+  });
+  const workspaceContextLabel = workspace
+    ? buildWorkspaceContext({
+        containerRef: workspace.container_ref,
+        workingDir: selectedSession?.agent_working_dir,
+        fallbackRepoName:
+          reposQuery.repos.length === 1 ? reposQuery.repos[0].name : undefined,
+        branch: workspace.branch,
+        workspaceKind: workspace.workspace_kind,
+        worktreeLabel: t('agentWorkbench.header.worktree', {
+          defaultValue: 'Worktree',
+        }),
+      })
+        .map((part) => part.label)
+        .join(' · ')
+    : undefined;
 
   const handleOpenTaskPanel = useCallback(() => {
     if (projectId && breadcrumbTaskId) {
@@ -201,162 +224,114 @@ function WorkspaceSessionPanel({
   }, [appNavigation, workspaceId]);
 
   const breadcrumbButtonClass =
-    'min-w-0 text-sm text-normal truncate rounded-sm px-1 py-0.5 hover:bg-panel hover:text-high transition-colors';
-
-  const workspaceWithSession = useMemo(() => {
-    if (!workspace) return undefined;
-    return createWorkspaceWithSession(workspace, selectedSession);
-  }, [workspace, selectedSession]);
-
-  const handleScrollToPreviousMessage = useCallback(() => {
-    conversationListRef.current?.scrollToPreviousUserMessage();
-  }, []);
-
-  const handleScrollToUserMessage = useCallback((patchKey: string) => {
-    conversationListRef.current?.scrollToEntryByPatchKey(patchKey);
-  }, []);
-
-  const handleGetActiveTurnPatchKey = useCallback(() => {
-    return conversationListRef.current?.getVisibleUserMessagePatchKey() ?? null;
-  }, []);
-
-  const handleScrollToBottom = useCallback(
-    (behavior: 'auto' | 'smooth' = 'smooth') => {
-      conversationListRef.current?.scrollToBottom(behavior);
-    },
-    []
-  );
-
-  const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    setIsAtBottom(atBottom);
-  }, []);
+    'min-h-8 min-w-0 rounded-sm px-half py-half text-sm text-normal truncate hover:bg-panel hover:text-high transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11';
+  const headerActionClass =
+    'flex min-h-8 min-w-8 shrink-0 items-center justify-center rounded-sm text-low hover:text-normal hover:bg-panel transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
+  const isWorkspaceLoading = workspaceQuery.isLoading || reposQuery.isLoading;
+  const workspaceState = deriveWorkspaceDetailState({
+    hasWorkspaceId: Boolean(workspaceId),
+    isLoading: isWorkspaceLoading,
+    hasWorkspace: Boolean(workspace),
+    error: workspaceQuery.error ?? reposQuery.error,
+  });
+  const { refetch: refetchWorkspace } = workspaceQuery;
+  const { refetch: refetchRepos } = reposQuery;
+  const retryWorkspace = useCallback(async () => {
+    await Promise.all([refetchWorkspace(), refetchRepos()]);
+  }, [refetchWorkspace, refetchRepos]);
 
   return (
     <ExecutionProcessesProvider
-      key={`${workspaceId}-${selectedSessionId ?? 'new'}`}
+      key={`${hostId ?? 'local'}:${workspaceId}:${selectedSessionId ?? 'new'}`}
       sessionId={selectedSessionId}
     >
-      <ApprovalFeedbackProvider>
-        <EntriesProvider
-          key={`${workspaceId}-${selectedSessionId ?? 'new'}`}
-          sessionId={selectedSessionId}
-        >
-          <MessageEditProvider>
-            <div className="relative flex h-full flex-1 flex-col bg-primary">
-              <div className="flex items-center justify-between px-base py-half border-b shrink-0">
-                <div className="flex items-center gap-half min-w-0 font-ibm-plex-mono">
-                  <button
-                    type="button"
-                    onClick={handleOpenTaskPanel}
-                    className={`${breadcrumbButtonClass} shrink-0`}
-                    aria-label="Open linked task"
+      <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-primary">
+        <div className="flex min-w-0 items-center justify-between gap-base px-base py-half border-b shrink-0">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <p
+              className="min-w-0 truncate text-lg font-medium text-high"
+              title={workbenchHeader.title}
+            >
+              {workbenchHeader.title}
+            </p>
+            <div className="flex min-w-0 items-center gap-half text-sm text-low">
+              <button
+                type="button"
+                onClick={handleOpenTaskPanel}
+                className={`${breadcrumbButtonClass} max-w-[45%] shrink-0`}
+                aria-label={t('sessionDashboard.openWork', {
+                  title: taskSimpleId ?? t('sessionDashboard.kinds.task'),
+                  defaultValue: 'Open task: {{title}}',
+                })}
+              >
+                {taskSimpleId ??
+                  t('sessionDashboard.kinds.task', { defaultValue: 'Task' })}
+              </button>
+              {workspaceContextLabel && (
+                <>
+                  <span className="shrink-0" aria-hidden="true">
+                    ·
+                  </span>
+                  <span
+                    className="min-w-0 truncate font-ibm-plex-mono"
+                    title={workspaceContextLabel}
                   >
-                    {taskSimpleId ?? 'Task'}
-                  </button>
-                  <span className="text-low text-sm shrink-0">/</span>
-                  <button
-                    type="button"
-                    onClick={handleOpenWorkspaceView}
-                    className={breadcrumbButtonClass}
-                    aria-label="Open workspace"
-                  >
-                    {workspaceBranch ?? 'Workspace'}
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-half">
-                  <button
-                    type="button"
-                    onClick={handleOpenWorkspaceView}
-                    className="p-half rounded-sm text-low hover:text-normal hover:bg-panel transition-colors"
-                    aria-label="Open in workspace view"
-                  >
-                    <ArrowsOutIcon className="size-icon-sm" weight="bold" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="p-half rounded-sm text-low hover:text-normal hover:bg-panel transition-colors"
-                    aria-label="Close conversation view"
-                  >
-                    <XIcon className="size-icon-sm" weight="bold" />
-                  </button>
-                </div>
-              </div>
-
-              {workspaceWithSession ? (
-                <div className="flex flex-1 min-h-0 overflow-hidden justify-center">
-                  <div className="w-chat max-w-full h-full">
-                    <RetryUiProvider workspaceId={workspaceWithSession.id}>
-                      <ConversationList
-                        key={`${workspaceId}-${selectedSessionId ?? 'new'}`}
-                        ref={conversationListRef}
-                        attempt={workspaceWithSession}
-                        onAtBottomChange={handleAtBottomChange}
-                        sessionScopeId={selectedSessionId}
-                      />
-                    </RetryUiProvider>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex-1" />
+                    {workspaceContextLabel}
+                  </span>
+                </>
               )}
-
-              {workspaceWithSession && !isAtBottom && (
-                <div className="flex justify-center pointer-events-none">
-                  <div className="w-chat max-w-full relative">
-                    <button
-                      type="button"
-                      onClick={() => handleScrollToBottom('auto')}
-                      className="absolute bottom-2 right-4 z-10 pointer-events-auto flex items-center justify-center size-8 rounded-full bg-secondary/80 backdrop-blur-sm border border-secondary text-low hover:text-normal hover:bg-secondary shadow-md transition-all"
-                      aria-label="Scroll to bottom"
-                      title="Scroll to bottom"
-                    >
-                      <ArrowDownIcon className="size-icon-base" weight="bold" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-center @container pl-px">
-                <SessionChatBoxContainer
-                  {...(isSessionsLoading || isWorkspaceLoading
-                    ? {
-                        mode: 'placeholder' as const,
-                      }
-                    : isNewSessionMode
-                      ? {
-                          mode: 'new-session' as const,
-                          workspaceId,
-                          onSelectSession: selectSession,
-                        }
-                      : selectedSession
-                        ? {
-                            mode: 'existing-session' as const,
-                            session: selectedSession,
-                            onSelectSession: selectSession,
-                            onStartNewSession: startNewSession,
-                          }
-                        : {
-                            mode: 'placeholder' as const,
-                          })}
-                  sessions={sessions}
-                  filesChanged={workspaceSummary?.filesChanged ?? 0}
-                  linesAdded={workspaceSummary?.linesAdded ?? 0}
-                  linesRemoved={workspaceSummary?.linesRemoved ?? 0}
-                  diffStatsUnavailable={workspaceSummary?.filesChanged == null}
-                  disableViewCode
-                  showOpenWorkspaceButton
-                  onScrollToPreviousMessage={handleScrollToPreviousMessage}
-                  onScrollToBottom={handleScrollToBottom}
-                  onScrollToUserMessage={handleScrollToUserMessage}
-                  getActiveTurnPatchKey={handleGetActiveTurnPatchKey}
-                />
-              </div>
             </div>
-          </MessageEditProvider>
-        </EntriesProvider>
-      </ApprovalFeedbackProvider>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-half">
+            <button
+              type="button"
+              onClick={handleOpenWorkspaceView}
+              className={headerActionClass}
+              aria-label={t('sessionDashboard.openFullConversation', {
+                defaultValue: 'Open full conversation',
+              })}
+              title={t('sessionDashboard.openFullConversation', {
+                defaultValue: 'Open full conversation',
+              })}
+            >
+              <ArrowsOutIcon className="size-icon-sm" weight="bold" />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className={headerActionClass}
+              aria-label={t('sessionDashboard.closeConversation', {
+                defaultValue: 'Close conversation',
+              })}
+            >
+              <XIcon className="size-icon-sm" weight="bold" />
+            </button>
+          </div>
+        </div>
+
+        <WorkspaceConversationContent
+          selectedWorkspace={workspace ?? null}
+          selectedSession={selectedSession}
+          selectedSessionId={selectedSessionId}
+          sessions={sessions}
+          repos={reposQuery.repos}
+          isLoading={isWorkspaceLoading}
+          workspaceState={workspaceState}
+          isRetryingWorkspace={
+            workspaceQuery.isFetching || reposQuery.isLoading
+          }
+          onRetryWorkspace={retryWorkspace}
+          isSessionsLoading={isSessionsLoading}
+          sessionsError={sessionsError}
+          onRetrySessions={retrySessions}
+          isNewSessionMode={isNewSessionMode}
+          onSelectSession={selectSession}
+          onStartNewSession={startNewSession}
+          presentation="embedded"
+          showSessionControls
+        />
+      </div>
     </ExecutionProcessesProvider>
   );
 }

@@ -11,8 +11,6 @@ import { mergeWorkflowNotifications } from '@/features/workflow/model/workflowNo
 export interface DerivedConversationEntriesResult {
   readonly entries: PatchTypeWithKey[];
   readonly hasRunningProcess: boolean;
-  readonly hasSetupScriptRun: boolean;
-  readonly hasCleanupScriptRun: boolean;
   readonly latestTokenUsageInfo: TokenUsageInfo | null;
 }
 
@@ -120,17 +118,9 @@ export function deriveConversationEntries({
   let hasRunningProcess = false;
   let lastProcessFailedOrKilled = false;
   let latestTokenUsageInfo: TokenUsageInfo | null = null;
-  let hasSetupScriptRun = false;
-  let hasCleanupScriptRun = false;
 
   const scriptEntries = conversationTurns.turns.flatMap((turn, index) => {
     const turnEntries: PatchTypeWithKey[] = [];
-
-    if (turn.kind === 'setup_script') {
-      hasSetupScriptRun = true;
-    } else if (turn.kind === 'cleanup_script') {
-      hasCleanupScriptRun = true;
-    }
 
     if (turn.processes.some((process) => process.process.isRunning)) {
       hasRunningProcess = true;
@@ -201,8 +191,6 @@ export function deriveConversationEntries({
   return {
     entries,
     hasRunningProcess,
-    hasSetupScriptRun,
-    hasCleanupScriptRun,
     latestTokenUsageInfo,
   };
 }

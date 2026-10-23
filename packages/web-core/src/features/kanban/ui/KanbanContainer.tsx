@@ -179,7 +179,6 @@ export function KanbanContainer() {
   } = useProjectContext();
 
   const {
-    organizationId,
     projects,
     membersWithProfilesById,
     isLoading: orgLoading,
@@ -974,9 +973,7 @@ export function KanbanContainer() {
 
           <ProjectWorkspaceDefaultContext
             projectId={projectId}
-            organizationId={organizationId}
             hostId={routeState.hostId}
-            variant="inline"
             className={cn(
               isMobile
                 ? 'col-span-2 row-start-2 w-full min-w-0 max-w-full'

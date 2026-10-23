@@ -79,10 +79,11 @@ export function useSessionExecutorConfig({
     restored.executor !== boundExecutor
       ? new Error('Stored executor configuration does not match this session')
       : null);
+  const isConfigInitialized =
+    !isScratchLoading &&
+    (!existingSession || (!query.isPending && !workflowContext.isPending));
   const isConfigLoading =
-    isScratchLoading ||
-    (existingSession &&
-      (query.isPending || query.isFetching || workflowContext.isPending));
+    !isConfigInitialized || (existingSession && query.isFetching);
   const isConfigReady = !isConfigLoading && !configError;
   const selection = useExecutorConfig({
     ...options,
@@ -131,6 +132,12 @@ export function useSessionExecutorConfig({
     executorConfig: isConfigReady
       ? (capturedMainConfig ?? selection.executorConfig)
       : null,
+    // Cached data remains visible during a background refresh. Only the
+    // submission config above may authorize a send or configuration edit.
+    displayExecutorConfig:
+      isConfigInitialized && !configError
+        ? (capturedMainConfig ?? selection.executorConfig)
+        : null,
     isConfigLoading,
     configError,
     refetchConfig,

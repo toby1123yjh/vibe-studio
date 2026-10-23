@@ -15,7 +15,6 @@ import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useOrgContext } from '@/shared/hooks/useOrgContext';
 import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
 import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTagDropdownContainer';
-import { ProjectWorkspaceDefaultContext } from '@/shared/components/ProjectWorkspaceDefaultContext';
 import { TaskCommentsSectionContainer } from './TaskCommentsSectionContainer';
 import { TaskSubTasksSectionContainer } from './TaskSubTasksSectionContainer';
 import { TaskRelationshipsSectionContainer } from './TaskRelationshipsSectionContainer';
@@ -146,11 +145,7 @@ export function KanbanTaskPanelContainer({
     resetKanbanTaskComposer(taskComposerKey);
   }, [taskComposerKey]);
 
-  const {
-    organizationId,
-    isLoading: orgLoading,
-    membersWithProfilesById,
-  } = useOrgContext();
+  const { isLoading: orgLoading, membersWithProfilesById } = useOrgContext();
 
   // Get action methods from actions context
   const { openStatusSelection, openPrioritySelection, openAssigneeSelection } =
@@ -1025,18 +1020,6 @@ export function KanbanTaskPanelContainer({
       renderDescriptionEditor={(props) => (
         <WYSIWYGEditor {...props} localAttachments={localAttachments} />
       )}
-      renderProjectWorkspaceContext={
-        mode === 'create'
-          ? () => (
-              <ProjectWorkspaceDefaultContext
-                projectId={projectId}
-                organizationId={organizationId}
-                hostId={routeState.hostId}
-                variant="panel"
-              />
-            )
-          : undefined
-      }
       renderWorkspacesSection={(taskId) => (
         <>
           <TaskExecutionAttemptsSectionContainer

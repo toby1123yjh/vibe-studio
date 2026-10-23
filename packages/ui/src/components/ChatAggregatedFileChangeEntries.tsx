@@ -205,7 +205,7 @@ function FileChangeRow({
         aria-expanded={canToggle ? expanded : undefined}
         data-scroll-anchor-target={canToggle || isVSCode ? '' : undefined}
       >
-        <span className="relative shrink-0">
+        <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
           {canToggle ? (
             <CaretDownIcon
               className={cn(
@@ -217,11 +217,9 @@ function FileChangeRow({
             <FileIcon className="size-icon-base text-low" />
           )}
           {entry.status && (
-            <ToolStatusDot
-              status={entry.status}
-              active={entry.active}
-              className="absolute -bottom-0.5 -right-0.5"
-            />
+            <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex">
+              <ToolStatusDot status={entry.status} active={entry.active} />
+            </span>
           )}
         </span>
 
@@ -370,7 +368,7 @@ export function ChatAggregatedFileChangeEntries({
         aria-expanded={expanded}
         data-scroll-anchor-target=""
       >
-        <span className="relative shrink-0">
+        <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
           {isHovered ? (
             <CaretDownIcon
               className={cn(
@@ -382,11 +380,12 @@ export function ChatAggregatedFileChangeEntries({
             <FilesIcon className="size-icon-base text-low" />
           )}
           {aggregateStatus && (
-            <ToolStatusDot
-              status={aggregateStatus}
-              active={isAggregateActive}
-              className="absolute -bottom-0.5 -right-0.5"
-            />
+            <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex">
+              <ToolStatusDot
+                status={aggregateStatus}
+                active={isAggregateActive}
+              />
+            </span>
           )}
         </span>
 

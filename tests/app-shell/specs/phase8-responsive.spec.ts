@@ -43,6 +43,16 @@ test.describe("P8-R1 App Shell geometry", () => {
 
       await expectNoHorizontalOverflow(page, viewport.width);
 
+      // Full-height routes must receive the available space on mobile too;
+      // size-contained conversation content cannot supply an intrinsic height.
+      const heights = await page
+        .locator(".vk-app-shell__layout")
+        .evaluate((layout) => ({
+          available: layout.clientHeight,
+          page: layout.querySelector(".vk-page-stack")!.clientHeight,
+        }));
+      expect(Math.abs(heights.available - heights.page)).toBeLessThanOrEqual(1);
+
       if (viewport.width < 768) {
         await expect(page.locator(".vk-mobile-header")).toBeVisible();
         await expect(page.locator(".vk-bottom-nav")).toBeVisible();

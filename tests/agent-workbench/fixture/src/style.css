@@ -45,19 +45,17 @@ body,
   background: #f5f5f5;
 }
 
-.vk-agent-workbench__inspector > div:last-child,
 .fixture-inspector {
   height: 100%;
 }
 
-.vk-agent-workbench__inspector > button,
 .vk-agent-workbench__conversation > header button {
   min-width: 44px;
   min-height: 44px;
 }
 
 .fixture-inspector {
-  padding: 48px 12px 12px;
+  padding: 8px 12px 12px;
 }
 
 .fixture-inspector [role="tablist"],

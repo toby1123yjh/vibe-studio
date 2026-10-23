@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import type { Diff, PatchType } from 'shared/types';
 import { useJsonPatchWsStream } from '@/shared/hooks/useJsonPatchWsStream';
+import { useWorkspaceRepo } from '@/shared/hooks/useWorkspaceRepo';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 
 interface RepoDiffEntries {
@@ -31,8 +32,16 @@ export const useDiffStream = (
   options?: UseDiffStreamOptions
 ): UseDiffStreamResult => {
   const hostId = useHostId();
+  const isEnabled = enabled && !!workspaceId;
+  const {
+    repos,
+    isSuccess: areReposLoaded,
+    error: reposError,
+  } = useWorkspaceRepo(workspaceId ?? undefined, { enabled: isEnabled });
+  // A directory without repositories has no Git diff stream to subscribe to.
+  const streamEnabled = isEnabled && areReposLoaded && repos.length > 0;
   const endpoint = (() => {
-    if (!workspaceId) return undefined;
+    if (!workspaceId || !streamEnabled) return undefined;
     const apiBasePath = hostId ? `/api/host/${hostId}` : '/api';
     const query = `${apiBasePath}/workspaces/${workspaceId}/git/diff/ws`;
     if (typeof options?.statsOnly === 'boolean') {
@@ -51,14 +60,19 @@ export const useDiffStream = (
     []
   );
 
-  const { data, error, isInitialized } = useJsonPatchWsStream<DiffStreamEvent>(
+  const {
+    data,
+    error: streamError,
+    isInitialized,
+  } = useJsonPatchWsStream<DiffStreamEvent>(
     endpoint,
-    enabled && !!workspaceId,
-    initialData
-    // No need for injectInitialEntry or deduplicatePatches for diffs
+    streamEnabled,
+    initialData,
+    { transport: { hostScope: 'explicit', hostId } }
   );
 
   const diffs = useMemo(() => {
+    if (!streamEnabled) return [];
     return Object.values(data?.entries ?? {})
       .flatMap((repoEntries) => Object.values(repoEntries ?? {}))
       .filter(
@@ -66,7 +80,14 @@ export const useDiffStream = (
           entry?.type === 'DIFF'
       )
       .map((entry) => entry.content);
-  }, [data?.entries]);
+  }, [data?.entries, streamEnabled]);
 
-  return { diffs, error, isInitialized };
+  return {
+    diffs,
+    error: isEnabled
+      ? (reposError?.message ?? (streamEnabled ? streamError : null))
+      : null,
+    isInitialized:
+      isEnabled && areReposLoaded && (repos.length === 0 || isInitialized),
+  };
 };

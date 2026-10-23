@@ -1,4 +1,25 @@
 {
+  "agentWorkbench": {
+    "inspector": {
+      "open": "Inspector",
+      "label": "Inspector",
+      "close": "Close Inspector",
+      "resize": "Resize Inspector",
+      "tabs": {
+        "changes": "Changes",
+        "files": "Files",
+        "git": "Git",
+        "terminal": "Terminal",
+        "preview": "Preview",
+        "logs": "Logs"
+      }
+    }
+  },
+  "panels": {
+    "conversation": "Conversation",
+    "taskDetails": "Task details",
+    "resizeWidth": "Resize panel width"
+  },
   "sessionDashboard": {
     "title": "Dashboard",
     "updated": "Updated",
@@ -673,15 +694,10 @@
     }
   },
   "projectWorkspaceDefault": {
-    "label": "Project default working location",
-    "loading": "Loading project working location",
-    "loadFailed": "Unable to load",
-    "loadFailedDescription": "The saved working location could not be resolved. Open project settings to review it.",
-    "empty": "Not configured",
-    "description": "This working location will prefill new executions. Git locations also include a base branch. You still confirm the actual workspace before an agent starts.",
-    "emptyDescription": "No hidden fallback will be used. Choose a working directory when starting an execution, or configure a project default.",
-    "configure": "Configure project working location",
-    "configureShort": "Configure"
+    "label": "Working directory",
+    "loading": "Loading working directory",
+    "loadFailed": "Working directory unavailable",
+    "empty": "No working directory configured"
   },
   "attempts": {
     "title": "Task Attempts",
@@ -1942,6 +1958,7 @@
     "followCliValue": "Follow CLI · {{value}}",
     "builtinCatalog": "Fallback list. Native capabilities are unconfirmed.",
     "preset": "Preset",
+    "runSettings": "Run settings",
     "custom": "Custom",
     "permissions": "Permissions",
     "permissionAuto": "Auto",

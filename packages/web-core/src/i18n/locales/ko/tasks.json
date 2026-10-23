@@ -108,6 +108,7 @@
     "label": "기본 브랜치"
   },
   "diff": {
+    "unavailable": "변경 사항을 불러올 수 없습니다",
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed"
   },
@@ -412,6 +413,16 @@
     },
     "executors": "실행기",
     "saveAsDefault": "기본값으로 저장",
+    "composer": {
+      "moreActions": "더 많은 작업",
+      "addPrComments": "PR 댓글 추가",
+      "removeTask": "{{task}} 연결 해제",
+      "messagePlaceholder": "메시지 입력…",
+      "feedbackPlaceholder": "계획에 대한 의견 입력…",
+      "editPlaceholder": "메시지 편집…",
+      "changesPlaceholder": "필요한 변경 사항 입력…",
+      "answerPlaceholder": "답변 입력…"
+    },
     "script": {
       "clickToViewLogs": "로그를 보려면 클릭하세요",
       "completedSuccessfully": "성공적으로 완료됨",

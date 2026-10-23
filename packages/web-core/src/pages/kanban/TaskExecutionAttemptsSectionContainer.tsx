@@ -18,7 +18,6 @@ import {
   buildLinkedTaskCreateState,
   buildLocalWorkspaceIdSet,
   buildWorkspaceCreateInitialState,
-  buildWorkspaceCreatePrompt,
 } from '@/shared/lib/workspaceCreateState';
 import {
   useWorkflowAttemptMutations,
@@ -163,10 +162,6 @@ export function TaskExecutionAttemptsSectionContainer({
     }
 
     const task = getTask(taskId);
-    const initialPrompt = buildWorkspaceCreatePrompt(
-      task?.title ?? null,
-      task?.description ?? null
-    );
     const localWorkspaceIds = buildLocalWorkspaceIdSet(
       activeWorkspaces,
       archivedWorkspaces
@@ -178,7 +173,7 @@ export function TaskExecutionAttemptsSectionContainer({
       routeState.hostId
     );
     const createState = buildWorkspaceCreateInitialState({
-      prompt: initialPrompt,
+      prompt: null,
       defaults,
       linkedTask: buildLinkedTaskCreateState(task, projectId),
     });

@@ -51,6 +51,16 @@ pub(super) fn decode(
         .get("itemId")
         .or_else(|| params.get("item_id"))
         .and_then(Value::as_str);
+    if let Some(message) = startup_diagnostic(method, params) {
+        // Codex repeats configWarning.summary as a thread-scoped `warning`.
+        // Correlate exact messages, rather than hiding arbitrary warnings or
+        // depending on English diagnostic wording. All frames stay audited.
+        if let Some(summary) = string(params, "summary") {
+            state.codex_warning_messages.insert(summary);
+        }
+        state.codex_warning_messages.insert(message);
+        return true;
+    }
     match method {
         "error" => {
             match (diagnostic(&params["error"]), params["willRetry"].as_bool()) {
@@ -88,6 +98,11 @@ pub(super) fn decode(
         }
         "thread/status/changed"
         | "turn/started"
+        | "remoteControl/status/changed"
+        | "thread/settings/updated"
+        | "turn/moderationMetadata"
+        | "thread/readState/changed"
+        | "thread/goal/cleared"
         | "thread/name/updated"
         | "thread/closed"
         | "thread/compacted"
@@ -102,19 +117,28 @@ pub(super) fn decode(
             // content. Keep this list explicit so future meaningful events
             // retain the extension fallback.
         }
+        // Valid startup diagnostics have already been recorded above. Retain
+        // unfamiliar payload shapes through the extension fallback.
+        "configWarning" | "deprecationNotice" => return false,
+        "warning" => {
+            let Some(mut message) = string(params, "message")
+                .or_else(|| string(params, "summary"))
+                .filter(|message| !message.trim().is_empty())
+            else {
+                return false;
+            };
+            if let Some(details) = params["details"].as_str().filter(|text| !text.is_empty()) {
+                message.push_str("\n\n");
+                message.push_str(details);
+            }
+            // Runtime warnings (including model switches) remain visible.
+            // Retry notices retain their individual events.
+            if state.codex_warning_messages.insert(message.clone()) {
+                notice(state, raw, manifest, message, out);
+            }
+        }
         "mcpServer/startupStatus/updated" => match params["status"].as_str() {
             Some("starting" | "ready" | "cancelled") => {}
-            Some("failed") => {
-                let name = params["name"].as_str().unwrap_or("unknown");
-                let message = params["error"].as_str().unwrap_or("failed to start");
-                notice(
-                    state,
-                    raw,
-                    manifest,
-                    format!("MCP server {name}: {message}"),
-                    out,
-                );
-            }
             _ => return false,
         },
         "item/agentMessage/delta" => {
@@ -477,6 +501,36 @@ fn diagnostic(error: &Value) -> Option<String> {
     match error["additionalDetails"].as_str() {
         Some(details) if !details.is_empty() => Some(format!("{message}\n\n{details}")),
         _ => Some(message.into()),
+    }
+}
+
+/// Explicitly recognized, nonblocking startup diagnostics. The live client
+/// logs these, while both live mapping and audit replay keep them out of the
+/// conversation. Fatal startup/turn errors use their own canonical path.
+pub(crate) fn startup_diagnostic(method: &str, params: &Value) -> Option<String> {
+    let nonempty = |key: &str| {
+        params[key]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+    };
+    match method {
+        "configWarning" | "deprecationNotice" => {
+            let summary = nonempty("summary").or_else(|| nonempty("message"))?;
+            match params.get("details") {
+                None | Some(Value::Null) => Some(summary.into()),
+                Some(Value::String(details)) if !details.is_empty() => {
+                    Some(format!("{summary}\n\n{details}"))
+                }
+                Some(Value::String(_)) => Some(summary.into()),
+                _ => None,
+            }
+        }
+        "mcpServer/startupStatus/updated" if params["status"] == "failed" => Some(format!(
+            "MCP server {}: {}",
+            nonempty("name")?,
+            nonempty("error")?
+        )),
+        _ => None,
     }
 }
 

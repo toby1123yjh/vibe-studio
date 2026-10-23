@@ -8,15 +8,16 @@ import {
   PlusIcon,
   SpinnerIcon,
   ChatCircleIcon,
-  ToolboxIcon,
+  DotsThreeIcon,
   TrashIcon,
   WarningIcon,
-  ArrowUpIcon,
+  ClockCounterClockwiseIcon,
   ArrowsOutIcon,
   GithubLogoIcon,
   PencilSimpleIcon,
 } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '../lib/cn';
 import { ChatBoxBase, VisualVariant, type DropzoneProps } from './ChatBoxBase';
 import { type EditorProps, type ExecutorProps } from './CreateChatBox';
 import type { AskUserQuestionItem, QuestionAnswer } from 'shared/types';
@@ -136,6 +137,11 @@ function getActionButtonA11yProps(
 const INLINE_BLOCKED_HINT_EXCLUDED_REASONS = new Set([
   'no_content',
   'queue_empty',
+  // Action buttons already communicate these transient states. Repeating them
+  // as a warning can wrap the toolbar and move the editor while sending.
+  'runtime_starting',
+  'runtime_busy',
+  'runtime_cancelling',
 ]);
 
 interface ActionsProps {
@@ -257,6 +263,7 @@ interface SessionChatBoxProps<TExecutor extends string = string> {
   ) => ReactNode;
   actions: ActionsProps;
   actionPolicy?: SessionRuntimeActionPolicy;
+  isConfigLoading?: boolean;
   session: SessionProps<TExecutor>;
   stats?: StatsProps;
   feedbackMode?: FeedbackModeProps;
@@ -341,6 +348,7 @@ export function SessionChatBox<TExecutor extends string = string>({
   renderEditor,
   actions,
   actionPolicy,
+  isConfigLoading = false,
   session,
   stats,
   feedbackMode,
@@ -380,6 +388,8 @@ export function SessionChatBox<TExecutor extends string = string>({
   const { t } = useTranslation('tasks');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const askQuestionBannerRef = useRef<AskUserQuestionBannerHandle>(null);
+  const toolbarIconButtonClass =
+    'min-h-8 min-w-8 shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
 
   // Determine if in feedback mode, edit mode, or approval mode
   const isInFeedbackMode = feedbackMode?.isActive ?? false;
@@ -399,13 +409,14 @@ export function SessionChatBox<TExecutor extends string = string>({
           : 'normal';
 
   // Derived state from status
-  const isDisabled = Boolean(
-    status === 'sending' ||
-      status === 'stopping' ||
-      feedbackMode?.isSubmitting ||
+  const isEditorDisabled = Boolean(
+    feedbackMode?.isSubmitting ||
       editMode?.isSubmitting ||
       approvalMode?.isSubmitting ||
       askQuestionMode?.isSubmitting
+  );
+  const isDisabled = Boolean(
+    status === 'sending' || status === 'stopping' || isEditorDisabled
   );
   const hasContent =
     editor.value.trim().length > 0 || (reviewComments?.count ?? 0) > 0;
@@ -473,32 +484,26 @@ export function SessionChatBox<TExecutor extends string = string>({
   const denyActionLabel = t('conversation.actions.deny');
   const blockedSendHint =
     !normalSendDecision.allowed &&
+    !(isConfigLoading && normalSendDecision.reason === 'no_executor') &&
     !INLINE_BLOCKED_HINT_EXCLUDED_REASONS.has(normalSendDecision.reason ?? '')
       ? getSessionRuntimeActionBlockedReasonLabel(normalSendDecision.reason)
       : null;
   const hasInputTools =
     Boolean(onPrCommentClick) || Boolean(toolbarActions?.items.length);
-  const showRunningAnimation =
-    (status === 'running' || status === 'queued' || status === 'sending') &&
-    !isInApprovalMode &&
-    !isInAskQuestionMode &&
-    editor.value.trim().length === 0;
 
   const placeholder = isInFeedbackMode
-    ? 'Provide feedback for the plan...'
+    ? t('conversation.composer.feedbackPlaceholder')
     : isInEditMode
-      ? 'Edit your message...'
+      ? t('conversation.composer.editPlaceholder')
       : isInApprovalMode
-        ? 'Provide feedback to request changes...'
+        ? t('conversation.composer.changesPlaceholder')
         : isInAskQuestionMode
-          ? 'Type a different answer...'
+          ? t('conversation.composer.answerPlaceholder')
           : isInitialSendMode && session.sessions.length === 0
             ? t('conversation.sessions.emptyWorkspacePlaceholder', {
                 defaultValue: 'Describe what you want to work on...',
               })
-            : session.isNewSessionMode
-              ? 'Start a new conversation...'
-              : 'Continue working on this task...';
+            : t('conversation.composer.messagePlaceholder');
 
   // Cmd+Enter handler
   const handleCmdEnter = () => {
@@ -553,16 +558,7 @@ export function SessionChatBox<TExecutor extends string = string>({
   } = session;
   const hasSessions = sessions.length > 0;
   const showSessionMenu = showSessionControls && hasSessions;
-  const isLatestSelected = hasSessions && selectedSessionId === sessions[0].id;
   const selectedSessionObj = sessions.find((s) => s.id === selectedSessionId);
-  const sessionLabel =
-    isInitialSendMode && hasSessions
-      ? t('conversation.sessions.newSession')
-      : selectedSessionObj?.name
-        ? selectedSessionObj.name
-        : isLatestSelected
-          ? t('conversation.sessions.latest')
-          : t('conversation.sessions.previous');
 
   // Stats
   const filesChanged = stats?.filesChanged ?? 0;
@@ -766,6 +762,7 @@ export function SessionChatBox<TExecutor extends string = string>({
           <PrimaryButton
             onClick={actions.onStop}
             disabled={!stopDecision.allowed}
+            className="disabled:bg-brand disabled:text-on-brand"
             actionIcon="spinner"
             value={t('conversation.actions.sending')}
             {...getActionButtonA11yProps(stopActionLabel, stopDecision)}
@@ -927,16 +924,19 @@ export function SessionChatBox<TExecutor extends string = string>({
         value: editor.value,
         onChange: editor.onChange,
         onCmdEnter: handleCmdEnter,
-        disabled: isDisabled,
+        // Ordinary sends keep the editor focused and allow a newer draft.
+        // Submission policy and attachment actions still guard pending work.
+        disabled: isEditorDisabled,
         repoIds,
         executor: agent || executor?.selected || null,
-        onPasteFiles: actions.onPasteFiles,
+        onPasteFiles: (files) => {
+          if (!areContentInsertActionsDisabled) actions.onPasteFiles(files);
+        },
         localAttachments,
       })}
       error={displayError}
       banner={renderBanner()}
       visualVariant={getVisualVariant()}
-      isRunning={showRunningAnimation}
       dropzone={dropzone}
       modelSelector={modelSelector}
       headerLeft={
@@ -974,6 +974,23 @@ export function SessionChatBox<TExecutor extends string = string>({
               {executor.afterSelector}
             </>
           )}
+          {!isNewSessionMode && agent && (
+            <span
+              data-agent-brand={agentBrand}
+              className="vk-agent-brand-label flex min-w-0 items-center gap-1.5"
+              title={formatExecutorLabel(agent)}
+            >
+              {renderAgentIcon?.(agent, 'size-icon-xl')}
+              <span className="max-w-[10rem] truncate text-sm">
+                {formatExecutorLabel(agent)}
+              </span>
+            </span>
+          )}
+        </>
+      }
+      headerRight={resumeSelector}
+      status={
+        <>
           {/* Existing session mode: show in-progress todo when running, otherwise file stats */}
           {!isInitialSendMode && (
             <>
@@ -1007,7 +1024,7 @@ export function SessionChatBox<TExecutor extends string = string>({
                       actionIcon={ArrowsOutIcon}
                       className="min-w-0"
                     />
-                  ) : onViewCode ? (
+                  ) : hasDiffStats && onViewCode ? (
                     <PrimaryButton
                       variant="tertiary"
                       onClick={onViewCode}
@@ -1064,140 +1081,15 @@ export function SessionChatBox<TExecutor extends string = string>({
           )}
         </>
       }
-      headerRight={
-        <>
-          {/* Turn navigation + Agent icon for existing session mode */}
-          {!isInitialSendMode && (
-            <>
-              {onScrollToPreviousMessage && (
-                <TurnNavigationPopup
-                  turns={userMessageTurns ?? []}
-                  onNavigateToTurn={onScrollToUserMessage ?? (() => {})}
-                  getActiveTurnPatchKey={getActiveTurnPatchKey}
-                >
-                  <ToolbarIconButton
-                    icon={ArrowUpIcon}
-                    title={t('conversation.actions.scrollToPreviousMessage')}
-                    aria-label={t(
-                      'conversation.actions.scrollToPreviousMessage'
-                    )}
-                    onClick={onScrollToPreviousMessage}
-                  />
-                </TurnNavigationPopup>
-              )}
-              <span
-                data-agent-brand={agentBrand}
-                className="vk-agent-brand-label flex min-w-0 items-center gap-1.5"
-                title={agent ? formatExecutorLabel(agent) : undefined}
-              >
-                {renderAgentIcon?.(agent, 'size-icon-xl')}
-                {agent && (
-                  <span className="max-w-[100px] truncate text-sm">
-                    {formatExecutorLabel(agent)}
-                  </span>
-                )}
-              </span>
-              {resumeSelector}
-            </>
-          )}
-          {/* Todo progress popup - always rendered, disabled when no todos */}
-          <TodoProgressPopup todos={todos ?? []} />
-          {supportsContextUsage && (
-            <ContextUsageGauge tokenUsageInfo={tokenUsageInfo} />
-          )}
-          {showSessionMenu && (
-            <ToolbarDropdown
-              label={sessionLabel}
-              disabled={isInFeedbackMode || isInEditMode || isInApprovalMode}
-              className="min-w-0 max-w-[120px]"
-            >
-              {/* New Session option */}
-              <DropdownMenuItem
-                icon={isInitialSendMode ? CheckIcon : PlusIcon}
-                onClick={() => onNewSession?.()}
-              >
-                {t('conversation.sessions.newSession')}
-              </DropdownMenuItem>
-              {sessions.length > 0 && <DropdownMenuSeparator />}
-              {sessions.length > 0 ? (
-                <>
-                  <DropdownMenuLabel>
-                    {t('conversation.sessions.label')}
-                  </DropdownMenuLabel>
-                  {sessions.map((s, index) => (
-                    <DropdownMenuItem
-                      key={s.id}
-                      icon={
-                        !isInitialSendMode && s.id === selectedSessionId
-                          ? CheckIcon
-                          : undefined
-                      }
-                      onClick={() => onSelectSession(s.id)}
-                    >
-                      <span className="flex items-center gap-1.5 max-w-[200px]">
-                        {renderAgentIcon?.(
-                          s.executor ?? null,
-                          'size-icon shrink-0'
-                        )}
-                        <span className="truncate">
-                          {s.name
-                            ? s.name
-                            : index === 0
-                              ? t('conversation.sessions.latest')
-                              : formatSessionDate(s.created_at)}
-                        </span>
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                </>
-              ) : (
-                <DropdownMenuItem disabled>
-                  {t('conversation.sessions.noPreviousSessions')}
-                </DropdownMenuItem>
-              )}
-              {onRenameSession && selectedSessionId && !isInitialSendMode && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    icon={PencilSimpleIcon}
-                    onClick={() =>
-                      onRenameSession(
-                        selectedSessionId,
-                        selectedSessionObj?.name ?? ''
-                      )
-                    }
-                  >
-                    {t('conversation.sessions.rename')}
-                  </DropdownMenuItem>
-                </>
-              )}
-              {onDeleteSession && selectedSessionId && !isInitialSendMode && (
-                <DropdownMenuItem
-                  icon={TrashIcon}
-                  variant="destructive"
-                  disabled={
-                    isRunning ||
-                    isDisabled ||
-                    deletingSessionId === selectedSessionId
-                  }
-                  onClick={() =>
-                    onDeleteSession(
-                      selectedSessionId,
-                      selectedSessionObj?.name ?? ''
-                    )
-                  }
-                >
-                  {t('conversation.sessions.delete', 'Delete session')}
-                </DropdownMenuItem>
-              )}
-            </ToolbarDropdown>
-          )}
-        </>
-      }
       footerLeft={
         <>
           <ToolbarIconButton
+            type="button"
             icon={PaperclipIcon}
+            className={cn(
+              toolbarIconButtonClass,
+              status === 'sending' && !isEditorDisabled && '!opacity-100'
+            )}
             aria-label={t('tasks:taskFormDialog.attachFile')}
             title={t('tasks:taskFormDialog.attachFile')}
             onClick={handleAttachClick}
@@ -1210,27 +1102,140 @@ export function SessionChatBox<TExecutor extends string = string>({
             className="hidden"
             onChange={handleFileInputChange}
           />
-          {hasInputTools && (
+          {/* Navigation and session management stay away from model controls. */}
+          {!isInitialSendMode && (
+            <>
+              {onScrollToPreviousMessage && (
+                <TurnNavigationPopup
+                  turns={userMessageTurns ?? []}
+                  onNavigateToTurn={onScrollToUserMessage ?? (() => {})}
+                  getActiveTurnPatchKey={getActiveTurnPatchKey}
+                >
+                  <ToolbarIconButton
+                    type="button"
+                    icon={ClockCounterClockwiseIcon}
+                    className={toolbarIconButtonClass}
+                    title={t('conversation.actions.scrollToPreviousMessage')}
+                    aria-label={t(
+                      'conversation.actions.scrollToPreviousMessage'
+                    )}
+                    onClick={onScrollToPreviousMessage}
+                  />
+                </TurnNavigationPopup>
+              )}
+            </>
+          )}
+          {(showSessionMenu || hasInputTools) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex items-center justify-center text-low hover:text-normal"
-                  aria-label="Input tools"
-                  title="Input tools"
+                  className={`flex items-center justify-center text-low hover:text-normal ${toolbarIconButtonClass}`}
+                  aria-label={t('conversation.composer.moreActions')}
+                  title={t('conversation.composer.moreActions')}
+                  disabled={
+                    isInFeedbackMode || isInEditMode || isInApprovalMode
+                  }
                 >
-                  <ToolboxIcon className="size-icon-base" />
+                  <DotsThreeIcon className="size-icon-base" weight="bold" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuLabel>Input tools</DropdownMenuLabel>
+              <DropdownMenuContent align="start" side="top">
+                {showSessionMenu && (
+                  <>
+                    {/* New Session option */}
+                    <DropdownMenuItem
+                      icon={isInitialSendMode ? CheckIcon : PlusIcon}
+                      onClick={() => onNewSession?.()}
+                    >
+                      {t('conversation.sessions.newSession')}
+                    </DropdownMenuItem>
+                    {sessions.length > 0 && <DropdownMenuSeparator />}
+                    {sessions.length > 0 ? (
+                      <>
+                        <DropdownMenuLabel>
+                          {t('conversation.sessions.label')}
+                        </DropdownMenuLabel>
+                        {sessions.map((s, index) => (
+                          <DropdownMenuItem
+                            key={s.id}
+                            icon={
+                              !isInitialSendMode && s.id === selectedSessionId
+                                ? CheckIcon
+                                : undefined
+                            }
+                            onClick={() => onSelectSession(s.id)}
+                          >
+                            <span className="flex items-center gap-1.5 max-w-[200px]">
+                              {renderAgentIcon?.(
+                                s.executor ?? null,
+                                'size-icon shrink-0'
+                              )}
+                              <span className="truncate">
+                                {s.name
+                                  ? s.name
+                                  : index === 0
+                                    ? t('conversation.sessions.latest')
+                                    : formatSessionDate(s.created_at)}
+                              </span>
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                      </>
+                    ) : (
+                      <DropdownMenuItem disabled>
+                        {t('conversation.sessions.noPreviousSessions')}
+                      </DropdownMenuItem>
+                    )}
+                    {onRenameSession &&
+                      selectedSessionId &&
+                      !isInitialSendMode && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            icon={PencilSimpleIcon}
+                            onClick={() =>
+                              onRenameSession(
+                                selectedSessionId,
+                                selectedSessionObj?.name ?? ''
+                              )
+                            }
+                          >
+                            {t('conversation.sessions.rename')}
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    {onDeleteSession &&
+                      selectedSessionId &&
+                      !isInitialSendMode && (
+                        <DropdownMenuItem
+                          icon={TrashIcon}
+                          variant="destructive"
+                          disabled={
+                            isRunning ||
+                            isDisabled ||
+                            deletingSessionId === selectedSessionId
+                          }
+                          onClick={() =>
+                            onDeleteSession(
+                              selectedSessionId,
+                              selectedSessionObj?.name ?? ''
+                            )
+                          }
+                        >
+                          {t('conversation.sessions.delete', 'Delete session')}
+                        </DropdownMenuItem>
+                      )}
+                  </>
+                )}
+                {showSessionMenu && hasInputTools && <DropdownMenuSeparator />}
                 {onPrCommentClick && (
                   <DropdownMenuItem
                     icon={GithubLogoIcon}
                     onClick={onPrCommentClick}
                     disabled={areContentInsertActionsDisabled}
                   >
-                    Add PR comments
+                    {t('conversation.composer.addPrComments')}
                   </DropdownMenuItem>
                 )}
                 {onPrCommentClick && Boolean(toolbarActions?.items.length) && (
@@ -1249,16 +1254,32 @@ export function SessionChatBox<TExecutor extends string = string>({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {blockedSendHint && (
-            <span
-              className="flex min-w-0 items-center gap-half text-xs text-low"
-              title={blockedSendHint}
-            >
-              <WarningIcon className="size-icon-xs flex-shrink-0" />
-              <span className="truncate">{blockedSendHint}</span>
-            </span>
+          {Boolean(todos?.length) && (
+            <TodoProgressPopup
+              todos={todos ?? []}
+              className={toolbarIconButtonClass}
+            />
           )}
+          {supportsContextUsage &&
+            tokenUsageInfo &&
+            tokenUsageInfo.model_context_window > 0 && (
+              <ContextUsageGauge
+                tokenUsageInfo={tokenUsageInfo}
+                className="min-h-8 min-w-8"
+              />
+            )}
         </>
+      }
+      hint={
+        blockedSendHint && (
+          <span
+            className="flex min-w-0 items-center gap-half text-xs text-low"
+            title={blockedSendHint}
+          >
+            <WarningIcon className="size-icon-xs flex-shrink-0" />
+            <span className="truncate">{blockedSendHint}</span>
+          </span>
+        )
       }
       footerRight={renderActionButtons()}
     />

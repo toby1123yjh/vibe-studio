@@ -677,7 +677,9 @@ test("the canvas float renders the original conversation and preserves drafts ac
   await expect(
     page.getByTestId("workflow-deliverables-toggle"),
   ).toHaveAttribute("aria-expanded", "false");
-  const editor = panel.locator('[contenteditable="true"]').first();
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
   await expect(editor).toBeVisible();
   await editor.fill("Draft kept after closing immediately");
   await panel
@@ -709,6 +711,246 @@ test("the canvas float renders the original conversation and preserves drafts ac
     [],
   );
   expect(errors).toEqual([]);
+});
+
+test("Enter sends preserve editor focus and model controls through slow acknowledgement and configuration refresh", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page);
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-build").click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
+  await expect(panel).toContainText("Original reply for analysis-session");
+  await editor.fill("Submitted message\nwith another line");
+  const send = panel.getByRole("button", { name: "Send", exact: true });
+  await expect(send).toBeEnabled();
+
+  let accept = () => {};
+  const accepted = new Promise<void>((resolve) => {
+    accept = resolve;
+  });
+  const submissions: string[] = [];
+  await page.route(
+    "**/api/sessions/analysis-session/follow-up",
+    async (route) => {
+      submissions.push(route.request().postDataJSON().prompt);
+      await accepted;
+      await route.fulfill({ json: { success: true, data: null } });
+    },
+  );
+  let refreshStarted = false;
+  let releaseRefresh = () => {};
+  const refresh = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  await page.route(
+    "**/api/sessions/analysis-session/executor-config",
+    async (route) => {
+      refreshStarted = true;
+      await refresh;
+      await route.fulfill({
+        json: {
+          success: true,
+          data: {
+            executor: "CODEX",
+            variant: "DEFAULT",
+            model_id: "fixture-model",
+          },
+        },
+      });
+    },
+  );
+  let deleteStarted = false;
+  let releaseDelete = () => {};
+  const deleted = new Promise<void>((resolve) => {
+    releaseDelete = resolve;
+  });
+  await page.route("**/api/scratch/**/analysis-session", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    deleteStarted = true;
+    await deleted;
+    return route.fallback();
+  });
+  const original = await editor.elementHandle();
+  const model = panel.getByRole("button", { name: /fixture-model/ });
+  await expect(model).toBeVisible();
+  const originalModel = await model.elementHandle();
+  const modelOpacity = await model.evaluate(
+    (element) => getComputedStyle(element).opacity,
+  );
+  const settings = panel.getByRole("button", {
+    name: "Run settings",
+    exact: true,
+  });
+  await expect(settings).toBeEnabled();
+  const bounds = await editor.boundingBox();
+  const sendBackground = await send.evaluate((element) => {
+    for (const animation of element.getAnimations()) animation.finish();
+    return getComputedStyle(element).backgroundColor;
+  });
+  await editor.press("Enter");
+  await expect.poll(() => submissions.length).toBe(1);
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await expect(editor).toBeFocused();
+  expect(await original!.evaluate((element) => element.isConnected)).toBe(true);
+  expect(await editor.boundingBox()).toEqual(bounds);
+  await expect(panel.getByRole("button", { name: /^Stop/ })).toHaveCSS(
+    "background-color",
+    sendBackground,
+  );
+  await expect(
+    panel.getByRole("button", { name: "Attach file", exact: true }),
+  ).toHaveCSS("opacity", "1");
+  await editor.press("Enter");
+  expect(submissions).toEqual(["Submitted message\nwith another line"]);
+  api.setRunStatus("analysis-session", "running");
+  accept();
+  await expect(editor).toHaveText("");
+  await expect.poll(() => refreshStarted && deleteStarted).toBe(true);
+  expect(await original!.evaluate((element) => element.isConnected)).toBe(true);
+  await expect(editor).toBeFocused();
+  expect(await originalModel!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(model).toBeVisible();
+  await expect(model).toBeDisabled();
+  await expect(model).toHaveCSS("opacity", modelOpacity);
+  await expect(settings).toBeDisabled();
+  await expect(settings).toHaveCSS("opacity", "1");
+  await expect(model.locator("xpath=ancestor::fieldset")).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  const composer = panel.locator("[data-composer-message]").locator("..");
+  expect(
+    await composer.evaluate(
+      (element) => getComputedStyle(element, "::before").animationName,
+    ),
+  ).toBe("none");
+  expect(await editor.boundingBox()).toEqual(bounds);
+  await expect(panel).not.toContainText("Restoring session configuration");
+  await expect(panel).not.toContainText("Select an agent before sending");
+
+  const next = "New draft while configuration and deletion are still pending";
+  await editor.fill(next);
+  releaseDelete();
+  releaseRefresh();
+  await expect(editor).toHaveText(next);
+  await expect
+    .poll(() => JSON.stringify(api.drafts.get("analysis-session")))
+    .toContain(next);
+  await page.reload();
+  await page.getByTestId("workflow-run-node-build").click();
+  await expect(editor).toHaveText(next);
+});
+
+test("a failed send retains the draft and an old send cannot clear another conversation", async ({
+  page,
+}) => {
+  await mockWorkflowConversations(page);
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-build").click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
+  const send = panel.getByRole("button", { name: "Send", exact: true });
+  await editor.fill("Keep this after a failed request");
+  await page.route("**/api/sessions/analysis-session/follow-up", (route) =>
+    route.fulfill({
+      status: 500,
+      json: { success: false, message: "Test launch failure" },
+    }),
+  );
+  await send.click();
+  await expect(panel).toContainText("Test launch failure");
+  await expect(editor).toHaveText("Keep this after a failed request");
+
+  let accept = () => {};
+  const accepted = new Promise<void>((resolve) => {
+    accept = resolve;
+  });
+  await page.route(
+    "**/api/sessions/analysis-session/follow-up",
+    async (route) => {
+      await accepted;
+      await route.fulfill({ json: { success: true, data: null } });
+    },
+  );
+  await editor.fill("An earlier pending submission");
+  await send.click();
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await page
+    .getByTestId("workflow-conversation-work-selector")
+    .selectOption("subtask:visual-batch:research");
+  await expect(panel).toHaveAttribute("data-session-id", "research-session");
+  await editor.fill("Independent research draft");
+  const response = page.waitForResponse((item) =>
+    item.url().endsWith("/analysis-session/follow-up"),
+  );
+  accept();
+  await response;
+  await expect(panel).toHaveAttribute("data-session-id", "research-session");
+  await expect(editor).toHaveText("Independent research draft");
+});
+
+test("stopping preserves the real editor and draft until the canonical run terminates", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page, {
+    initialRunStatus: "running",
+  });
+  await page.goto("/visual.html?mode=file-run");
+  await page.getByTestId("workflow-run-node-build").click();
+  const panel = page.getByTestId("workflow-conversation-panel");
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
+  const shell = panel.locator("[data-composer-message]").locator("..");
+  const geometry = await shell.evaluate((element) => {
+    const border = getComputedStyle(element, "::before");
+    return {
+      content: border.content,
+      animation: border.animationName,
+    };
+  });
+  expect(geometry).toEqual({ content: "none", animation: "none" });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() =>
+      shell.evaluate(
+        (element) => getComputedStyle(element, "::before").animationName,
+      ),
+    )
+    .toBe("none");
+  await editor.fill("Draft for after cancellation");
+  const original = await editor.elementHandle();
+  const bounds = await editor.boundingBox();
+
+  let cancelRequested = false;
+  await page.route(
+    "**/api/agent-runs/agent-analysis-session/cancel",
+    async (route) => {
+      cancelRequested = true;
+      api.setRunStatus("analysis-session", "cancelling");
+      await route.fulfill({
+        json: { success: true, data: api.state("analysis-session") },
+      });
+    },
+  );
+  await panel.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect.poll(() => cancelRequested).toBe(true);
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  expect(await original!.evaluate((element) => element.isConnected)).toBe(true);
+  expect(await editor.boundingBox()).toEqual(bounds);
+  api.setRunStatus("analysis-session", "cancelled");
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await expect(editor).toHaveText("Draft for after cancellation");
+  expect(await original!.evaluate((element) => element.isConnected)).toBe(true);
+  expect(api.requests.some((request) => request.endsWith("/stop"))).toBe(false);
 });
 
 test("remote persisted drafts remain isolated when two Hosts have the same Session ID", async ({
@@ -755,7 +997,9 @@ test("a send acknowledged after close and reopen preserves the replacement sessi
   const node = page.getByTestId("workflow-run-node-build");
   await node.click();
   const panel = page.getByTestId("workflow-conversation-panel");
-  const editor = panel.locator('[contenteditable="true"]').first();
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
   await expect(editor).toBeVisible();
   await editor.fill("The submitted draft");
   await panel.getByRole("button", { name: "Send", exact: true }).click();
@@ -822,7 +1066,7 @@ test("a waiting conversation stays inset, does not start work and remains open o
     })
     .toBe(24);
   const bounds = (await panel.boundingBox())!;
-  expect(bounds.width).toBe(440);
+  expect(bounds.width).toBe(600);
   expect(canvasBox!.x + canvasBox!.width - bounds.x - bounds.width).toBeCloseTo(
     24,
     0,
@@ -877,10 +1121,64 @@ test("inline file preview keeps the original editor mounted and Escape returns b
   await page.goto("/visual.html?mode=file-run");
   await page.getByTestId("workflow-run-node-build").click();
   const panel = page.getByTestId("workflow-conversation-panel");
-  const editor = panel.locator('[contenteditable="true"]').first();
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
   await expect(editor).toBeVisible();
   await editor.fill("Draft retained while reading the file");
   const editorHandle = await editor.elementHandle();
+  const originalTransform = await viewportTransform(page);
+  const resizeHandle = panel.getByRole("separator");
+  await expect(resizeHandle).toBeVisible();
+  for (const [key, width] of [
+    ["End", 900],
+    ["Home", 480],
+  ] as const) {
+    await resizeHandle.press(key);
+    await expect
+      .poll(async () => Math.round((await panel.boundingBox())!.width))
+      .toBe(width);
+    // Measure the actual editable region: the outer chat wrapper can fill the
+    // panel while a fixed-width composer still stops growing at 48rem.
+    await expect
+      .poll(async () => (await editor.boundingBox())!.width)
+      .toBeGreaterThan(width - 64);
+    const composerInsets = await panel
+      .locator("[data-chatbox-container]")
+      .evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const composer = element.firstElementChild!.getBoundingClientRect();
+        return {
+          left: composer.left - bounds.left,
+          right: bounds.right - composer.right,
+          top: composer.top - bounds.top,
+          bottom: bounds.bottom - composer.bottom,
+        };
+      });
+    for (const inset of Object.values(composerInsets)) {
+      expect(inset).toBeGreaterThanOrEqual(7.5);
+    }
+    expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+      true,
+    );
+    await expect(editor).toHaveText("Draft retained while reading the file");
+  }
+  const initialPanelBounds = (await panel.boundingBox())!;
+  const handleBounds = (await resizeHandle.boundingBox())!;
+  const gripX = handleBounds.x + handleBounds.width / 2;
+  const gripY = handleBounds.y + handleBounds.height / 2;
+  await page.mouse.move(gripX, gripY);
+  await page.mouse.down();
+  await page.mouse.move(gripX - 120, gripY, { steps: 4 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => Math.round((await panel.boundingBox())!.width))
+    .toBe(Math.round(initialPanelBounds.width + 120));
+  expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(editor).toHaveText("Draft retained while reading the file");
+  expect(await viewportTransform(page)).toBe(originalTransform);
   await expandDeliverables(page);
   await expect(page.getByTestId("workflow-deliverables-toggle")).toContainText(
     "Deliverables 1",
@@ -936,6 +1234,86 @@ test("inline file preview keeps the original editor mounted and Escape returns b
   await page.screenshot({
     path: testInfo.outputPath("workflow-conversation-narrow.png"),
   });
+  await page.setViewportSize({ width: 375, height: 680 });
+  await expect(resizeHandle).toHaveCount(0);
+  await expect
+    .poll(() =>
+      panel.evaluate((element) => {
+        // Fill the positioned parent, including when the fixture has scrollbars.
+        const parent = element.offsetParent;
+        const available =
+          parent instanceof HTMLElement
+            ? parent.clientWidth
+            : document.documentElement.clientWidth;
+        return Math.round(element.getBoundingClientRect().width - available);
+      }),
+    )
+    .toBe(0);
+  const overflowingControls = await panel
+    .locator("[data-chatbox-container]")
+    .evaluate((composer) => {
+      const bounds = composer.getBoundingClientRect();
+      return [...composer.querySelectorAll("button")]
+        .filter((button) => {
+          const rect = button.getBoundingClientRect();
+          return (
+            rect.width > 0 &&
+            (rect.left < bounds.left - 1 || rect.right > bounds.right + 1)
+          );
+        })
+        .map(
+          (button) => button.getAttribute("aria-label") ?? button.textContent,
+        );
+    });
+  expect(overflowingControls).toEqual([]);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect
+    .poll(async () => Math.round((await panel.boundingBox())!.width))
+    .toBe(Math.round(initialPanelBounds.width + 120));
+  expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(editor).toHaveText("Draft retained while reading the file");
+
+  const codeLine = `echo ${"unbroken-token".repeat(160)}`;
+  await editor.fill("");
+  await editor.evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", `\`\`\`shell\n${text}\n\`\`\``);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        clipboardData,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }, codeLine);
+  const codeBlock = editor.locator("code.block");
+  await expect(codeBlock).toHaveText(codeLine);
+  for (const [key, width] of [
+    ["Home", 480],
+    ["End", 900],
+  ] as const) {
+    await resizeHandle.press(key);
+    await expect
+      .poll(async () => Math.round((await panel.boundingBox())!.width))
+      .toBe(width);
+    await expect(codeBlock).toHaveCSS("white-space", "pre-wrap");
+    await expect
+      .poll(() =>
+        codeBlock.evaluate(
+          (element) => element.scrollWidth - element.clientWidth,
+        ),
+      )
+      .toBeLessThanOrEqual(1);
+    await expect(codeBlock).toHaveText(codeLine);
+    expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+      true,
+    );
+  }
+  await resizeHandle.press("Home");
+  await resizeHandle.press("ArrowRight");
+  await expect(resizeHandle).toHaveAttribute("aria-valuenow", "480");
 });
 
 test("a cloned completed worker opens its exact original Session read-only even without file references", async ({
@@ -992,28 +1370,31 @@ test("a cloned completed worker opens its exact original Session read-only even 
   );
 });
 
-test("tool output uses the existing log viewer inside the float and preserves the draft on return", async ({
+test("tool output expands inline in the original conversation and preserves the composer draft", async ({
   page,
 }) => {
   const api = await mockWorkflowConversations(page, { withToolOutput: true });
   await page.goto("/visual.html?mode=file-run");
   await page.getByTestId("workflow-run-node-build").click();
   const panel = page.getByTestId("workflow-conversation-panel");
-  const editor = panel.locator('[contenteditable="true"]').first();
+  const editor = panel.locator(
+    '[data-chatbox-container] [data-lexical-editor="true"]',
+  );
   await expect(editor).toBeVisible();
   await editor.fill("Draft kept while reading tool output");
+  const editorHandle = await editor.elementHandle();
   await panel.getByRole("button", { name: /inspect_fixture/ }).click();
-  const preview = panel.getByTestId("conversation-log-preview");
-  await expect(preview).toContainText(
+  const output = panel.getByText(
     "Exact tool output retained in the original viewer",
   );
-  await expect(editor).toBeHidden();
-  await expect(
-    preview.getByRole("button", { name: "Back", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(preview).toHaveCount(0);
-  await expect(panel).toBeVisible();
+  await expect(output).toBeVisible();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveText("Draft kept while reading tool output");
+  expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await panel.getByRole("button", { name: /inspect_fixture/ }).click();
+  await expect(output).toBeHidden();
   await expect(editor).toHaveText("Draft kept while reading tool output");
   await expect(
     panel.getByRole("button", { name: /inspect_fixture/ }),

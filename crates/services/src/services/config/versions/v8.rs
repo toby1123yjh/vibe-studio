@@ -34,8 +34,8 @@ fn default_hidden_agents() -> Vec<BaseCodingAgent> {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub enum SendMessageShortcut {
-    #[default]
     ModifierEnter,
+    #[default]
     Enter,
 }
 

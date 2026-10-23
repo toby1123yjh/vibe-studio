@@ -180,7 +180,7 @@ test('Gemini refresh changes inherited display but never replaces an explicit ma
   await input.fill('requested/model:exact');
   await input.press('Enter');
   await session(page)
-    .getByRole('button', { name: 'Custom', exact: true })
+    .getByRole('button', { name: 'Run settings', exact: true })
     .click();
   await page
     .getByRole('menuitem', { name: 'Refresh native capabilities', exact: true })

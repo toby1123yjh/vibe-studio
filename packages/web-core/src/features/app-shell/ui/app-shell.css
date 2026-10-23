@@ -614,6 +614,7 @@ button:focus-visible > .vk-module-unavailable-reason {
 
 .vk-page-stack {
   display: flex;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   flex-direction: column;

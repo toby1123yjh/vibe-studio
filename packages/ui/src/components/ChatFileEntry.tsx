@@ -119,14 +119,12 @@ export function ChatFileEntry({
           data-scroll-anchor-target={isInteractive ? '' : undefined}
         >
           <div className="flex-1 flex items-center gap-base min-w-0">
-            <span className="relative shrink-0">
+            <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
               <FileIcon className="size-icon-base" />
               {status && (
-                <ToolStatusDot
-                  status={status}
-                  active={active}
-                  className="absolute -bottom-0.5 -right-0.5"
-                />
+                <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex">
+                  <ToolStatusDot status={status} active={active} />
+                </span>
               )}
             </span>
             <span className="text-sm text-normal truncate">{filename}</span>
@@ -204,14 +202,12 @@ export function ChatFileEntry({
       data-scroll-anchor-target={isInteractive ? '' : undefined}
     >
       <div className="flex-1 flex items-center gap-base min-w-0">
-        <span className="relative shrink-0">
+        <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
           <FileIcon className="size-icon-base" />
           {status && (
-            <ToolStatusDot
-              status={status}
-              active={active}
-              className="absolute -bottom-0.5 -right-0.5"
-            />
+            <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex">
+              <ToolStatusDot status={status} active={active} />
+            </span>
           )}
         </span>
         <span className="text-sm text-normal truncate">{filename}</span>

@@ -763,6 +763,17 @@ impl LocalAgentRunPort {
                     return Ok(());
                 }
             }
+        } else if matches!(&mapped.payload, AgentEventPayload::Error { .. })
+            && let Ok(snapshot) = self.query(request.agent_run_id).await
+            && matches!(
+                snapshot.state.status,
+                AgentRunStatus::Cancelling | AgentRunStatus::Cancelled
+            )
+        {
+            // Interrupting app-server startup can close a pending RPC request.
+            // The accepted cancellation owns the outcome; its shutdown error
+            // remains in Native Audit rather than becoming a chat failure.
+            return Ok(());
         }
         self.append_event(
             request,
@@ -4376,6 +4387,100 @@ mod tests {
         persisted_provider_run(db, BaseCodingAgent::Codex).await
     }
 
+    #[tokio::test]
+    async fn mapped_shutdown_error_preserves_accepted_cancellation_and_native_audit() {
+        for status in [
+            AgentRunStatus::Starting,
+            AgentRunStatus::Running,
+            AgentRunStatus::Cancelling,
+            AgentRunStatus::Cancelled,
+        ] {
+            let port = LocalAgentRunPort::new(setup_runtime_db().await);
+            let (request, attempt) = persisted_codex_run(&port.db).await;
+            let mut transitions = vec![AgentRunStatus::Starting];
+            if status == AgentRunStatus::Cancelled {
+                transitions.push(AgentRunStatus::Cancelling);
+            }
+            if status != AgentRunStatus::Starting {
+                transitions.push(status);
+            }
+            for status in transitions {
+                port.append_event(
+                    &request,
+                    &attempt,
+                    AgentEventPayload::LifecycleChanged { status },
+                    vec![],
+                    Utc::now(),
+                    None,
+                )
+                .await
+                .unwrap();
+            }
+            let directory = tempfile::tempdir().unwrap();
+            let provider = DirectProvider::Codex;
+            let versions = provider.versions();
+            let mut writer = NativeAuditWriter::create_in(
+                directory.path(),
+                NativeAuditMetadata {
+                    session_id: request.session_id,
+                    agent_run_id: request.agent_run_id,
+                    turn_id: request.turn_id,
+                    run_attempt_id: attempt.run_attempt_id,
+                    run_attempt_number: attempt.attempt_number,
+                    provider_id: provider.id().into(),
+                    runtime_profile_id: request.runtime_profile_id.clone(),
+                    workspace_path: directory.path().display().to_string(),
+                    runtime_version: versions.runtime.map(str::to_owned),
+                    protocol_version: versions.protocol.map(str::to_owned),
+                    adapter_version: versions.adapter.into(),
+                    mapper_version: versions.mapper.into(),
+                    created_at: Utc::now(),
+                },
+            )
+            .unwrap();
+            let diagnostic = "I/O error: server was shutdown while waiting for initialize response";
+            let frame = NativeAuditFrame::from_bytes(
+                1,
+                Utc::now(),
+                NativeAuditDirection::Output,
+                NativeAuditChannel::Stdout,
+                "application/json",
+                request.correlation_id,
+                serde_json::json!({"LaunchError": {"error": diagnostic}})
+                    .to_string()
+                    .as_bytes(),
+                None,
+            );
+            let native_ref = writer.append(frame.clone()).unwrap();
+            let manifest = writer.close().unwrap();
+            port.ensure_audit_stream(&manifest).await.unwrap();
+            let mut mapper = StatefulProviderMapper::new(provider);
+            let mut mapped = mapper.map_frame(&frame, &manifest).unwrap();
+            assert_eq!(mapped.len(), 1);
+            port.append_mapped_event(&request, &attempt, mapped.remove(0), native_ref)
+                .await
+                .unwrap();
+            let snapshot = port.query(request.agent_run_id).await.unwrap();
+            assert_eq!(snapshot.state.status, status);
+            if matches!(
+                status,
+                AgentRunStatus::Cancelling | AgentRunStatus::Cancelled
+            ) {
+                assert!(snapshot.state.last_error.is_none());
+            } else {
+                assert_eq!(snapshot.state.last_error.unwrap().message, diagnostic);
+            }
+            let manifest_path = directory.path().join(manifest.manifest_relative_path);
+            let bundle =
+                executors::runtime::AuditBundle::read(manifest_path.parent().unwrap()).unwrap();
+            assert_eq!(
+                bundle.frames().len(),
+                1,
+                "shutdown diagnostic remains independently auditable"
+            );
+        }
+    }
+
     async fn persisted_provider_run(
         db: &DBService,
         executor: BaseCodingAgent,
@@ -4645,10 +4750,9 @@ mod tests {
             assert_eq!(port.load_host_cursor(&attempt).await.unwrap(), 1);
 
             let catalog = picker_catalog(&agent, cwd).await;
-            assert_eq!(
-                catalog,
-                serde_json::to_value(&observation.model_selector).unwrap()
-            );
+            let mut expected = serde_json::to_value(&observation.model_selector).unwrap();
+            expected["catalog_source"] = serde_json::json!("observed");
+            assert_eq!(catalog, expected);
             assert_eq!(catalog["default_model"], model);
             assert_eq!(catalog["models"][0]["reasoning_options"][0]["id"], "");
             assert_eq!(

@@ -86,7 +86,7 @@ export function useSessionSend({
           return false;
         }
         try {
-          const session = await createSession({
+          await createSession({
             workspaceId,
             prompt: trimmed,
             selectedSkills,
@@ -94,7 +94,8 @@ export function useSessionSend({
             resumeSessionId: options.resumeSessionId,
             resumeScopePath: options.resumeScopePath,
           });
-          onSelectSession?.(session.id);
+          // The durable-create callback already selects this session. Selecting
+          // again after follow-up acknowledgement can interrupt later navigation.
           return true;
         } catch (e: unknown) {
           const err = e as { message?: string };
@@ -125,14 +126,7 @@ export function useSessionSend({
         }
       }
     },
-    [
-      sessionId,
-      workspaceId,
-      isNewSessionMode,
-      createSession,
-      onSelectSession,
-      executorConfig,
-    ]
+    [sessionId, workspaceId, isNewSessionMode, createSession, executorConfig]
   );
 
   const clearError = useCallback(() => setError(null), []);

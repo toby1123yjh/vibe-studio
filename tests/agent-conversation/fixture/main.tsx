@@ -55,7 +55,6 @@ function ListTimeline() {
       <ConversationListContainer
         ref={list}
         attempt={attempt}
-        showScriptSetup={false}
         readOnly
       />
     </div>

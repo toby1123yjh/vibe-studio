@@ -1,20 +1,14 @@
-import { fileURLToPath } from 'node:url';
-import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import workflowConfig from "../workflow/vite.config";
 
-const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
   root: `${repoRoot}/tests/route-transition/fixture`,
   plugins: [react()],
-  resolve: {
-    alias: {
-      '@': `${repoRoot}/packages/web-core/src`,
-      react: `${repoRoot}/packages/web-core/node_modules/react`,
-      'react-dom': `${repoRoot}/packages/web-core/node_modules/react-dom`,
-      '@tanstack/react-router': `${repoRoot}/packages/web-core/node_modules/@tanstack/react-router`,
-      shared: `${repoRoot}/shared`,
-    },
-  },
+  cacheDir: `${repoRoot}/node_modules/.vite/route-transition`,
+  resolve: workflowConfig.resolve,
   server: { fs: { allow: [repoRoot] } },
 });

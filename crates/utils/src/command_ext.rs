@@ -44,7 +44,8 @@ impl NoWindowExt for tokio::process::Command {
 }
 
 /// Adds a `.group_spawn_no_window()` helper for command-group spawns that
-/// suppresses the console window on Windows. No-op on other platforms.
+/// suppresses the console window on Windows and terminates the entire Windows
+/// job when its owner is dropped. Other platforms retain their group behavior.
 pub trait GroupSpawnNoWindowExt {
     fn group_spawn_no_window(&mut self) -> std::io::Result<AsyncGroupChild>;
 }
@@ -53,7 +54,10 @@ impl GroupSpawnNoWindowExt for tokio::process::Command {
     fn group_spawn_no_window(&mut self) -> std::io::Result<AsyncGroupChild> {
         let mut group = self.group();
         #[cfg(windows)]
-        group.creation_flags(CREATE_NO_WINDOW);
+        // Tokio's command-level kill_on_drop only terminates the launcher
+        // (often cmd.exe for a CLI .cmd shim). The job must own cleanup of its
+        // descendants, including when discovery is cancelled or the host exits.
+        group.kill_on_drop(true).creation_flags(CREATE_NO_WINDOW);
         group.spawn()
     }
 }

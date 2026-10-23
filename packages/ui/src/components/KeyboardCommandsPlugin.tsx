@@ -32,7 +32,7 @@ export function KeyboardCommandsPlugin({
   onShiftCmdEnter,
   onChange,
   transformers,
-  sendShortcut = 'ModifierEnter',
+  sendShortcut = 'Enter',
 }: Props) {
   const [editor] = useLexicalComposerContext();
   const { isOpen: isTypeaheadOpen } = useTypeaheadOpen();

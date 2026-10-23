@@ -27,7 +27,7 @@ export function AgentWorkbenchComposerEditor({
   onChange,
   onSubmit,
   disabled,
-  sendShortcut = 'ModifierEnter',
+  sendShortcut = 'Enter',
   onPasteFiles,
   localAttachments,
 }: AgentWorkbenchComposerEditorProps) {

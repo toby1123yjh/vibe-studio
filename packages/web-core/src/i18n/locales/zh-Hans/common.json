@@ -1,4 +1,25 @@
 {
+  "agentWorkbench": {
+    "inspector": {
+      "open": "工具",
+      "label": "工具",
+      "close": "关闭工具区",
+      "resize": "调整工具区宽度",
+      "tabs": {
+        "changes": "改动",
+        "files": "文件",
+        "git": "Git",
+        "terminal": "终端",
+        "preview": "预览",
+        "logs": "日志"
+      }
+    }
+  },
+  "panels": {
+    "conversation": "会话",
+    "taskDetails": "任务详情",
+    "resizeWidth": "调整面板宽度"
+  },
   "sessionDashboard": {
     "title": "Dashboard",
     "updated": "已更新",
@@ -647,15 +668,10 @@
     "linkError": "关联工作空间失败"
   },
   "projectWorkspaceDefault": {
-    "label": "项目默认工作位置",
-    "loading": "正在加载项目工作位置",
-    "loadFailed": "无法加载",
-    "loadFailedDescription": "无法解析已保存的工作位置，请打开项目设置检查。",
-    "empty": "尚未配置",
-    "description": "该工作位置会用于预填新执行；Git 位置还会包含基础分支。启动智能体前仍需确认实际工作空间。",
-    "emptyDescription": "系统不会使用隐藏的历史工作空间兜底。你可以在启动执行时选择工作目录，或先配置项目默认值。",
-    "configure": "配置项目默认工作位置",
-    "configureShort": "配置"
+    "label": "工作目录",
+    "loading": "正在加载工作目录",
+    "loadFailed": "工作目录不可用",
+    "empty": "未配置工作目录"
   },
   "attempts": {
     "title": "任务执行",
@@ -1916,6 +1932,7 @@
     "followCliValue": "跟随智能体 · {{value}}",
     "builtinCatalog": "备用列表，尚未确认智能体实际支持的选项。",
     "preset": "预设",
+    "runSettings": "运行设置",
     "custom": "自定义",
     "permissions": "权限",
     "permissionAuto": "自动",

@@ -16,7 +16,6 @@ import {
   buildLinkedTaskCreateState,
   buildLocalWorkspaceIdSet,
   buildWorkspaceCreateInitialState,
-  buildWorkspaceCreatePrompt,
 } from '@/shared/lib/workspaceCreateState';
 import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 import { DeleteWorkspaceDialog } from '@vibe/ui/components/DeleteWorkspaceDialog';
@@ -134,10 +133,6 @@ export function TaskWorkspacesSectionContainer({
     }
 
     const task = getTask(taskId);
-    const initialPrompt = buildWorkspaceCreatePrompt(
-      task?.title ?? null,
-      task?.description ?? null
-    );
     const localWorkspaceIds = buildLocalWorkspaceIdSet(
       activeWorkspaces,
       archivedWorkspaces
@@ -150,7 +145,7 @@ export function TaskWorkspacesSectionContainer({
       routeState.hostId
     );
     const createState = buildWorkspaceCreateInitialState({
-      prompt: initialPrompt,
+      prompt: null,
       defaults,
       linkedTask: buildLinkedTaskCreateState(task, projectId),
     });

@@ -747,10 +747,10 @@
           "description": "管理此项目的看板列。"
         },
         "defaultRepos": {
-          "label": "当前设备工作空间",
-          "description": "项目在 {{host}} 上使用的本地工作目录。Git 仓库还会保存基础分支。新建执行时会预填这些信息，启动智能体前仍需确认。",
-          "empty": "当前设备尚未配置工作空间",
-          "addButton": "选择或更改",
+          "label": "工作目录",
+          "description": "新建执行时预填此目录。",
+          "empty": "尚未配置工作目录",
+          "addButton": "更改",
           "addNew": "选择项目工作空间",
           "pickerDescription": "为项目选择 {{host}} 上的本地目录。Git 仓库需要选择基础分支；普通目录会保存为直接工作目录。",
           "branchLabel": "分支",

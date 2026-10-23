@@ -31,7 +31,7 @@ test('native Codex model and Max replace discovery defaults without writing over
   await expect(page.getByTestId('selector-overrides')).toHaveText('[]');
 
   await session(page)
-    .getByRole('button', { name: 'Custom', exact: true })
+    .getByRole('button', { name: 'Run settings', exact: true })
     .click();
   await page
     .getByRole('menuitem', { name: 'Refresh native capabilities', exact: true })

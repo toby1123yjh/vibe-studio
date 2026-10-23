@@ -15,6 +15,7 @@ import { PreviewBrowserContainer } from '@/pages/workspaces/PreviewBrowserContai
 import { WorkspaceFilesSurfaceContainer } from '@/pages/workspaces/WorkspaceFilesSurfaceContainer';
 import {
   AGENT_WORKBENCH_INSPECTOR_TABS,
+  DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES,
   type AgentWorkbenchInspectorTab,
 } from '../model';
 import { useAgentWorkbenchInspectorVisibility } from './AgentWorkbenchInspectorVisibility';
@@ -52,6 +53,28 @@ function tabToMode(tab: AgentWorkbenchInspectorTab): RightMainPanelMode | null {
   }
 }
 
+function readInspectorTab(
+  storageKey: string,
+  mode: RightMainPanelMode | null,
+  override: AgentWorkbenchInspectorTab | undefined
+): AgentWorkbenchInspectorTab {
+  const explicitTab = override ?? modeToTab(mode);
+  if (explicitTab) return explicitTab;
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    if (
+      AGENT_WORKBENCH_INSPECTOR_TABS.includes(
+        saved as AgentWorkbenchInspectorTab
+      )
+    ) {
+      return saved as AgentWorkbenchInspectorTab;
+    }
+  } catch {
+    // The Inspector remains usable when host storage is unavailable.
+  }
+  return DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES.activeTab;
+}
+
 export interface AgentWorkbenchInspectorProps {
   workspace: Workspace | undefined;
   repos: RepoWithTargetBranch[];
@@ -71,35 +94,38 @@ export function AgentWorkbenchInspector({
   const tabsId = useId();
   const inspectorVisible = useAgentWorkbenchInspectorVisibility();
   const storageKey = `vk-agent-workbench-inspector-tab:${workspace?.id ?? 'none'}`;
-  const [activeTab, setActiveTab] = useState<AgentWorkbenchInspectorTab>(
-    modeToTab(rightMainPanelMode) ?? 'changes'
-  );
+  const [selection, setSelection] = useState(() => ({
+    scope: storageKey,
+    tab: readInspectorTab(storageKey, rightMainPanelMode, activeTabOverride),
+  }));
+  const activeTab =
+    activeTabOverride ??
+    modeToTab(rightMainPanelMode) ??
+    (selection.scope === storageKey
+      ? selection.tab
+      : readInspectorTab(storageKey, rightMainPanelMode, activeTabOverride));
+  const [mountedPanels, setMountedPanels] = useState<{
+    scope: string;
+    tabs: AgentWorkbenchInspectorTab[];
+  }>({ scope: storageKey, tabs: [] });
 
   useEffect(() => {
-    if (activeTabOverride) {
-      setActiveTab(activeTabOverride);
-      return;
-    }
-    const next = modeToTab(rightMainPanelMode);
-    if (next) setActiveTab(next);
-  }, [activeTabOverride, rightMainPanelMode]);
+    setSelection((current) =>
+      current.scope === storageKey && current.tab === activeTab
+        ? current
+        : { scope: storageKey, tab: activeTab }
+    );
+  }, [activeTab, storageKey]);
 
   useEffect(() => {
-    if (activeTabOverride) return;
-    try {
-      const saved = window.localStorage.getItem(storageKey);
-      if (
-        saved &&
-        AGENT_WORKBENCH_INSPECTOR_TABS.includes(
-          saved as AgentWorkbenchInspectorTab
-        )
-      ) {
-        setActiveTab(saved as AgentWorkbenchInspectorTab);
-      }
-    } catch {
-      // The Inspector remains usable when host storage is unavailable.
-    }
-  }, [activeTabOverride, storageKey]);
+    if (!inspectorVisible) return;
+    setMountedPanels((current) => {
+      const tabs = current.scope === storageKey ? current.tabs : [];
+      return tabs.includes(activeTab)
+        ? current
+        : { scope: storageKey, tabs: [...tabs, activeTab] };
+    });
+  }, [activeTab, inspectorVisible, storageKey]);
 
   const panels = useMemo(
     () => ({
@@ -142,7 +168,7 @@ export function AgentWorkbenchInspector({
   );
 
   const selectTab = (tab: AgentWorkbenchInspectorTab) => {
-    setActiveTab(tab);
+    setSelection({ scope: storageKey, tab });
     onRightMainPanelModeChange(tabToMode(tab));
     try {
       window.localStorage.setItem(storageKey, tab);
@@ -183,9 +209,9 @@ export function AgentWorkbenchInspector({
   };
 
   return (
-    <div className="vk-agent-workbench-inspector flex h-full min-h-0 flex-col border-l bg-secondary">
+    <div className="vk-agent-workbench-inspector flex h-full min-h-0 min-w-0 flex-col bg-secondary">
       <div
-        className="flex shrink-0 gap-1 overflow-x-auto border-b p-1"
+        className="flex shrink-0 flex-wrap gap-1 border-b p-1"
         role="tablist"
         aria-label={t('agentWorkbench.inspector.label', {
           defaultValue: 'Inspector',
@@ -201,7 +227,7 @@ export function AgentWorkbenchInspector({
             aria-controls={`${tabsId}-panel-${tab}`}
             tabIndex={activeTab === tab ? 0 : -1}
             className={cn(
-              'min-h-9 shrink-0 rounded px-2 text-xs text-muted-foreground',
+              'min-h-9 min-w-0 rounded px-2 text-xs text-muted-foreground',
               'hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
               activeTab === tab && 'bg-accent text-foreground'
             )}
@@ -213,14 +239,21 @@ export function AgentWorkbenchInspector({
         ))}
       </div>
       <div className="relative min-h-0 flex-1">
-        <div
-          id={`${tabsId}-panel-${activeTab}`}
-          role="tabpanel"
-          aria-labelledby={`${tabsId}-tab-${activeTab}`}
-          className="absolute inset-0 min-h-0 overflow-hidden"
-        >
-          {inspectorVisible ? panels[activeTab] : null}
-        </div>
+        {AGENT_WORKBENCH_INSPECTOR_TABS.map((tab) => (
+          <div
+            key={tab}
+            id={`${tabsId}-panel-${tab}`}
+            role="tabpanel"
+            aria-labelledby={`${tabsId}-tab-${tab}`}
+            hidden={activeTab !== tab}
+            className="absolute inset-0 min-h-0 min-w-0 overflow-hidden"
+          >
+            {mountedPanels.scope === storageKey &&
+            mountedPanels.tabs.includes(tab)
+              ? panels[tab]
+              : null}
+          </div>
+        ))}
       </div>
     </div>
   );

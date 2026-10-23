@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ReplyAgentRunInteractionRequest } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
+import { cn } from '@vibe/ui/lib/cn';
 import {
   useAgentRunSession,
   useAgentConversationStore,
@@ -300,11 +301,20 @@ function NativeRequest({ blockId }: { blockId: string }) {
 
 /** Shared with standalone, Task and workflow chats. Native response drafts are
  * intentionally separate from the existing follow-up editor and its scratch. */
-export function ConversationInteractionPanel() {
+export function ConversationInteractionPanel({
+  compact = false,
+}: {
+  compact?: boolean;
+}) {
   const { pendingInteractions } = useAgentRunSession();
   if (!pendingInteractions.length) return null;
   return (
-    <div className="mx-auto max-h-[50vh] w-chat max-w-full shrink-0 space-y-4 overflow-y-auto border-y border-warning/30 bg-warning/5 px-double py-3">
+    <div
+      className={cn(
+        'mx-auto max-h-[50vh] max-w-full shrink-0 space-y-4 overflow-y-auto border-y border-warning/30 bg-warning/5 px-double py-3',
+        compact ? 'w-full' : 'w-chat'
+      )}
+    >
       {pendingInteractions.map((block) => (
         <NativeRequest
           key={`${block.block_id}:${block.fields.interaction?.request_id}`}

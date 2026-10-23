@@ -19,7 +19,25 @@ const tailwindConfig = loadConfig(
 
 export default defineConfig({
   root: fixtureRoot,
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'composer-fixture-tailwind-scope',
+      enforce: 'pre',
+      transform(source, id) {
+        if (
+          id
+            .replaceAll('\\', '/')
+            .split('?')[0]
+            .endsWith('/packages/web-core/src/app/styles/new/index.css')
+        ) {
+          // The fixture supplies the same config with absolute content paths.
+          // The application's directive would restore cwd-relative globs here.
+          return source.replace(/^@config\s+.*;\s*$/gm, '');
+        }
+      },
+    },
+  ],
   css: {
     postcss: {
       plugins: [
@@ -39,7 +57,12 @@ export default defineConfig({
     },
   },
   resolve: {
+    dedupe: ['lexical'],
     alias: [
+      {
+        find: 'lexical',
+        replacement: `${repoRoot}/packages/web-core/node_modules/lexical`,
+      },
       {
         find: '@/features/agent-runtime/model/AgentRunSessionContext',
         replacement: `${fixtureRoot}/src/mocks.tsx`,

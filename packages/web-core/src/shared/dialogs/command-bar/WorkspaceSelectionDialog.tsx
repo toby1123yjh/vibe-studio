@@ -11,7 +11,6 @@ import {
   buildLinkedTaskCreateState,
   buildLocalWorkspaceIdSet,
   buildWorkspaceCreateInitialState,
-  buildWorkspaceCreatePrompt,
 } from '@/shared/lib/workspaceCreateState';
 import {
   Command,
@@ -168,12 +167,7 @@ function WorkspaceSelectionContent({
     setIsLinking(true);
 
     try {
-      // Get issue details for initial prompt
       const task = getTask(taskId);
-      const initialPrompt = buildWorkspaceCreatePrompt(
-        task?.title ?? null,
-        task?.description ?? null
-      );
 
       // Build set of local workspace IDs that exist on this machine
       const localWorkspaceIds = buildLocalWorkspaceIdSet(
@@ -190,7 +184,7 @@ function WorkspaceSelectionContent({
       );
 
       const createState = buildWorkspaceCreateInitialState({
-        prompt: initialPrompt,
+        prompt: null,
         defaults,
         linkedTask: buildLinkedTaskCreateState(task, projectId),
       });

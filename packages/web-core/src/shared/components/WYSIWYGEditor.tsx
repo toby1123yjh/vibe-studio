@@ -711,10 +711,12 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
       </div>
     );
 
-    // Wrap with action buttons in read-only mode
-    if (disabled && !hideActions) {
-      return (
-        <div className="relative group">
+    // Keep the same parent across editable/read-only transitions. Sending and
+    // stopping temporarily disable the composer; replacing its root remounts
+    // Lexical and loses the current selection and measured height.
+    return (
+      <div className="relative group">
+        {disabled && !hideActions && (
           <div className="sticky top-0 right-2 z-10 pointer-events-none h-0">
             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
               {/* Copy button */}
@@ -763,12 +765,10 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
               )}
             </div>
           </div>
-          {editorContent}
-        </div>
-      );
-    }
-
-    return editorContent;
+        )}
+        {editorContent}
+      </div>
+    );
   }
 );
 

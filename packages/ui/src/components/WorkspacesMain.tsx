@@ -57,6 +57,7 @@ export function WorkspacesMain({
   return (
     <main
       ref={containerRef}
+      style={{ containerType: 'size' }}
       className={cn(
         'relative flex min-h-0 min-w-0 flex-1 flex-col bg-primary',
         !compact && !isMobile && 'h-full'
@@ -98,7 +99,7 @@ export function WorkspacesMain({
         <>
           <DegradedState
             compact
-            className="mx-auto w-chat max-w-full"
+            className={cn('mx-auto max-w-full', compact ? 'w-full' : 'w-chat')}
             title={t('common:workspaces.degradedTitle', {
               defaultValue: 'Workspace may be out of date',
             })}
@@ -142,8 +143,10 @@ export function WorkspacesMain({
       )}
       {/* Scroll to bottom button */}
       {workspaceWithSession && !isAtBottom && (
-        <div className="flex justify-center pointer-events-none">
-          <div className="w-chat max-w-full relative">
+        <div className="flex justify-center px-2 pointer-events-none @[480px]:px-3">
+          <div
+            className={cn('max-w-full relative', compact ? 'w-full' : 'w-chat')}
+          >
             <button
               type="button"
               onClick={() => onScrollToBottom?.('auto')}
@@ -164,10 +167,7 @@ export function WorkspacesMain({
         workspaceState !== 'loading' &&
         workspaceState !== 'error' && (
           <div
-            className={cn(
-              'flex shrink-0 justify-center @container pl-px',
-              compact && 'max-h-[55%] overflow-y-auto'
-            )}
+            className="flex min-h-0 shrink-0 justify-center @container px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] empty:hidden @[480px]:px-3 @[480px]:pb-[max(0.75rem,env(safe-area-inset-bottom))]"
             data-chatbox-container="true"
           >
             {chatBoxContent}

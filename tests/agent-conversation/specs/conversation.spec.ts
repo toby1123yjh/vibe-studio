@@ -5,6 +5,44 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('timeline')).toContainText('Initial response');
 });
 
+test('multiline notices show a compact summary and keep their full diagnostic available', async ({
+  page,
+}) => {
+  await page
+    .getByRole('textbox', { name: 'Follow-up draft' })
+    .fill('Unchanged draft');
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('warning', 'notice', {
+        text: 'Codex is ignoring a legacy setting.\n\nDetailed configuration warning remains available.',
+      })
+    );
+  });
+  const summary = page.getByRole('button', {
+    name: 'Codex is ignoring a legacy setting.',
+    exact: true,
+  });
+  await expect(summary).toHaveAttribute('aria-expanded', 'false');
+  await expect(
+    page.getByText('Detailed configuration warning remains available.', {
+      exact: false,
+    })
+  ).toHaveCount(0);
+  await summary.click();
+  await expect(summary).toHaveAttribute('aria-expanded', 'true');
+  await expect(
+    page.getByText('Detailed configuration warning remains available.', {
+      exact: false,
+    })
+  ).toBeVisible();
+  await summary.click();
+  await expect(summary).toHaveAttribute('aria-expanded', 'false');
+  await expect(
+    page.getByRole('textbox', { name: 'Follow-up draft' })
+  ).toHaveValue('Unchanged draft');
+});
+
 test('multiple runs use one session stream and token updates preserve draft and focus', async ({
   page,
 }) => {

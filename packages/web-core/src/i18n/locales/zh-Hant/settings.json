@@ -747,10 +747,10 @@
           "description": "管理此專案的看板欄。"
         },
         "defaultRepos": {
-          "label": "目前裝置工作空間",
-          "description": "專案在 {{host}} 上使用的本機工作目錄。Git 儲存庫還會保存基礎分支。新建執行時會預填這些資訊，啟動智能體前仍需確認。",
-          "empty": "目前裝置尚未設定工作空間",
-          "addButton": "選擇或變更",
+          "label": "工作目錄",
+          "description": "新建執行時預填此目錄。",
+          "empty": "尚未設定工作目錄",
+          "addButton": "變更",
           "addNew": "選擇專案工作空間",
           "pickerDescription": "為專案選擇 {{host}} 上的本機目錄。Git 儲存庫需要選擇基礎分支；一般目錄會儲存為直接工作目錄。",
           "branchLabel": "分支",

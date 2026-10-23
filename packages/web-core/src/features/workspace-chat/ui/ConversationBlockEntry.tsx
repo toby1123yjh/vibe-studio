@@ -573,8 +573,28 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
       );
       break;
     }
-    case 'notice':
-      content = (
+    case 'notice': {
+      const summary = fields.text?.split(/\r?\n/, 1)[0];
+      const collapsible =
+        block.finish_reason !== 'failed' &&
+        summary &&
+        (summary !== fields.text ||
+          block.bodies.some((reference) => reference.field === 'text'));
+      content = collapsible ? (
+        <div>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => toggle()}
+            title={summary}
+            className="flex w-full items-center gap-2 rounded py-1 text-left text-sm text-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          >
+            <span className="min-w-0 flex-1 truncate">{summary}</span>
+            <span aria-hidden>{expanded ? '−' : '+'}</span>
+          </button>
+          {expanded && body}
+        </div>
+      ) : (
         <div
           className={
             block.finish_reason === 'failed' ? 'text-error' : 'text-low'
@@ -584,6 +604,7 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
         </div>
       );
       break;
+    }
     case 'resource':
     case 'extension':
       content = (

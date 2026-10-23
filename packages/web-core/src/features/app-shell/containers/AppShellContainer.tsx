@@ -8,7 +8,11 @@ import {
   type ReactNode,
 } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { useLocation, useNavigate, useSearch } from '@tanstack/react-router';
+import {
+  useLocation,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 import type {
   ProjectCursor,
@@ -67,9 +71,16 @@ export function AppShellContainer({
     [navigate]
   );
   const renderedPathname = useRenderedPathname();
-  const routeSearch = useSearch({ strict: false }) as {
-    session_id?: string;
-  };
+  const routeSessionId = useRouterState({
+    select: (state) => {
+      const search = state.matches.at(-1)?.search as
+        | Record<string, unknown>
+        | undefined;
+      return typeof search?.session_id === 'string' && search.session_id
+        ? search.session_id
+        : null;
+    },
+  });
   const workspaceContext = useContext(WorkspaceContext);
   const appNavigation = useAppNavigation();
   const currentDestination = useCurrentAppDestination();
@@ -163,17 +174,19 @@ export function AppShellContainer({
     currentDestination && 'workspaceId' in currentDestination
       ? currentDestination.workspaceId
       : null;
-  const routeSessionId =
-    typeof routeSearch.session_id === 'string' &&
-    routeSearch.session_id.length > 0
-      ? routeSearch.session_id
-      : null;
-  const activeSessionId =
+  const selectedSessionId =
     workspaceContext?.workspaceId === activeWorkspaceId
       ? workspaceContext.isNewSessionMode
         ? null
         : (workspaceContext.selectedSessionId ?? routeSessionId)
       : routeSessionId;
+  // Sidebar selection belongs to the rendered page, not a retained
+  // conversation or a session shown inside a project/workflow/dashboard panel.
+  const activeSessionId =
+    currentDestination?.kind === 'workspace' ||
+    currentDestination?.kind === 'workspace-vscode'
+      ? selectedSessionId
+      : null;
   const openSearch = useCallback(() => {
     searchTriggerRef.current =
       document.activeElement instanceof HTMLElement
@@ -303,10 +316,10 @@ export function AppShellContainer({
       scopeKey: JSON.stringify([
         adapter.discoveryScopeKey,
         location.href,
-        activeSessionId,
+        selectedSessionId,
       ]),
       onDeleted: (target) => {
-        if (activeSessionId !== target.sessionId) return;
+        if (selectedSessionId !== target.sessionId) return;
         const nextSession = sessions.find(
           (item) => item.id !== target.sessionId
         );

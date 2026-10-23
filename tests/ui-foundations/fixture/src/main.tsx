@@ -52,7 +52,14 @@ import {
 import '../../../../packages/ui/src/styles/tokens.css';
 import './style.css';
 
-if (new URLSearchParams(window.location.search).has('confirmation')) {
+const panelResizeFixture = new URLSearchParams(window.location.search).has(
+  'panel-resize'
+);
+
+if (
+  new URLSearchParams(window.location.search).has('confirmation') ||
+  panelResizeFixture
+) {
   await import('./tailwind.css');
   // Match the application: generated base/utilities precede component CSS.
   const utilities = document.querySelector(
@@ -125,7 +132,7 @@ const mountCount = Number(root.dataset.fixtureMountCount ?? '0') + 1;
 root.dataset.fixtureMountCount = String(mountCount);
 mountCountOutput.textContent = String(mountCount);
 
-if (window.location.pathname === '/') {
+if (window.location.pathname === '/' && !panelResizeFixture) {
   window.history.replaceState(
     { fixture: 'theme-foundations' },
     '',
@@ -215,6 +222,72 @@ function FloatingPanelHarness() {
           </label>
         </FloatingPanelBody>
       </FloatingPanel>
+    </section>
+  );
+}
+
+function ResizableFloatingPanelHarness() {
+  const [open, setOpen] = React.useState(true);
+  const [parentWidth, setParentWidth] = React.useState(1000);
+  const [surface, setSurface] = React.useState('Kanban');
+
+  return (
+    <section aria-label="Resizable panel contract" style={{ maxWidth: 'none' }}>
+      <div className="fixture-actions">
+        <button type="button" onClick={() => setOpen((value) => !value)}>
+          Toggle conversation
+        </button>
+        <button type="button" onClick={() => setParentWidth(520)}>
+          Narrow parent
+        </button>
+        <button type="button" onClick={() => setParentWidth(1000)}>
+          Wide parent
+        </button>
+        <button type="button" onClick={() => setSurface('Workflow')}>
+          Open another surface
+        </button>
+      </div>
+      <div
+        data-testid="resizable-panel-parent"
+        style={{
+          position: 'relative',
+          width: parentWidth,
+          maxWidth: 'calc(100vw - 48px)',
+          height: 400,
+          marginTop: 12,
+          background: 'var(--vk-surface-canvas)',
+        }}
+      >
+        <button type="button" data-testid="resizable-canvas-button">
+          Canvas remains available
+        </button>
+        <FloatingPanel
+          key={surface}
+          open={open}
+          onOpenChange={setOpen}
+          portal={false}
+          aria-label={`${surface} conversation`}
+          className="absolute bottom-6 right-6 top-6"
+          data-testid="resizable-panel"
+          resize={{
+            label: 'Resize conversation width',
+            preferenceKey: 'fixture.conversation-panel-width',
+            defaultWidth: 600,
+            minWidth: 480,
+            maxWidth: 900,
+          }}
+        >
+          <FloatingPanelHeader>
+            <FloatingPanelTitle>{surface} conversation</FloatingPanelTitle>
+          </FloatingPanelHeader>
+          <FloatingPanelBody>
+            <label>
+              Conversation draft
+              <textarea data-testid="resizable-panel-draft" />
+            </label>
+          </FloatingPanelBody>
+        </FloatingPanel>
+      </div>
     </section>
   );
 }
@@ -576,16 +649,22 @@ if (!componentRoot) {
 
 createRoot(componentRoot).render(
   <React.StrictMode>
-    <FloatingPanelHarness />
-    <SplitLayoutHarness />
-    <InteractionContractHarness />
-    <CrashScreenHarness />
-    <ExportHarness />
-    <ProjectSunsetHarness />
-    <NotificationsHarness />
-    <NotFoundHarness />
-    <ReleaseNotesHarness />
-    <KeyboardMotionHarness />
-    <ConfirmationHarness />
+    {panelResizeFixture ? (
+      <ResizableFloatingPanelHarness />
+    ) : (
+      <>
+        <FloatingPanelHarness />
+        <SplitLayoutHarness />
+        <InteractionContractHarness />
+        <CrashScreenHarness />
+        <ExportHarness />
+        <ProjectSunsetHarness />
+        <NotificationsHarness />
+        <NotFoundHarness />
+        <ReleaseNotesHarness />
+        <KeyboardMotionHarness />
+        <ConfirmationHarness />
+      </>
+    )}
   </React.StrictMode>
 );

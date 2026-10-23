@@ -109,6 +109,7 @@
     }
   },
   "diff": {
+    "unavailable": "Changes unavailable",
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed"
   },
@@ -143,6 +144,16 @@
   "conversation": {
     "executors": "Executors",
     "saveAsDefault": "Save as default",
+    "composer": {
+      "moreActions": "More actions",
+      "addPrComments": "Add PR comments",
+      "removeTask": "Remove link to {{task}}",
+      "messagePlaceholder": "Write a message…",
+      "feedbackPlaceholder": "Write feedback on the plan…",
+      "editPlaceholder": "Edit your message…",
+      "changesPlaceholder": "Describe the changes you want…",
+      "answerPlaceholder": "Write your answer…"
+    },
     "you": "You",
     "thinking": "Thinking",
     "todo": "Todo",

@@ -88,6 +88,7 @@ export const SplitLayout = React.forwardRef<HTMLDivElement, SplitLayoutProps>(
       }
 
       event.preventDefault();
+      event.currentTarget.blur();
       event.currentTarget.setPointerCapture(event.pointerId);
       pointerResizeState.current = {
         pointerId: event.pointerId,
@@ -217,8 +218,7 @@ export const SplitLayout = React.forwardRef<HTMLDivElement, SplitLayoutProps>(
           className={cn(
             'group relative order-1 shrink-0 touch-none select-none bg-transparent outline-none',
             'after:absolute after:bg-[var(--vk-split-divider)] after:transition-colors after:duration-[var(--vk-duration-fast)]',
-            'hover:after:bg-[var(--vk-split-divider-hover)] focus-visible:after:bg-[var(--vk-split-divider-active)]',
-            'data-[resizable=true]:active:after:bg-[var(--vk-split-divider-active)]',
+            'focus-visible:after:bg-[var(--vk-split-divider-active)]',
             isHorizontal
               ? 'w-[var(--vk-split-divider-size)] cursor-col-resize after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2'
               : 'h-[var(--vk-split-divider-size)] cursor-row-resize after:inset-x-0 after:top-1/2 after:h-px after:-translate-y-1/2',

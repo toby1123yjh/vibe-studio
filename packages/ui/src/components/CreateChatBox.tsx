@@ -199,6 +199,34 @@ export function CreateChatBox<TExecutor extends string = string>({
           )}
         </>
       }
+      context={
+        <>
+          {projectSelector}
+          {linkedTask && (
+            <div
+              className="inline-flex min-w-0 items-center gap-half border-l border-border pl-base text-sm text-low"
+              title={linkedTask.title}
+            >
+              <span className="truncate font-mono text-sm text-normal">
+                {linkedTask.simpleId}
+              </span>
+              {linkedTask.onRemove && (
+                <button
+                  type="button"
+                  onClick={linkedTask.onRemove}
+                  disabled={isDisabled}
+                  className="inline-flex min-h-8 min-w-8 shrink-0 items-center justify-center rounded-sm text-low hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={t('tasks:conversation.composer.removeTask', {
+                    task: linkedTask.simpleId,
+                  })}
+                >
+                  <XIcon className="size-icon-xs" weight="bold" />
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      }
       footerLeft={
         <>
           <ToolbarIconButton
@@ -208,7 +236,7 @@ export function CreateChatBox<TExecutor extends string = string>({
             title={t('tasks:taskFormDialog.attachFile')}
             onClick={handleAttachClick}
             disabled={isDisabled}
-            className="min-h-8 min-w-8 shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+            className="min-h-8 min-w-8 shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
           />
           <input
             ref={fileInputRef}
@@ -217,30 +245,6 @@ export function CreateChatBox<TExecutor extends string = string>({
             className="hidden"
             onChange={handleFileInputChange}
           />
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-base gap-y-half">
-            {projectSelector}
-            {linkedTask && (
-              <div
-                className="inline-flex items-center gap-half border-l border-border pl-base whitespace-nowrap text-sm text-low"
-                title={linkedTask.title}
-              >
-                <span className="font-mono text-sm text-normal">
-                  {linkedTask.simpleId}
-                </span>
-                {linkedTask.onRemove && (
-                  <button
-                    type="button"
-                    onClick={linkedTask.onRemove}
-                    disabled={isDisabled}
-                    className="inline-flex items-center text-low hover:text-error transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-label={`Remove link to ${linkedTask.simpleId}`}
-                  >
-                    <XIcon className="size-icon-xs" weight="bold" />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
         </>
       }
       footerRight={

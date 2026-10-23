@@ -8,7 +8,7 @@ import {
   listPairedRelayHosts as listBrowserPairedRelayHosts,
   subscribeRelayPairingChanges,
 } from '@/shared/lib/relayPairingStorage';
-import { listRelayHosts } from '@/shared/lib/remoteApi';
+import { getRemoteApiUrl, listRelayHosts } from '@/shared/lib/remoteApi';
 
 export type RemoteCloudHostStatus = 'online' | 'offline' | 'unpaired';
 
@@ -79,8 +79,12 @@ function projectRemoteCloudHostsState(
 export function useRemoteCloudHostsState(
   options: UseRemoteCloudHostsStateOptions = {}
 ) {
-  const { enabled = true } = options;
+  const { enabled: requestedEnabled = true } = options;
   const runtime = useAppRuntime();
+  // Local authentication also represents offline/local-only usage. It does
+  // not imply a configured relay, and the local project API has no Hosts API.
+  const enabled =
+    requestedEnabled && (runtime === 'remote' || Boolean(getRemoteApiUrl()));
   const queryClient = useQueryClient();
   const pairingOwner = runtime === 'remote' ? 'browser' : 'machine';
   const pairedHostsQueryKey = useMemo(
@@ -207,7 +211,7 @@ export function useRemoteCloudHostsState(
     hasCanonicalData,
     isLoading: enabled && !hasCanonicalData && error == null,
     isFetching,
-    isRetrying: retryPending || (error != null && isFetching),
+    isRetrying: enabled && (retryPending || (error != null && isFetching)),
     error,
     canRetry: enabled && !isFetching && !retryPending,
     retry,

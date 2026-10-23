@@ -47,6 +47,16 @@ export function resolveWorkspaceWorkingDirectory({
   );
 }
 
+export function formatWorkspacePathForDisplay(path: string): string {
+  if (/^\\\\\?\\UNC\\/i.test(path)) {
+    return `\\\\${path.slice(8)}`;
+  }
+  if (/^\\\\\?\\[a-z]:\\/i.test(path)) {
+    return path.slice(4);
+  }
+  return path;
+}
+
 export function buildWorkspaceContext({
   containerRef,
   workingDir,
@@ -65,7 +75,7 @@ export function buildWorkspaceContext({
   if (workspacePath) {
     parts.push({
       kind: 'path',
-      label: workspacePath,
+      label: formatWorkspacePathForDisplay(workspacePath),
     });
   }
 

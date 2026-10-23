@@ -316,7 +316,7 @@ export const useJsonPatchWsStream = <T extends object>(
     isConnected,
     isInitialized: isInitializedForCurrentEndpoint,
     isRetrying,
-    error,
+    error: activeStreamIdentityRef.current === streamIdentity ? error : null,
     retry,
   };
 };

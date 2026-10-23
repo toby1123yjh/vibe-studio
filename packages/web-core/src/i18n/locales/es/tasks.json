@@ -108,6 +108,7 @@
     "label": "Rama base"
   },
   "diff": {
+    "unavailable": "No se pueden cargar los cambios",
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed"
   },
@@ -412,6 +413,16 @@
     },
     "executors": "Ejecutores",
     "saveAsDefault": "Guardar como predeterminado",
+    "composer": {
+      "moreActions": "Más acciones",
+      "addPrComments": "Añadir comentarios de PR",
+      "removeTask": "Quitar vínculo con {{task}}",
+      "messagePlaceholder": "Escribe un mensaje…",
+      "feedbackPlaceholder": "Escribe tus comentarios sobre el plan…",
+      "editPlaceholder": "Edita tu mensaje…",
+      "changesPlaceholder": "Describe los cambios que necesitas…",
+      "answerPlaceholder": "Escribe tu respuesta…"
+    },
     "script": {
       "clickToViewLogs": "Haz clic para ver registros",
       "completedSuccessfully": "Completado exitosamente",

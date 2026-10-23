@@ -397,10 +397,19 @@
 
 .vk-project-kanban__identity {
   display: flex;
+  flex: 1 1 8rem;
   min-width: 0;
   align-items: center;
   gap: var(--vk-space-2);
   margin-right: auto;
+}
+
+.vk-project-kanban__identity-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--vk-space-1);
 }
 
 .vk-project-kanban__identity > span {
@@ -846,21 +855,14 @@
   bottom: var(--vk-floating-panel-offset);
   z-index: var(--vk-z-floating);
   width: var(--vk-floating-panel-width);
-  min-width: 320px;
+  max-width: calc(100% - var(--vk-floating-panel-offset) * 2);
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--vk-floating-panel-border);
   border-radius: var(--vk-floating-panel-radius);
   color: var(--vk-text-normal);
   background: var(--vk-floating-panel-surface);
   box-shadow: var(--vk-floating-panel-shadow);
-}
-
-@media (min-width: 601px) {
-  .vk-task-floating-panel[data-create-panel='true'] {
-    width: calc(var(--vk-floating-panel-width) * 4 / 3);
-    max-width: calc(100% - var(--vk-floating-panel-offset) * 2);
-    min-width: 0;
-  }
 }
 
 .vk-task-panel__layout {
@@ -1314,12 +1316,15 @@
   .vk-project-kanban__toolbar .vk-primary-action {
     padding-inline: var(--vk-space-2);
   }
+}
 
+@media (width < 768px) {
   .vk-task-floating-panel {
     position: fixed;
     inset: 0;
     z-index: var(--vk-z-overlay);
     width: 100%;
+    max-width: none;
     min-width: 0;
     border: 0;
     border-radius: 0;

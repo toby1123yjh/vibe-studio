@@ -291,13 +291,12 @@ export function DiffViewCard({
         onClick={onToggle}
       >
         <div className="flex-1 flex items-center gap-base min-w-0">
-          <span className="relative shrink-0">
+          <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
             <FileIcon className="size-icon-base" />
             {status && (
-              <ToolStatusDot
-                status={status}
-                className="absolute -bottom-0.5 -right-0.5"
-              />
+              <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex">
+                <ToolStatusDot status={status} />
+              </span>
             )}
           </span>
           <span className="text-sm text-normal truncate font-ibm-plex-mono">

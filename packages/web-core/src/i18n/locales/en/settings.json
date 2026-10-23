@@ -755,10 +755,10 @@
           "description": "Manage kanban columns for this project."
         },
         "defaultRepos": {
-          "label": "Workspace on this device",
-          "description": "The local working directory this project uses on {{host}}. Git repositories also store a base branch. New executions are prefilled and still require confirmation.",
-          "empty": "No workspace configured on this device",
-          "addButton": "Choose or change",
+          "label": "Working directory",
+          "description": "Prefilled when starting a new execution.",
+          "empty": "No working directory configured",
+          "addButton": "Change",
           "addNew": "Choose project workspace",
           "pickerDescription": "Choose a local directory for this project on {{host}}. Git repositories require a base branch; ordinary directories are saved as direct working folders.",
           "branchLabel": "Branch",

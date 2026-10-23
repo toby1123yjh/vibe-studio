@@ -834,7 +834,7 @@ function GeneralSettingsForm({
           description={t('settings.general.messageInput.shortcut.helper')}
         >
           <SettingsSelect
-            value={draft?.send_message_shortcut ?? 'ModifierEnter'}
+            value={draft?.send_message_shortcut ?? 'Enter'}
             options={[
               {
                 value: 'ModifierEnter' as SendMessageShortcut,

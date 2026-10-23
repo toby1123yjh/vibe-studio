@@ -14,7 +14,7 @@ use db::models::{
 };
 use deployment::Deployment;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqliteConnection};
+use sqlx::{FromRow, SqliteConnection, SqlitePool};
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
@@ -302,6 +302,15 @@ pub(crate) async fn delete(
     delete_files: bool,
 ) -> Result<SessionDeletionResult, ApiError> {
     let pool = &deployment.db().pool;
+    delete_with_pool(pool, session_id, task_id, delete_files).await
+}
+
+async fn delete_with_pool(
+    pool: &SqlitePool,
+    session_id: Uuid,
+    task_id: Option<Uuid>,
+    delete_files: bool,
+) -> Result<SessionDeletionResult, ApiError> {
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
     let retained_warning = if !delete_files {
         if let Some(owner) = ownership(&mut transaction, session_id).await? {
@@ -352,7 +361,12 @@ pub(crate) async fn delete(
                     quarantine.display()
                 )));
             }
-            tokio::fs::rename(&location, &quarantine).await?;
+            tokio::fs::rename(&location, &quarantine).await.map_err(|error| {
+                invalid(format!(
+                    "Unable to move the working directory at {} for deletion: {error}. The session, its history and files were retained. Close applications using this directory and retry, or delete the session without removing its files.",
+                    location.display()
+                ))
+            })?;
         }
         Some(quarantine)
     } else {
@@ -404,6 +418,276 @@ pub(crate) async fn delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct DeletionFixture {
+        _temporary: tempfile::TempDir,
+        pool: SqlitePool,
+        owner: Ownership,
+        session_id: Uuid,
+        sibling_session_id: Uuid,
+    }
+
+    impl DeletionFixture {
+        async fn new() -> Self {
+            let temporary = tempfile::tempdir().unwrap();
+            let root = tokio::fs::canonicalize(temporary.path()).await.unwrap();
+            let workspace_id = Uuid::new_v4();
+            let directory = root.join(workspace_id.to_string());
+            tokio::fs::create_dir(&directory).await.unwrap();
+            let owner = Ownership {
+                workspace_id,
+                root_path: root.to_string_lossy().into(),
+                directory_path: directory.to_string_lossy().into(),
+                ownership_token: Uuid::new_v4().to_string(),
+                state: "active".into(),
+            };
+            tokio::fs::write(
+                directory.join(MARKER),
+                serde_json::to_vec(&Marker {
+                    workspace_id,
+                    ownership_token: owner.ownership_token.clone(),
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+            tokio::fs::write(directory.join("work.txt"), "retained work")
+                .await
+                .unwrap();
+
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::migrate!("../db/migrations").run(&pool).await.unwrap();
+            let session_id = Uuid::new_v4();
+            let sibling_session_id = Uuid::new_v4();
+            let sibling_workspace_id = Uuid::new_v4();
+            for (workspace, session, path) in [
+                (workspace_id, session_id, Some(&owner.directory_path)),
+                (sibling_workspace_id, sibling_session_id, None),
+            ] {
+                sqlx::query("INSERT INTO workspaces (id, branch, workspace_kind, container_ownership, container_ref) VALUES (?, 'direct-folder', 'direct_folder', 'external', ?)")
+                    .bind(workspace).bind(path).execute(&pool).await.unwrap();
+                sqlx::query("INSERT INTO sessions (id, workspace_id) VALUES (?, ?)")
+                    .bind(session)
+                    .bind(workspace)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            sqlx::query("INSERT INTO managed_workspace_directories (workspace_id, root_path, directory_path, ownership_token) VALUES (?, ?, ?, ?)")
+                .bind(workspace_id).bind(&owner.root_path).bind(&owner.directory_path)
+                .bind(&owner.ownership_token).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO scratch (id, scratch_type, payload) VALUES (?, 'draft_follow_up', '{}')")
+                .bind(session_id).execute(&pool).await.unwrap();
+            let run_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO agent_runs (id, session_id, workspace_id, request_id, idempotency_key, correlation_id, schema_version, payload_version, runtime_profile_id, provider_id, workspace_mode, workspace_path, status, request_envelope) VALUES (?, ?, ?, ?, ?, ?, 1, 1, 'test-profile', 'codex', 'shared_workspace', ?, 'succeeded', '{}')",
+            )
+            .bind(run_id).bind(session_id).bind(workspace_id).bind(Uuid::new_v4())
+            .bind(run_id.to_string()).bind(Uuid::new_v4()).bind(&owner.directory_path)
+            .execute(&pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO agent_conversation_sessions (session_id, epoch) VALUES (?, ?)",
+            )
+            .bind(session_id)
+            .bind(Uuid::new_v4())
+            .execute(&pool)
+            .await
+            .unwrap();
+            Self {
+                _temporary: temporary,
+                pool,
+                owner,
+                session_id,
+                sibling_session_id,
+            }
+        }
+
+        async fn assert_records(&self, present: bool) {
+            for (table, column) in [
+                ("sessions", "id"),
+                ("scratch", "id"),
+                ("agent_runs", "session_id"),
+                ("agent_conversation_sessions", "session_id"),
+            ] {
+                let count: i64 =
+                    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
+                        .bind(self.session_id)
+                        .fetch_one(&self.pool)
+                        .await
+                        .unwrap();
+                assert_eq!(count, i64::from(present), "{table}");
+            }
+            assert!(
+                Session::find_by_id(&self.pool, self.sibling_session_id)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                sqlx::query("PRAGMA foreign_key_check")
+                    .fetch_all(&self.pool)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_session_deletion_respects_the_file_choice() {
+        for delete_files in [false, true] {
+            let fixture = DeletionFixture::new().await;
+            let result = delete_with_pool(&fixture.pool, fixture.session_id, None, delete_files)
+                .await
+                .unwrap();
+            assert!(result.warning.is_none());
+            fixture.assert_records(false).await;
+            assert_eq!(
+                Path::new(&fixture.owner.directory_path).exists(),
+                !delete_files
+            );
+            assert!(!quarantine_path(&fixture.owner).unwrap().exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn dropping_process_group_releases_directory_even_after_launcher_exit() {
+        use std::{process::Stdio, time::Duration};
+
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use utils::command_ext::GroupSpawnNoWindowExt;
+
+        for launcher_exited in [false, true] {
+            let fixture = DeletionFixture::new().await;
+            let mut command = tokio::process::Command::new("powershell.exe");
+            command
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    r#"$ErrorActionPreference = 'Stop'
+$child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30' -WorkingDirectory (Get-Location).Path -PassThru -WindowStyle Hidden
+[Console]::Out.WriteLine($child.Id)
+[Console]::In.ReadLine() | Out-Null"#,
+                ])
+                .current_dir(&fixture.owner.directory_path)
+                .kill_on_drop(true)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            let mut child = command.group_spawn_no_window().unwrap();
+            let mut stdout = BufReader::new(child.inner().stdout.take().unwrap());
+            let mut descendant_pid = String::new();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                stdout.read_line(&mut descendant_pid),
+            )
+            .await
+            .expect("launcher must report its descendant before cleanup")
+            .unwrap();
+            assert!(descendant_pid.trim().parse::<u32>().unwrap() > 0);
+
+            if launcher_exited {
+                let mut stdin = child.inner().stdin.take().unwrap();
+                stdin.write_all(b"\n").await.unwrap();
+                drop(stdin);
+                // The launcher is gone but its descendant still owns the cwd.
+                // Waiting only for the launcher must not release job ownership.
+                assert!(
+                    tokio::time::timeout(Duration::from_secs(10), child.inner().wait())
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .success()
+                );
+            }
+            assert!(matches!(
+                delete_with_pool(&fixture.pool, fixture.session_id, None, true).await,
+                Err(ApiError::Conflict(_))
+            ));
+            fixture.assert_records(true).await;
+
+            // This is also the cancellation/drop path of native CLI discovery.
+            drop(child);
+            drop(stdout);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match delete_with_pool(&fixture.pool, fixture.session_id, None, true).await {
+                        Ok(_) => break,
+                        Err(ApiError::Conflict(_)) => {
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                        Err(error) => panic!("unexpected deletion failure: {error}"),
+                    }
+                }
+            })
+            .await
+            .expect("dropping the job must terminate descendants and release their cwd");
+            fixture.assert_records(false).await;
+            assert!(!Path::new(&fixture.owner.directory_path).exists());
+            assert!(!quarantine_path(&fixture.owner).unwrap().exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn locked_directory_keeps_session_and_history_until_retry() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        for delete_files in [true, false] {
+            let fixture = DeletionFixture::new().await;
+            // Reproduce an application retaining this directory as its cwd:
+            // READ/WRITE sharing does not permit the quarantine rename.
+            let directory_handle = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0x1 | 0x2)
+                .custom_flags(0x02000000) // FILE_FLAG_BACKUP_SEMANTICS
+                .open(&fixture.owner.directory_path)
+                .unwrap();
+            let result =
+                delete_with_pool(&fixture.pool, fixture.session_id, None, delete_files).await;
+            if delete_files {
+                let error = result.unwrap_err();
+                assert!(matches!(error, ApiError::Conflict(_)), "{error}");
+                let message = error.to_string();
+                assert!(message.contains("session, its history and files were retained"));
+                assert!(message.contains("Close applications"));
+                fixture.assert_records(true).await;
+                let state: (String, Option<String>) = sqlx::query_as(
+                    "SELECT state, quarantine_path FROM managed_workspace_directories WHERE workspace_id = ?",
+                )
+                .bind(fixture.owner.workspace_id).fetch_one(&fixture.pool).await.unwrap();
+                assert_eq!(state, ("active".into(), None));
+                assert!(
+                    Path::new(&fixture.owner.directory_path)
+                        .join("work.txt")
+                        .exists()
+                );
+                assert!(!quarantine_path(&fixture.owner).unwrap().exists());
+                drop(directory_handle);
+                delete_with_pool(&fixture.pool, fixture.session_id, None, true)
+                    .await
+                    .unwrap();
+            } else {
+                // Keeping files never needs the directory rename, even while
+                // another application has the directory open.
+                assert!(result.unwrap().warning.is_none());
+                drop(directory_handle);
+            }
+            fixture.assert_records(false).await;
+            assert_eq!(
+                Path::new(&fixture.owner.directory_path).exists(),
+                !delete_files
+            );
+            assert!(!quarantine_path(&fixture.owner).unwrap().exists());
+        }
+    }
 
     #[test]
     fn creation_failure_reports_retained_directory_and_workspace() {

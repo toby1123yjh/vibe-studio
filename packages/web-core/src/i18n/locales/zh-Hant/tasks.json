@@ -112,6 +112,7 @@
     }
   },
   "diff": {
+    "unavailable": "無法載入檔案變更",
     "filesChanged_one": "{{count}} 個檔案已變更",
     "filesChanged_other": "{{count}} 個檔案已變更"
   },
@@ -439,6 +440,16 @@
     },
     "executors": "執行器",
     "saveAsDefault": "設為預設",
+    "composer": {
+      "moreActions": "更多操作",
+      "addPrComments": "新增 PR 評論",
+      "removeTask": "取消關聯 {{task}}",
+      "messagePlaceholder": "輸入訊息…",
+      "feedbackPlaceholder": "輸入對計畫的回饋…",
+      "editPlaceholder": "編輯訊息…",
+      "changesPlaceholder": "描述需要調整的內容…",
+      "answerPlaceholder": "輸入你的回答…"
+    },
     "script": {
       "clickToViewLogs": "點擊查看日誌",
       "completedSuccessfully": "成功完成",

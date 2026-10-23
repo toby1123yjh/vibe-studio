@@ -1,7 +1,7 @@
 //! Stateful native decoding shared by live Process Host readers and audit
 //! replay. No UI/storage consumer should rediscover these protocol semantics.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -247,6 +247,7 @@ struct Decoder {
     claude_blocks: HashMap<(String, u64), Block>,
     acp_texts: Vec<Block>,
     pending_permissions: HashMap<String, ConversationInteraction>,
+    codex_warning_messages: HashSet<String>,
     latest_final: Option<(Block, String)>,
 }
 

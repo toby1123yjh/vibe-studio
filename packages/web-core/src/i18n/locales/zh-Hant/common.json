@@ -1,4 +1,25 @@
 {
+  "agentWorkbench": {
+    "inspector": {
+      "open": "工具",
+      "label": "工具",
+      "close": "關閉工具區",
+      "resize": "調整工具區寬度",
+      "tabs": {
+        "changes": "變更",
+        "files": "檔案",
+        "git": "Git",
+        "terminal": "終端機",
+        "preview": "預覽",
+        "logs": "日誌"
+      }
+    }
+  },
+  "panels": {
+    "conversation": "會話",
+    "taskDetails": "任務詳情",
+    "resizeWidth": "調整面板寬度"
+  },
   "hostStatus": {
     "online": "已連線",
     "offline": "離線",
@@ -1677,6 +1698,7 @@
     "followCliValue": "跟隨智慧體 · {{value}}",
     "builtinCatalog": "備用清單，尚未確認智慧體實際支援的選項。",
     "preset": "預設配置",
+    "runSettings": "執行設定",
     "custom": "自訂",
     "permissions": "權限",
     "permissionAuto": "自動",
@@ -2232,15 +2254,10 @@
     "answeredCount_other": "已回答{{count}}個問題"
   },
   "projectWorkspaceDefault": {
-    "label": "專案預設工作目錄",
-    "loading": "正在載入專案工作目錄",
-    "loadFailed": "無法載入",
-    "loadFailedDescription": "無法解析已儲存的工作目錄，請開啟專案設定檢查。",
-    "empty": "尚未設定",
-    "description": "此工作目錄會預填於新執行；Git 目錄還包含基礎分支。智能體啟動前仍需確認實際工作空間。",
-    "emptyDescription": "不會使用隱藏的歷史工作空間。啟動執行時選擇工作目錄，或先設定專案預設值。",
-    "configure": "設定專案工作目錄",
-    "configureShort": "設定"
+    "label": "工作目錄",
+    "loading": "正在載入工作目錄",
+    "loadFailed": "工作目錄無法使用",
+    "empty": "未設定工作目錄"
   },
   "agentSessionResume": {
     "open": "最近的智能體工作階段",

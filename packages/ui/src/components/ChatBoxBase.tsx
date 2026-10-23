@@ -18,77 +18,58 @@ export interface DropzoneProps {
 }
 
 interface ChatBoxBaseProps {
-  // Editor node (provided by frontend)
   editor: ReactNode;
-
-  // Error display
   error?: string | null;
-
-  // Header content (right side - session/executor dropdown)
+  /** Optional context actions beside the agent and model controls. */
   headerRight?: ReactNode;
-
-  // Header content (left side - stats)
+  /** Agent identity or selector. */
   headerLeft?: ReactNode;
-
-  // Footer left content (additional toolbar items like attach button)
+  /** Conditional task/file status and project context. */
+  status?: ReactNode;
+  context?: ReactNode;
+  hint?: ReactNode;
   footerLeft?: ReactNode;
-
-  // Footer right content (action buttons)
   footerRight: ReactNode;
-
-  // Model selector node (rendered with footer controls)
   modelSelector?: ReactNode;
-
-  // Banner content (queued message indicator, feedback mode indicator)
   banner?: ReactNode;
-
-  // visualVariant
   visualVariant: VisualVariant;
-
-  // Whether the workspace is running (shows animated border)
-  isRunning?: boolean;
-
-  // Dropzone props for drag-and-drop image uploads
   dropzone?: DropzoneProps;
   compact?: boolean;
 }
 
-/**
- * Base chat box layout component.
- * Provides shared structure for CreateChatBox and SessionChatBox.
- */
+/** Shared message, configuration and action layout for both chat entry points. */
 export function ChatBoxBase({
   editor,
   error,
   headerRight,
   headerLeft,
+  status,
+  context,
+  hint,
   footerLeft,
   footerRight,
   modelSelector,
   banner,
   visualVariant,
-  isRunning,
   dropzone,
   compact = false,
 }: ChatBoxBaseProps) {
   const { t } = useTranslation(['common', 'tasks']);
-
   const isDragActive = dropzone?.isDragActive ?? false;
 
   return (
     <div
       {...(dropzone?.getRootProps() ?? {})}
       className={cn(
-        'relative flex min-w-0 w-chat max-w-full flex-col rounded-sm border border-border bg-secondary',
+        '@container/chat-composer relative flex min-h-0 min-w-0 max-w-full max-h-[min(70cqh,32rem)] flex-col rounded-[var(--vk-radius-md)] border border-border bg-secondary focus-within:border-brand/50',
+        compact ? 'w-full' : 'w-chat',
         (visualVariant === VisualVariant.FEEDBACK ||
           visualVariant === VisualVariant.EDIT ||
           visualVariant === VisualVariant.PLAN) &&
-          'border-brand bg-brand/10',
-        isRunning && 'chat-box-running'
+          'border-brand bg-brand/10'
       )}
     >
       {dropzone && <input {...dropzone.getInputProps()} />}
-
       {isDragActive && (
         <div className="absolute inset-0 z-50 flex items-center justify-center rounded-sm border-2 border-dashed border-brand bg-primary/80 backdrop-blur-sm pointer-events-none animate-in fade-in-0 duration-150">
           <div className="text-center">
@@ -104,51 +85,67 @@ export function ChatBoxBase({
           </div>
         </div>
       )}
-      {/* Error alert */}
       {error && (
-        <div className="bg-error/10 border-b px-double py-base">
-          <p className="text-error text-sm">{error}</p>
+        <div
+          className="max-h-24 shrink-0 overflow-y-auto rounded-t-[inherit] bg-error/10 border-b px-plusfifty py-base"
+          role="alert"
+        >
+          <p className="text-error text-sm [overflow-wrap:anywhere]">{error}</p>
         </div>
       )}
+      <div className="min-h-0 max-h-[35cqh] shrink overflow-y-auto empty:hidden">
+        {banner}
+      </div>
 
-      {/* Banner content (queued indicator, feedback mode, etc.) */}
-      {banner}
-
-      {/* Header - Stats and selector */}
       {visualVariant === VisualVariant.NORMAL && (
         <div
-          className={cn(
-            'flex items-center gap-base border-b px-base py-base',
-            compact && 'flex-wrap gap-half py-half'
-          )}
+          className="flex min-w-0 shrink-0 flex-wrap items-center gap-x-base gap-y-half border-b px-plusfifty py-base"
+          data-composer-configuration="true"
         >
-          <div className="flex flex-1 items-center gap-base text-sm min-w-0 overflow-hidden">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-base gap-y-half text-sm empty:hidden">
             {headerLeft}
           </div>
-          <Toolbar className="gap-[9px]">{headerRight}</Toolbar>
+          {modelSelector && (
+            <div className="flex min-w-0 max-w-full flex-[1_1_14rem] flex-wrap items-center gap-half">
+              {modelSelector}
+            </div>
+          )}
+          <Toolbar className="min-w-0 max-w-full flex-wrap gap-half empty:hidden">
+            {headerRight}
+          </Toolbar>
         </div>
       )}
-
-      {/* Editor area */}
-      <div className="flex flex-col gap-plusfifty px-base py-base rounded-md">
+      <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-base px-plusfifty pt-base text-sm text-low empty:hidden">
+        {status}
+      </div>
+      <div
+        className="flex min-w-0 shrink-0 flex-wrap items-center gap-base px-plusfifty pt-base empty:hidden"
+        data-composer-context="true"
+      >
+        {context}
+      </div>
+      {/* Scrolling message content never takes the send controls with it. */}
+      <div
+        className="min-h-8 min-w-0 shrink overflow-y-auto px-plusfifty py-plusfifty [overflow-wrap:anywhere]"
+        data-composer-message="true"
+      >
         {editor}
-
-        {/* Footer - Controls */}
-        <div className="flex items-center justify-between gap-base">
-          <Toolbar className="min-w-0 flex-1 flex-wrap !gap-x-base !gap-y-half">
-            {modelSelector && (
-              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-half">
-                {modelSelector}
-              </div>
-            )}
-            {footerLeft && (
-              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-base">
-                {footerLeft}
-              </div>
-            )}
+      </div>
+      <div
+        className="flex min-w-0 shrink-0 flex-wrap items-end justify-between gap-x-base gap-y-half px-base pb-base"
+        data-composer-actions="true"
+      >
+        {footerLeft && (
+          <Toolbar className="min-w-0 max-w-full flex-wrap !gap-x-half !gap-y-half">
+            {footerLeft}
           </Toolbar>
-          <div className="flex shrink-0 gap-base">{footerRight}</div>
+        )}
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap justify-end gap-half [&_button]:min-h-8 [&_button]:whitespace-normal [&_button]:break-words [@media(pointer:coarse)]:[&_button]:min-h-11">
+          {footerRight}
         </div>
+      </div>
+      <div className="min-w-0 shrink-0 px-plusfifty pb-base text-sm text-low empty:hidden">
+        {hint}
       </div>
     </div>
   );

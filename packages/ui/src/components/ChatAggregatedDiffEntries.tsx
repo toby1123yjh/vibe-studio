@@ -285,7 +285,7 @@ export function ChatAggregatedDiffEntries({
         data-scroll-anchor-target=""
       >
         <div className="flex-1 flex items-center gap-base min-w-0">
-          <span className="relative shrink-0">
+          <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
             {!isVSCode && isHovered ? (
               <CaretDownIcon
                 className={cn(
@@ -297,11 +297,12 @@ export function ChatAggregatedDiffEntries({
               <FileIcon className="size-icon-base" />
             )}
             {aggregateStatus && (
-              <ToolStatusDot
-                status={aggregateStatus}
-                active={isAggregateActive}
-                className="absolute -bottom-0.5 -right-0.5"
-              />
+              <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex">
+                <ToolStatusDot
+                  status={aggregateStatus}
+                  active={isAggregateActive}
+                />
+              </span>
             )}
           </span>
           <span className="text-sm text-normal truncate">{filePath}</span>

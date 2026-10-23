@@ -1,8 +1,13 @@
-import * as React from 'react';
-import { createRoot } from 'react-dom/client';
-import { AgentWorkbenchComposerEditor } from '../../../../packages/web-core/src/features/agent-workbench/ui/AgentWorkbenchComposerEditor';
-import { AgentWorkbenchContainer } from '../../../../packages/web-core/src/features/agent-workbench/ui/AgentWorkbenchContainer';
-import { useAgentWorkbenchInspectorVisibility } from '../../../../packages/web-core/src/features/agent-workbench/ui/AgentWorkbenchInspectorVisibility';
+import * as React from "react";
+import { createRoot } from "react-dom/client";
+import { AgentWorkbenchComposerEditor } from "../../../../packages/web-core/src/features/agent-workbench/ui/AgentWorkbenchComposerEditor";
+import { AgentWorkbenchContainer } from "../../../../packages/web-core/src/features/agent-workbench/ui/AgentWorkbenchContainer";
+import { useAgentWorkbenchInspectorVisibility } from "../../../../packages/web-core/src/features/agent-workbench/ui/AgentWorkbenchInspectorVisibility";
+import {
+  AGENT_WORKBENCH_INSPECTOR_TABS,
+  DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES,
+} from "../../../../packages/web-core/src/features/agent-workbench/model/inspectorPreferences";
+import { useUiPreferencesStore } from "../../../../packages/web-core/src/shared/stores/useUiPreferencesStore";
 import {
   acknowledgeSessionDraft,
   createSessionDraft,
@@ -10,61 +15,62 @@ import {
   updateSessionDraft,
   type SessionDraftState,
   type SessionDraftSubmission,
-} from '../../../../packages/web-core/src/features/agent-workbench/model/sessionDraft';
-import { deriveAgentWorkbenchCapabilities } from '../../../../packages/web-core/src/features/agent-workbench/model/agentWorkbenchCapabilities';
-import type { RuntimeActionPolicy } from '../../../../packages/web-core/src/shared/lib/runtimeActionPolicy';
-import '../../../../packages/web-core/src/i18n/config';
-import '../../../../packages/ui/src/styles/tokens.css';
-import './style.css';
+} from "../../../../packages/web-core/src/features/agent-workbench/model/sessionDraft";
+import { deriveAgentWorkbenchCapabilities } from "../../../../packages/web-core/src/features/agent-workbench/model/agentWorkbenchCapabilities";
+import type { RuntimeActionPolicy } from "../../../../packages/web-core/src/shared/lib/runtimeActionPolicy";
+import "../../../../packages/web-core/src/i18n/config";
+import "../../../ui-foundations/fixture/src/tailwind.css";
+import "../../../../packages/ui/src/styles/tokens.css";
+import "./style.css";
 
-const DRAFT_STORAGE_KEY = 'agent-workbench-fixture-drafts';
+const DRAFT_STORAGE_KEY = "agent-workbench-fixture-drafts";
 
 function capabilityPolicy(): RuntimeActionPolicy {
   const blocked = <T extends RuntimeActionPolicy[keyof RuntimeActionPolicy]>(
-    decision: T
+    decision: T,
   ) => decision;
   return {
-    send_initial: { action: 'send_initial', allowed: true, reason: null },
+    send_initial: { action: "send_initial", allowed: true, reason: null },
     send_follow_up: blocked({
-      action: 'send_follow_up',
+      action: "send_follow_up",
       allowed: false,
-      reason: 'provider_capability_missing',
+      reason: "provider_capability_missing",
     }),
     queue_follow_up: blocked({
-      action: 'queue_follow_up',
+      action: "queue_follow_up",
       allowed: false,
-      reason: 'runtime_terminal',
+      reason: "runtime_terminal",
     }),
     cancel_queue: blocked({
-      action: 'cancel_queue',
+      action: "cancel_queue",
       allowed: false,
-      reason: 'queue_empty',
+      reason: "queue_empty",
     }),
-    stop: { action: 'stop', allowed: true, reason: null },
+    stop: { action: "stop", allowed: true, reason: null },
     approve: blocked({
-      action: 'approve',
+      action: "approve",
       allowed: false,
-      reason: 'approval_required',
+      reason: "approval_required",
     }),
     request_changes: blocked({
-      action: 'request_changes',
+      action: "request_changes",
       allowed: false,
-      reason: 'approval_required',
+      reason: "approval_required",
     }),
     answer_question: blocked({
-      action: 'answer_question',
+      action: "answer_question",
       allowed: false,
-      reason: 'question_required',
+      reason: "question_required",
     }),
     retry: blocked({
-      action: 'retry',
+      action: "retry",
       allowed: false,
-      reason: 'unknown_runtime',
+      reason: "unknown_runtime",
     }),
     resume: blocked({
-      action: 'resume',
+      action: "resume",
       allowed: false,
-      reason: 'unknown_runtime',
+      reason: "unknown_runtime",
     }),
   };
 }
@@ -77,21 +83,27 @@ function loadDrafts(): Record<string, SessionDraftState> {
     // The fixture mirrors the production best-effort persistence boundary.
   }
   return {
-    'session-1': createSessionDraft('session-1'),
-    'session-2': createSessionDraft('session-2'),
+    "session-1": createSessionDraft("session-1"),
+    "session-2": createSessionDraft("session-2"),
   };
 }
 
 function InspectorFixture() {
-  const [activeTab, setActiveTab] = React.useState('changes');
-  const [terminalBuffer, setTerminalBuffer] = React.useState('');
+  const [activeTab, setActiveTab] = React.useState<string>(
+    DEFAULT_AGENT_WORKBENCH_INSPECTOR_PREFERENCES.activeTab,
+  );
+  const [terminalBuffer, setTerminalBuffer] = React.useState("");
   const visible = useAgentWorkbenchInspectorVisibility();
+  const [opened, setOpened] = React.useState(false);
+  React.useEffect(() => {
+    if (visible) setOpened(true);
+  }, [visible]);
   const activePanel =
-    activeTab === 'changes' ? (
+    activeTab === "changes" ? (
       <div data-testid="inspector-heavy-panel" data-panel="changes">
         2 changed files
       </div>
-    ) : activeTab === 'terminal' ? (
+    ) : activeTab === "terminal" ? (
       <div data-testid="inspector-heavy-panel" data-panel="terminal">
         <label>
           Terminal buffer
@@ -102,15 +114,19 @@ function InspectorFixture() {
           />
         </label>
       </div>
-    ) : (
+    ) : activeTab === "preview" ? (
       <div data-testid="inspector-heavy-panel" data-panel="preview">
         Preview process connected
+      </div>
+    ) : (
+      <div data-testid="inspector-heavy-panel" data-panel={activeTab}>
+        Workspace {activeTab}
       </div>
     );
   return (
     <div className="fixture-inspector">
       <div role="tablist" aria-label="Inspector tabs">
-        {['changes', 'terminal', 'preview'].map((tab) => (
+        {AGENT_WORKBENCH_INSPECTOR_TABS.map((tab) => (
           <button
             key={tab}
             type="button"
@@ -122,20 +138,26 @@ function InspectorFixture() {
           </button>
         ))}
       </div>
-      {visible ? activePanel : null}
+      {opened ? activePanel : null}
     </div>
   );
 }
 
 function AgentWorkbenchFixture() {
-  const [inspectorVisible, setInspectorVisible] = React.useState(true);
-  const [sessionId, setSessionId] = React.useState('session-1');
+  const inspectorVisible = useUiPreferencesStore(
+    (state) => state.isRightSidebarVisible,
+  );
+  const setInspectorVisible = (visible: boolean) => {
+    const store = useUiPreferencesStore.getState();
+    if (visible !== store.isRightSidebarVisible) store.toggleRightSidebar();
+  };
+  const [sessionId, setSessionId] = React.useState("session-1");
   const [drafts, setDrafts] = React.useState(loadDrafts);
   const [submission, setSubmission] =
     React.useState<SessionDraftSubmission | null>(null);
   const capabilities = React.useMemo(
     () => deriveAgentWorkbenchCapabilities(capabilityPolicy()),
-    []
+    [],
   );
   const draft = drafts[sessionId] ?? createSessionDraft(sessionId);
 
@@ -148,7 +170,7 @@ function AgentWorkbenchFixture() {
       ...current,
       [sessionId]: updateSessionDraft(
         current[sessionId] ?? createSessionDraft(sessionId),
-        text
+        text,
       ),
     }));
   };
@@ -183,6 +205,16 @@ function AgentWorkbenchFixture() {
       <div className="fixture-draft-actions">
         <button
           type="button"
+          onClick={() =>
+            useUiPreferencesStore
+              .getState()
+              .setRightMainPanelMode("files", "fixture-workspace")
+          }
+        >
+          Open workspace file
+        </button>
+        <button
+          type="button"
           onClick={() => setSubmission(snapshotSessionDraft(draft))}
         >
           Send snapshot
@@ -196,7 +228,7 @@ function AgentWorkbenchFixture() {
               ...current,
               [sessionId]: acknowledgeSessionDraft(
                 current[sessionId] ?? createSessionDraft(sessionId),
-                submission
+                submission,
               ),
             }));
             setSubmission(null);
@@ -208,7 +240,7 @@ function AgentWorkbenchFixture() {
           type="button"
           onClick={() =>
             setSessionId((current) =>
-              current === 'session-1' ? 'session-2' : 'session-1'
+              current === "session-1" ? "session-2" : "session-1",
             )
           }
         >
@@ -231,6 +263,6 @@ function AgentWorkbenchFixture() {
   );
 }
 
-const root = document.getElementById('root');
-if (!root) throw new Error('Agent Workbench fixture root is missing');
+const root = document.getElementById("root");
+if (!root) throw new Error("Agent Workbench fixture root is missing");
 createRoot(root).render(<AgentWorkbenchFixture />);

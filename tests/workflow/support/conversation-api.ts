@@ -1,4 +1,5 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
+import type { AgentRunStatus, ConversationBlock } from "shared/types";
 
 const timestamp = "2026-10-15T00:00:00Z";
 const sessions = ["research", "review", "analysis", "main"].map((work) => ({
@@ -11,14 +12,18 @@ const sessions = ["research", "review", "analysis", "main"].map((work) => ({
   updated_at: timestamp,
 }));
 
-function runState(sessionId: string, withToolOutput = false) {
+function runState(
+  sessionId: string,
+  withToolOutput = false,
+  status: `${AgentRunStatus}` = "succeeded",
+) {
   return {
     state_schema_version: 1,
     reducer_version: 1,
     session_id: sessionId,
     agent_run_id: `agent-${sessionId}`,
     turn_id: `turn-${sessionId}`,
-    status: "succeeded",
+    status,
     projection_status: "current",
     last_run_attempt_id: `attempt-${sessionId}`,
     last_run_attempt_number: 1,
@@ -38,14 +43,83 @@ export async function mockWorkflowConversations(
   {
     holdFirstDraftWrite = false,
     withToolOutput = false,
-  }: { holdFirstDraftWrite?: boolean; withToolOutput?: boolean } = {},
+    initialRunStatus = "succeeded",
+  }: {
+    holdFirstDraftWrite?: boolean;
+    withToolOutput?: boolean;
+    initialRunStatus?: `${AgentRunStatus}`;
+  } = {},
 ) {
   const writes: string[] = [];
   const drafts = new Map<string, unknown>();
   const scratches = new Map<string, Set<WebSocketRoute>>();
   const requests: string[] = [];
+  const runSockets = new Map<string, Set<WebSocketRoute>>();
+  const runStatuses = new Map<string, `${AgentRunStatus}`>();
+  let revision = 1;
+  const currentState = (sessionId: string) =>
+    runState(
+      sessionId,
+      withToolOutput,
+      runStatuses.get(sessionId) ?? initialRunStatus,
+    );
   let heldFirstDraftWrite = false;
   let releaseDraftWrite = () => {};
+  const conversation = (sessionId: string) => {
+    const block = (
+      kind: ConversationBlock["kind"],
+      fields: ConversationBlock["fields"],
+    ) => ({
+      block_id: `${kind}-${sessionId}`,
+      agent_run_id: `agent-${sessionId}`,
+      run_attempt_id: `attempt-${sessionId}`,
+      kind,
+      role: "assistant",
+      native_id: null,
+      parent_block_id: null,
+      position: kind === "text" ? "1" : "2",
+      revision: String(revision),
+      fields,
+      bodies: [],
+      finished: true,
+      finish_reason: "completed",
+      source_event_id: `event-${sessionId}`,
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    return {
+      session_id: sessionId,
+      cursor: { epoch: `epoch-${sessionId}`, revision: String(revision) },
+      blocks: [
+        block("text", { text: `Original reply for ${sessionId}` }),
+        ...(withToolOutput
+          ? [
+              block("tool", {
+                tool_call_id: `tool-call-${sessionId}`,
+                tool_name: "inspect_fixture",
+                status: "succeeded",
+                arguments: { query: "fixture documents" },
+                output_text:
+                  "Exact tool output retained in the original viewer",
+              }),
+            ]
+          : []),
+      ],
+      runs: [
+        {
+          agent_run_id: `agent-${sessionId}`,
+          session_id: sessionId,
+          turn_id: `turn-${sessionId}`,
+          state: currentState(sessionId),
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      ],
+      pending_interactions: [],
+      previous_cursor: null,
+      has_more: false,
+    };
+  };
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -84,6 +158,8 @@ export async function mockWorkflowConversations(
         variant: "DEFAULT",
         model_id: "fixture-model",
       });
+    if (/\/sessions\/[^/]+\/conversation$/.test(path))
+      return fulfill(conversation(path.split("/")[3]));
     if (path.startsWith("/api/agent-runs/session/")) {
       const sessionId = path.split("/").at(-1)!;
       return fulfill([
@@ -91,7 +167,7 @@ export async function mockWorkflowConversations(
           agent_run_id: `agent-${sessionId}`,
           session_id: sessionId,
           turn_id: `turn-${sessionId}`,
-          state: runState(sessionId, withToolOutput),
+          state: currentState(sessionId),
           created_at: timestamp,
           updated_at: timestamp,
         },
@@ -157,83 +233,16 @@ export async function mockWorkflowConversations(
         }),
       );
       socket.send(JSON.stringify({ Ready: true }));
-    } else if (url.pathname.includes("/agent-runs/")) {
-      const agentId = url.pathname.split("/")[3];
-      const sessionId = agentId.slice("agent-".length);
-      socket.send(
-        JSON.stringify({
-          type: "event",
-          data: {
-            replay: true,
-            event: {
-              schema_version: 1,
-              payload_version: 1,
-              event_id: `event-${sessionId}`,
-              session_id: sessionId,
-              agent_run_id: agentId,
-              turn_id: `turn-${sessionId}`,
-              run_attempt_id: `attempt-${sessionId}`,
-              run_attempt_number: 1,
-              sequence: 1,
-              correlation_id: "fixture",
-              timestamp,
-              native_refs: [],
-              payload: {
-                type: "message",
-                data: {
-                  message: {
-                    message_id: `reply-${sessionId}`,
-                    role: "assistant",
-                    content: `Original reply for ${sessionId}`,
-                  },
-                  final_output: true,
-                },
-              },
-            },
-          },
-        }),
-      );
-      if (withToolOutput) {
-        socket.send(
-          JSON.stringify({
-            type: "event",
-            data: {
-              replay: true,
-              event: {
-                schema_version: 1,
-                payload_version: 1,
-                event_id: `tool-${sessionId}`,
-                session_id: sessionId,
-                agent_run_id: agentId,
-                turn_id: `turn-${sessionId}`,
-                run_attempt_id: `attempt-${sessionId}`,
-                run_attempt_number: 1,
-                sequence: 2,
-                correlation_id: "fixture",
-                timestamp,
-                native_refs: [],
-                payload: {
-                  type: "tool_call",
-                  data: {
-                    tool_call_id: `tool-call-${sessionId}`,
-                    tool_name: "inspect_fixture",
-                    status: "succeeded",
-                    arguments: { query: "fixture documents" },
-                    result: {
-                      output:
-                        "Exact tool output retained in the original viewer",
-                    },
-                  },
-                },
-              },
-            },
-          }),
-        );
-      }
+    } else if (url.pathname.includes("/conversation/stream/ws")) {
+      const sessionId = url.pathname.split("/")[3];
+      const listeners = runSockets.get(sessionId) ?? new Set<WebSocketRoute>();
+      listeners.add(socket);
+      runSockets.set(sessionId, listeners);
+      socket.onClose(() => listeners.delete(socket));
       socket.send(
         JSON.stringify({
           type: "ready",
-          data: { state: runState(sessionId, withToolOutput) },
+          data: conversation(sessionId).cursor,
         }),
       );
     } else {
@@ -246,6 +255,23 @@ export async function mockWorkflowConversations(
     drafts,
     requests,
     releaseDraftWrite: () => releaseDraftWrite(),
+    state: currentState,
+    setRunStatus: (sessionId: string, status: `${AgentRunStatus}`) => {
+      runStatuses.set(sessionId, status);
+      revision += 1;
+      for (const socket of runSockets.get(sessionId) ?? []) {
+        socket.send(
+          JSON.stringify({
+            type: "changes",
+            data: {
+              ...conversation(sessionId),
+              tombstones: [],
+              reset_required: false,
+            },
+          }),
+        );
+      }
+    },
   };
 }
 

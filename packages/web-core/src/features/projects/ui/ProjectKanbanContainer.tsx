@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
+import { useTranslation } from 'react-i18next';
+import {
+  FloatingPanelResizeHandle,
+  useFloatingPanelResize,
+} from '@vibe/ui/components/FloatingPanelResize';
 import type { ExecutionCursor, ExecutionSummary } from 'shared/types';
 import { mergeStableCursorItems } from '@/features/app-shell/model/appShell';
 import { ProjectRightSidebarContainer } from '@/pages/kanban/ProjectRightSidebarContainer';
@@ -9,10 +14,15 @@ import { useActions } from '@/shared/hooks/useActions';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 import { useCurrentKanbanRouteState } from '@/shared/hooks/useCurrentKanbanRouteState';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
+import { ProjectWorkspaceDefaultContext } from '@/shared/components/ProjectWorkspaceDefaultContext';
 import { executionDataApi } from '@/shared/lib/executionDataApi';
 import { getHostRequestScopeQueryKey } from '@/shared/lib/hostRequestScope';
 import { useDeleteExecutionSession } from '@/shared/hooks/useDeleteExecutionSession';
 import { bulkUpdateTasks } from '@/shared/lib/remoteApi';
+import {
+  CONVERSATION_PANEL_SIZING,
+  TASK_PANEL_SIZING,
+} from '@/shared/lib/floatingPanelSizing';
 import {
   buildKanbanTaskComposerKey,
   openKanbanTaskComposer,
@@ -355,7 +365,7 @@ export function ProjectKanbanContainer({
 
   const panel =
     showCanonicalTaskPanel && selectedTask ? (
-      <aside className="vk-task-floating-panel" aria-label="Task details">
+      <ProjectFloatingPanel conversation={false}>
         <TaskFloatingPanelContainer
           key={selectedTask.id}
           task={selectedTask}
@@ -377,22 +387,29 @@ export function ProjectKanbanContainer({
               : REMOTE_ARENA_UNAVAILABLE_REASON
           }
         />
-      </aside>
+      </ProjectFloatingPanel>
     ) : showLegacyDeepPanel ? (
-      <aside
-        className="vk-task-floating-panel"
-        data-create-panel={
+      <ProjectFloatingPanel
+        conversation={
+          routeState.workspaceId !== null || routeState.isWorkspaceCreateMode
+        }
+        createPanel={
           taskComposer !== null || routeState.isWorkspaceCreateMode || undefined
         }
-        aria-label="Task activity"
       >
         <ProjectRightSidebarContainer />
-      </aside>
+      </ProjectFloatingPanel>
     ) : null;
 
   return (
     <ProjectKanbanView
       projectName={projectName}
+      projectContext={
+        <ProjectWorkspaceDefaultContext
+          projectId={projectId}
+          hostId={routeState.hostId}
+        />
+      }
       projectActions={
         <ProjectBoardActions
           projectId={projectId}
@@ -423,5 +440,43 @@ export function ProjectKanbanContainer({
       getExecutionUnavailableReason={getExecutionUnavailableReason}
       onMove={moveTasks}
     />
+  );
+}
+
+function ProjectFloatingPanel({
+  conversation,
+  createPanel,
+  children,
+}: {
+  conversation: boolean;
+  createPanel?: boolean;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation('common');
+  const panelRef = useRef<HTMLElement | null>(null);
+  const sizing = conversation ? CONVERSATION_PANEL_SIZING : TASK_PANEL_SIZING;
+  const resize = useFloatingPanelResize(panelRef, {
+    ...sizing,
+    label: t('panels.resizeWidth', { defaultValue: 'Resize panel width' }),
+  });
+
+  return (
+    <aside
+      ref={panelRef}
+      className="vk-task-floating-panel"
+      data-create-panel={createPanel}
+      data-panel-kind={conversation ? 'conversation' : 'task'}
+      aria-label={
+        conversation
+          ? t('panels.conversation', { defaultValue: 'Conversation' })
+          : t('panels.taskDetails', { defaultValue: 'Task details' })
+      }
+      style={resize.style}
+    >
+      {resize.handleProps && (
+        <FloatingPanelResizeHandle {...resize.handleProps} />
+      )}
+      {children}
+    </aside>
   );
 }

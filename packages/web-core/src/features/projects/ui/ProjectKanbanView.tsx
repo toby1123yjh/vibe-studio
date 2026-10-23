@@ -154,6 +154,7 @@ const kanbanKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
 
 interface ProjectKanbanViewProps extends ExecutionDeletionActions {
   projectName: string;
+  projectContext?: ReactNode;
   projectActions?: ReactNode;
   columns: KanbanColumnProjection[];
   taskCount: number;
@@ -651,6 +652,7 @@ interface KanbanDragSnapshot {
 
 export function ProjectKanbanView({
   projectName,
+  projectContext,
   projectActions,
   columns,
   taskCount,
@@ -862,7 +864,10 @@ export function ProjectKanbanView({
           <span aria-hidden="true">
             {projectName.slice(0, 1).toLocaleUpperCase()}
           </span>
-          <strong>{projectName}</strong>
+          <div className="vk-project-kanban__identity-content">
+            <strong title={projectName}>{projectName}</strong>
+            {projectContext}
+          </div>
         </div>
         {projectActions}
         <label className="vk-kanban-search">

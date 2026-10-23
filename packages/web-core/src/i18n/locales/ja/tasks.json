@@ -108,6 +108,7 @@
     "label": "ベースブランチ"
   },
   "diff": {
+    "unavailable": "変更を読み込めません",
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed"
   },
@@ -412,6 +413,16 @@
     },
     "executors": "エクゼキューター",
     "saveAsDefault": "デフォルトとして保存",
+    "composer": {
+      "moreActions": "その他の操作",
+      "addPrComments": "PR コメントを追加",
+      "removeTask": "{{task}} との関連付けを解除",
+      "messagePlaceholder": "メッセージを入力…",
+      "feedbackPlaceholder": "計画へのフィードバックを入力…",
+      "editPlaceholder": "メッセージを編集…",
+      "changesPlaceholder": "必要な変更を入力…",
+      "answerPlaceholder": "回答を入力…"
+    },
     "script": {
       "clickToViewLogs": "クリックしてログを表示",
       "completedSuccessfully": "正常に完了しました",

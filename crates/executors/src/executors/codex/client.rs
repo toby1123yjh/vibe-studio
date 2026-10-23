@@ -228,10 +228,27 @@ fn validate_model_options(
     effort: Option<&str>,
     service_tier: Option<&str>,
 ) -> Result<(), ExecutorError> {
-    let model = catalog.data.iter().find(|model| model.id == model_id || model.model == model_id)
-        .ok_or_else(|| ExecutorError::InvalidConfiguration(format!(
-            "Codex did not advertise capabilities for resolved model {model_id}; the explicit model options could not be confirmed"
-        )))?;
+    let Some(model) = catalog
+        .data
+        .iter()
+        .find(|model| model.id == model_id || model.model == model_id)
+    else {
+        // The catalog powers discovery; it is not an exhaustive execution
+        // whitelist. A native thread can resolve to a custom or newer model.
+        // Preserve its requested effort and let the native request validate it.
+        // Tiers remain strict because Codex may silently discard unsupported
+        // routing instead of rejecting it.
+        if let Some(tier) = service_tier.filter(|tier| *tier != "default") {
+            return Err(ExecutorError::InvalidConfiguration(format!(
+                "Codex could not confirm service tier {tier} for resolved model {model_id}: the model was not advertised by model/list"
+            )));
+        }
+        tracing::warn!(
+            model = model_id,
+            "Codex model/list did not advertise the resolved model; deferring reasoning effort validation to the native request"
+        );
+        return Ok(());
+    };
     if let Some(effort) = effort
         && !model
             .supported_reasoning_efforts
@@ -664,10 +681,31 @@ impl AppServerClient {
         }
         let catalog = tokio::time::timeout(super::MODELS_DISCOVERY_TIMEOUT, self.model_list())
             .await
-            .map_err(|_| ExecutorError::InvalidConfiguration(
-                "Codex timed out validating the requested model options before starting the turn".into(),
-            ))??;
-        validate_model_options(&catalog, model, effort.as_deref(), service_tier)
+            .unwrap_or_else(|_| {
+                Err(ExecutorError::InvalidConfiguration(
+                    "Codex model/list timed out while validating the requested model options"
+                        .into(),
+                ))
+            });
+        match catalog {
+            Ok(catalog) => validate_model_options(&catalog, model, effort.as_deref(), service_tier),
+            Err(error) => {
+                if self.cancel.is_cancelled() {
+                    return Err(error);
+                }
+                if let Some(tier) = service_tier.filter(|tier| *tier != "default") {
+                    return Err(ExecutorError::InvalidConfiguration(format!(
+                        "Codex could not confirm service tier {tier} for resolved model {model}: {error}"
+                    )));
+                }
+                tracing::warn!(
+                    model,
+                    %error,
+                    "Codex model catalog unavailable; deferring reasoning effort validation to the native request"
+                );
+                Ok(())
+            }
+        }
     }
 
     pub(crate) async fn model_list(&self) -> Result<ModelCatalogResponse, ExecutorError> {
@@ -1564,6 +1602,22 @@ impl JsonRpcCallbacks for AppServerClient {
 
         let method = notification.method.as_str();
 
+        if let Some(params) = notification.params.as_ref()
+            && let Some(diagnostic) =
+                crate::executors::provider_adapter::conversation::codex::startup_diagnostic(
+                    method, params,
+                )
+        {
+            // Startup configuration/MCP diagnostics are not conversation
+            // content. Keep a concise log and the complete native frame in
+            // audit; a required MCP failure still fails thread/start/resume.
+            tracing::warn!(
+                method,
+                summary = diagnostic.lines().next().unwrap_or_default(),
+                "Codex startup diagnostic (full details in Native Audit)"
+            );
+        }
+
         // Detect completed plan items in the notification stream
         if self.plan_mode
             && method == "item/completed"
@@ -1778,6 +1832,8 @@ fn extract_semver(input: &str) -> Option<String> {
 
 #[cfg(test)]
 mod version_check_tests {
+    use std::{process::Stdio, sync::Arc};
+
     use codex_protocol::{
         config_types::{CollaborationMode, ModeKind, Settings},
         openai_models::ReasoningEffort as ProtocolReasoningEffort,
@@ -1792,6 +1848,150 @@ mod version_check_tests {
         parse_turn_completed_params, reasoning_update_from_thread_settings,
         turn_completion_control_flow,
     };
+
+    struct NativeOptionsFixture {
+        client: Arc<AppServerClient>,
+        child: tokio::process::Child,
+        directory: tempfile::TempDir,
+        cancel: CancellationToken,
+    }
+
+    impl NativeOptionsFixture {
+        async fn new(catalog: &str, effort: &str, plan: bool, failed_method: &str) -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let mut child = tokio::process::Command::new("node")
+                .arg("--eval")
+                .arg(r#"
+const fs = require('node:fs');
+const readline = require('node:readline');
+const model = 'gpt-6.1-sol';
+const turn = { id: 'turn-1', items: [], status: 'inProgress' };
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  fs.appendFileSync(process.env.VK_FIXTURE_TRACE, line + '\n');
+  if (!Object.hasOwn(request, 'id')) return;
+  const error = message => process.stdout.write(JSON.stringify({ id: request.id, error: { code: -32000, message } }) + '\n');
+  if (request.method === process.env.VK_FIXTURE_FAILED_METHOD) return error('native fixture rejected ' + request.method);
+  let result;
+  if (request.method === 'initialize') result = { userAgent: 'codex/native-fixture' };
+  else if (request.method === 'thread/start' || request.method === 'thread/resume') {
+    result = {
+      thread: { id: 'thread-1', sessionId: 'session-1', preview: '', ephemeral: false, modelProvider: 'fixture', createdAt: 1, updatedAt: 1, status: { type: 'idle' }, cwd: process.cwd(), cliVersion: 'fixture', source: 'appServer', turns: [] },
+      model, modelProvider: 'fixture', cwd: process.cwd(), approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: { type: 'dangerFullAccess' }, reasoningEffort: process.env.VK_FIXTURE_EFFORT
+    };
+  } else if (request.method === 'model/list') {
+    if (process.env.VK_FIXTURE_CATALOG === 'error') return error('native catalog unavailable');
+    if (process.env.VK_FIXTURE_CATALOG === 'timeout') return;
+    // The resolved model, when advertised, is hidden on the second page.
+    const second = request.params.cursor === 'page-2';
+    const id = second && process.env.VK_FIXTURE_CATALOG === 'known' ? model : 'catalog-model';
+    result = { data: [{ id, model: id, displayName: 'Fixture Model', hidden: second, supportedReasoningEfforts: [{ reasoningEffort: 'high' }], serviceTiers: [{ id: 'priority', name: 'Fast', description: 'Fixture tier' }] }], nextCursor: second ? null : 'page-2' };
+  } else if (request.method === 'turn/start') result = { turn };
+  else if (request.method === 'thread/settings/update') result = {};
+  else return error('unexpected fixture method ' + request.method);
+  process.stdout.write(JSON.stringify({ id: request.id, result }) + '\n');
+});
+"#)
+                .env("VK_FIXTURE_TRACE", directory.path().join("requests.jsonl"))
+                .env("VK_FIXTURE_CATALOG", catalog)
+                .env("VK_FIXTURE_EFFORT", effort)
+                .env("VK_FIXTURE_FAILED_METHOD", failed_method)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .expect("Node is required for the native Codex RPC fixture");
+            let cancel = CancellationToken::new();
+            let client = AppServerClient::new(
+                LogWriter::new(tokio::io::sink()),
+                None,
+                false,
+                plan,
+                Some(effort.parse().unwrap()),
+                Default::default(),
+                false,
+                String::new(),
+                cancel.clone(),
+            );
+            let (exit_tx, _) = tokio::sync::oneshot::channel();
+            client.connect(super::JsonRpcPeer::spawn(
+                child.stdin.take().unwrap(),
+                child.stdout.take().unwrap(),
+                client.clone(),
+                super::super::jsonrpc::ExitSignalSender::new(exit_tx),
+                cancel.clone(),
+            ));
+            client.initialize().await.unwrap();
+            Self {
+                client,
+                child,
+                directory,
+                cancel,
+            }
+        }
+
+        async fn start_turn(
+            &self,
+            resume: bool,
+            tier: Option<&str>,
+        ) -> Result<super::TurnStartResponse, super::ExecutorError> {
+            let effort_key = if self.client.plan_mode {
+                "plan_mode_reasoning_effort"
+            } else {
+                "model_reasoning_effort"
+            };
+            let params = super::ThreadStartParams {
+                model: Some("gpt-6.1-sol".into()),
+                service_tier: tier.map(|tier| Some(tier.into())),
+                config: Some(std::collections::HashMap::from([(
+                    effort_key.into(),
+                    serde_json::to_value(self.client.current_reasoning_effort()).unwrap(),
+                )])),
+                ..Default::default()
+            };
+            let (thread_id, model) = if resume {
+                let response = self
+                    .client
+                    .thread_resume(super::super::resume_params_from("thread-1".into(), params))
+                    .await?;
+                (response.thread.id, response.model)
+            } else {
+                let response = self.client.thread_start(params).await?;
+                (response.thread.id, response.model)
+            };
+            self.client.set_resolved_model(model);
+            self.client
+                .turn_start_with_mode(
+                    thread_id,
+                    vec![super::UserInput::Text {
+                        text: "fixture business prompt".into(),
+                        text_elements: vec![],
+                    }],
+                    Some(self.client.initial_collaboration_mode()?),
+                )
+                .await
+        }
+
+        fn requests(&self) -> Vec<serde_json::Value> {
+            std::fs::read_to_string(self.directory.path().join("requests.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        }
+
+        async fn shutdown(mut self) {
+            self.cancel.cancel();
+            let _ = self.child.kill().await;
+        }
+    }
+
+    impl Drop for NativeOptionsFixture {
+        fn drop(&mut self) {
+            self.cancel.cancel();
+        }
+    }
 
     #[test]
     fn structured_native_replies_preserve_original_ids_and_exact_decisions() {
@@ -1951,7 +2151,7 @@ mod version_check_tests {
     }
 
     #[test]
-    fn explicit_model_options_require_exact_native_advertisement() {
+    fn advertised_codex_options_reject_explicit_unsupported_effort_and_tier() {
         let catalog: super::ModelCatalogResponse = serde_json::from_value(json!({"data":[{
             "id":"picker-alias", "model":"native-model", "displayName":"Model",
             "supportedReasoningEfforts":[{"reasoningEffort":"high"}],
@@ -1971,9 +2171,244 @@ mod version_check_tests {
         assert!(
             super::validate_model_options(&catalog, "native-model", Some("max"), None).is_err()
         );
+    }
+
+    #[test]
+    fn absent_codex_model_defers_effort_but_requires_nondefault_tier_confirmation() {
+        let catalog: super::ModelCatalogResponse =
+            serde_json::from_value(json!({ "data": [] })).unwrap();
+        for tier in [None, Some("default")] {
+            assert!(
+                super::validate_model_options(&catalog, "unlisted-model", Some("xhigh"), tier)
+                    .is_ok()
+            );
+        }
+        let error = super::validate_model_options(
+            &catalog,
+            "unlisted-model",
+            Some("xhigh"),
+            Some("priority"),
+        )
+        .unwrap_err();
         assert!(
-            super::validate_model_options(&catalog, "other-model", Some("high"), None).is_err()
+            error
+                .to_string()
+                .contains("could not confirm service tier priority")
         );
+    }
+
+    #[tokio::test]
+    async fn unlisted_codex_model_preserves_native_start_resume_and_settings_efforts() {
+        for (plan, effort) in [
+            (false, "xhigh"),
+            (false, "max"),
+            (false, "future-effort"),
+            (true, "max"),
+        ] {
+            let fixture = NativeOptionsFixture::new("missing", effort, plan, "").await;
+            fixture.start_turn(false, None).await.unwrap();
+            fixture.start_turn(true, Some("default")).await.unwrap();
+            let update = fixture
+                .client
+                .build_reasoning_thread_settings_update_params(
+                    "thread-1".into(),
+                    Some(ProtocolReasoningEffort::Custom("future-update".into())),
+                )
+                .unwrap();
+            fixture.client.thread_settings_update(update).await.unwrap();
+            assert_eq!(
+                fixture
+                    .client
+                    .current_reasoning_effort()
+                    .unwrap()
+                    .to_string(),
+                "future-update"
+            );
+            let requests = fixture.requests();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| request["method"] == "turn/start")
+                    .count(),
+                2
+            );
+            for request in &requests {
+                match request["method"].as_str().unwrap() {
+                    "thread/start" | "thread/resume" => {
+                        assert_eq!(request["params"]["model"], "gpt-6.1-sol");
+                        if request["method"] == "thread/resume" {
+                            assert_eq!(request["params"]["excludeTurns"], true);
+                        }
+                        let key = if plan {
+                            "plan_mode_reasoning_effort"
+                        } else {
+                            "model_reasoning_effort"
+                        };
+                        assert_eq!(request["params"]["config"][key], effort);
+                    }
+                    "model/list" => assert_eq!(request["params"]["includeHidden"], true),
+                    "turn/start" | "thread/settings/update" => {
+                        let expected = if request["method"] == "turn/start" {
+                            effort
+                        } else {
+                            "future-update"
+                        };
+                        assert_eq!(request["params"]["effort"], expected);
+                        assert_eq!(
+                            request["params"]["collaborationMode"]["settings"]["model"],
+                            "gpt-6.1-sol"
+                        );
+                        assert_eq!(
+                            request["params"]["collaborationMode"]["settings"]["reasoning_effort"],
+                            expected
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            assert!(
+                requests
+                    .iter()
+                    .any(|request| request["method"] == "model/list"
+                        && request["params"]["cursor"] == "page-2")
+            );
+            fixture.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_codex_catalog_defers_effort_and_preserves_default_routing() {
+        for catalog in ["error", "timeout"] {
+            let fixture = NativeOptionsFixture::new(catalog, "xhigh", false, "").await;
+            fixture.start_turn(false, Some("default")).await.unwrap();
+            let requests = fixture.requests();
+            let turn = requests
+                .iter()
+                .find(|request| request["method"] == "turn/start")
+                .unwrap();
+            assert_eq!(turn["params"]["effort"], "xhigh");
+            assert_eq!(
+                turn["params"]["collaborationMode"]["settings"]["reasoning_effort"],
+                "xhigh"
+            );
+            let thread = requests
+                .iter()
+                .find(|request| request["method"] == "thread/start")
+                .unwrap();
+            assert_eq!(thread["params"]["serviceTier"], "default");
+            fixture.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_codex_options_prevent_prompt_and_settings_update() {
+        for (catalog, effort, tier, expected) in [
+            (
+                "known",
+                "xhigh",
+                None,
+                "does not advertise reasoning effort xhigh",
+            ),
+            (
+                "known",
+                "high",
+                Some("flex"),
+                "does not advertise service tier flex",
+            ),
+            (
+                "missing",
+                "xhigh",
+                Some("priority"),
+                "could not confirm service tier priority",
+            ),
+            (
+                "error",
+                "xhigh",
+                Some("priority"),
+                "native catalog unavailable",
+            ),
+        ] {
+            for resume in [false, true] {
+                let fixture = NativeOptionsFixture::new(catalog, effort, false, "").await;
+                let error = fixture.start_turn(resume, tier).await.unwrap_err();
+                assert!(error.to_string().contains(expected), "{error}");
+                fixture.client.set_resolved_model("gpt-6.1-sol".into());
+                let mut update = fixture
+                    .client
+                    .build_reasoning_thread_settings_update_params(
+                        "thread-1".into(),
+                        Some(effort.parse().unwrap()),
+                    )
+                    .unwrap();
+                update.service_tier = tier.map(|tier| Some(tier.into()));
+                let error = fixture
+                    .client
+                    .thread_settings_update(update)
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains(expected), "{error}");
+                assert!(
+                    fixture
+                        .requests()
+                        .iter()
+                        .all(|request| request["method"] != "turn/start"
+                            && request["method"] != "thread/settings/update")
+                );
+                fixture.shutdown().await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn native_codex_rpc_errors_survive_inconclusive_catalog_validation() {
+        for failed_method in [
+            "thread/start",
+            "thread/resume",
+            "turn/start",
+            "thread/settings/update",
+        ] {
+            let fixture = NativeOptionsFixture::new("missing", "xhigh", false, failed_method).await;
+            let error = if failed_method == "thread/settings/update" {
+                fixture.start_turn(false, None).await.unwrap();
+                let update = fixture
+                    .client
+                    .build_reasoning_thread_settings_update_params(
+                        "thread-1".into(),
+                        Some(ProtocolReasoningEffort::High),
+                    )
+                    .unwrap();
+                let error = fixture
+                    .client
+                    .thread_settings_update(update)
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    fixture.client.current_reasoning_effort(),
+                    Some(ProtocolReasoningEffort::XHigh)
+                );
+                error
+            } else {
+                fixture
+                    .start_turn(failed_method == "thread/resume", None)
+                    .await
+                    .unwrap_err()
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("native fixture rejected {failed_method}")),
+                "{error}"
+            );
+            if failed_method.starts_with("thread/") && failed_method != "thread/settings/update" {
+                assert!(
+                    fixture
+                        .requests()
+                        .iter()
+                        .all(|request| request["method"] != "turn/start")
+                );
+            }
+            fixture.shutdown().await;
+        }
     }
 
     #[test]

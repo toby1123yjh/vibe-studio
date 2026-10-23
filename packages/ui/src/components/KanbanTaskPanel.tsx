@@ -113,7 +113,6 @@ export interface KanbanTaskPanelProps {
   renderDescriptionEditor: (
     props: KanbanTaskDescriptionEditorProps
   ) => ReactNode;
-  renderProjectWorkspaceContext?: () => ReactNode;
 
   // Loading states
   isSubmitting?: boolean;
@@ -174,7 +173,6 @@ export function KanbanTaskPanel({
   onCreateTag,
   renderAddTagControl,
   renderDescriptionEditor,
-  renderProjectWorkspaceContext,
   isSubmitting,
   submitError,
   onDismissSubmitError,
@@ -330,12 +328,6 @@ export function KanbanTaskPanel({
             disabled={isSubmitting}
           />
         </div>
-
-        {isCreateMode && renderProjectWorkspaceContext ? (
-          <div className="px-base py-base border-b">
-            {renderProjectWorkspaceContext()}
-          </div>
-        ) : null}
 
         {/* Title and Description */}
         <div className="rounded-sm">

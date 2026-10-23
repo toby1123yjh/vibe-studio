@@ -82,6 +82,7 @@
     }
   },
   "diff": {
+    "unavailable": "Impossible de charger les modifications",
     "filesChanged_one": "{{count}} fichier modifié",
     "filesChanged_other": "{{count}} fichiers modifiés"
   },
@@ -116,6 +117,16 @@
   "conversation": {
     "executors": "Exécuteurs",
     "saveAsDefault": "Enregistrer par défaut",
+    "composer": {
+      "moreActions": "Plus d’actions",
+      "addPrComments": "Ajouter des commentaires de PR",
+      "removeTask": "Supprimer le lien avec {{task}}",
+      "messagePlaceholder": "Écrivez un message…",
+      "feedbackPlaceholder": "Donnez votre avis sur le plan…",
+      "editPlaceholder": "Modifiez votre message…",
+      "changesPlaceholder": "Décrivez les modifications souhaitées…",
+      "answerPlaceholder": "Écrivez votre réponse…"
+    },
     "you": "Vous",
     "thinking": "Réflexion",
     "todo": "À faire",

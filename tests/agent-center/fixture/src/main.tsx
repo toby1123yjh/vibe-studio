@@ -11,6 +11,7 @@ import {
 import { AgentCenterPage } from '../../../../packages/web-core/src/features/agent-center/ui/AgentCenterPage';
 import { ModelSelectorContainer } from '../../../../packages/web-core/src/shared/components/ModelSelectorContainer';
 import { CreateChatBox } from '../../../../packages/ui/src/components/CreateChatBox';
+import { SessionComposerPreview } from './SessionComposerPreview';
 import {
   PriorityIcon,
   type PriorityLevel,
@@ -43,7 +44,8 @@ const root = document.getElementById('root');
 if (!root) throw new Error('Agent Center fixture root is missing');
 
 function HostDiscoveryProbe() {
-  const { hostDiscovery, remoteHostDiscovery } = useSettingsHost();
+  const { hostDiscovery, remoteHostDiscovery, availableHosts } =
+    useSettingsHost();
   return (
     <output
       hidden
@@ -51,6 +53,11 @@ function HostDiscoveryProbe() {
       data-canonical={hostDiscovery.hasCanonicalData}
       data-host-error={hostDiscovery.error != null}
       data-remote-error={remoteHostDiscovery.error != null}
+      data-remote-canonical={remoteHostDiscovery.hasCanonicalData}
+      data-remote-loading={remoteHostDiscovery.isLoading}
+      data-remote-retrying={remoteHostDiscovery.isRetrying}
+      data-remote-can-retry={remoteHostDiscovery.canRetry}
+      data-host-count={availableHosts.length}
     />
   );
 }
@@ -67,6 +74,11 @@ function ComposerPreview({
   children: ReactNode;
 }) {
   const [text, setText] = useState('');
+  if (new URLSearchParams(window.location.search).has('sessionComposer')) {
+    return (
+      <SessionComposerPreview executor={executor} modelSelector={children} />
+    );
+  }
   if (!new URLSearchParams(window.location.search).has('composerPreview')) {
     return children;
   }
@@ -344,21 +356,42 @@ function SelectorsFixture() {
   );
 }
 
-createRoot(root).render(
-  <HotkeysProvider initiallyActiveScopes={['kanban', 'projects']}>
-    <QueryClientProvider client={queryClient}>
-      <main className="fixture-shell">
-        <SettingsHostProvider>
-          <SettingsDirtyProvider>
-            <HostDiscoveryProbe />
-            {new URLSearchParams(window.location.search).has('selectors') ? (
-              <SelectorsFixture />
-            ) : (
-              <AgentCenterPage />
-            )}
-          </SettingsDirtyProvider>
-        </SettingsHostProvider>
-      </main>
-    </QueryClientProvider>
-  </HotkeysProvider>
-);
+function AgentCenterFixture() {
+  const [, setConfigVersion] = useState(0);
+  const params = new URLSearchParams(window.location.search);
+  return (
+    <HotkeysProvider initiallyActiveScopes={['kanban', 'projects']}>
+      <QueryClientProvider client={queryClient}>
+        <main className="fixture-shell">
+          {params.has('remoteConfigControls') && (
+            <button
+              onClick={() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set(
+                  'remoteConfigured',
+                  String(params.get('remoteConfigured') === 'false')
+                );
+                window.history.replaceState(null, '', url);
+                setConfigVersion((version) => version + 1);
+              }}
+            >
+              Toggle remote service
+            </button>
+          )}
+          <SettingsHostProvider>
+            <SettingsDirtyProvider>
+              <HostDiscoveryProbe />
+              {params.has('selectors') ? (
+                <SelectorsFixture />
+              ) : (
+                <AgentCenterPage />
+              )}
+            </SettingsDirtyProvider>
+          </SettingsHostProvider>
+        </main>
+      </QueryClientProvider>
+    </HotkeysProvider>
+  );
+}
+
+createRoot(root).render(<AgentCenterFixture />);

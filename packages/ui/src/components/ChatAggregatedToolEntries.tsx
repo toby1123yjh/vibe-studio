@@ -142,14 +142,15 @@ export function ChatAggregatedToolEntries({
           disabled={!hasDetails}
           aria-expanded={hasDetails ? entryExpanded : undefined}
         >
-          <span className="relative shrink-0 pt-0.5">
+          <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
             <Icon className="size-icon-base" />
             {entry.status && (
-              <ToolStatusDot
-                status={entry.status}
-                active={isEntryActive(entry)}
-                className="absolute -bottom-0.5 -left-0.5"
-              />
+              <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
+                <ToolStatusDot
+                  status={entry.status}
+                  active={isEntryActive(entry)}
+                />
+              </span>
             )}
           </span>
           <ActivityText active={isRunning} className="min-w-0 flex-1 truncate">
@@ -190,7 +191,7 @@ export function ChatAggregatedToolEntries({
         aria-expanded={expanded}
         data-scroll-anchor-target=""
       >
-        <span className="relative shrink-0 pt-0.5">
+        <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
           {isHovered ? (
             <CaretDownIcon
               className={cn(
@@ -202,10 +203,9 @@ export function ChatAggregatedToolEntries({
             <Icon className="size-icon-base" />
           )}
           {aggregateStatus && (
-            <ToolStatusDot
-              status={aggregateStatus}
-              className="absolute -bottom-0.5 -left-0.5"
-            />
+            <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
+              <ToolStatusDot status={aggregateStatus} />
+            </span>
           )}
         </span>
 
@@ -247,14 +247,15 @@ export function ChatAggregatedToolEntries({
                   disabled={!hasDetails}
                   aria-expanded={hasDetails ? entryExpanded : undefined}
                 >
-                  <span className="relative shrink-0 pt-0.5">
+                  <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
                     <Icon className="size-icon-base" />
                     {entry.status && (
-                      <ToolStatusDot
-                        status={entry.status}
-                        active={isEntryActive(entry)}
-                        className="absolute -bottom-0.5 -left-0.5"
-                      />
+                      <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
+                        <ToolStatusDot
+                          status={entry.status}
+                          active={isEntryActive(entry)}
+                        />
+                      </span>
                     )}
                   </span>
                   <span className="flex min-w-0 flex-1 items-center gap-base">

@@ -124,9 +124,9 @@ export function WorkspacesLayout() {
       canonicalSession,
       fallbackTitle,
       taskLabel: taskId
-        ? t('agentWorkbench.header.issue', {
+        ? t('agentWorkbench.header.task', {
             taskId,
-            defaultValue: 'Task {{issueId}}',
+            defaultValue: 'Task {{taskId}}',
           })
         : undefined,
       workspaceContext: selectedWorkspace
@@ -149,6 +149,7 @@ export function WorkspacesLayout() {
     repos,
     selectedSession,
     selectedWorkspace,
+    sessions.length,
     t,
   ]);
   usePageTitle(
@@ -293,6 +294,7 @@ export function WorkspacesLayout() {
                 />
               }
               inspectorVisible={isRightSidebarVisible && !isCreateMode}
+              inspectorAvailable={!isCreateMode && Boolean(selectedWorkspace)}
               onInspectorVisibleChange={setInspectorVisible}
             />
           </MainWorkspaceFilePreviewActionsBridge>

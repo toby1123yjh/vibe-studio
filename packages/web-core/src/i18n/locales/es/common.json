@@ -1,4 +1,25 @@
 {
+  "agentWorkbench": {
+    "inspector": {
+      "open": "Herramientas",
+      "label": "Herramientas",
+      "close": "Cerrar herramientas",
+      "resize": "Ajustar ancho de herramientas",
+      "tabs": {
+        "changes": "Cambios",
+        "files": "Archivos",
+        "git": "Git",
+        "terminal": "Terminal",
+        "preview": "Vista previa",
+        "logs": "Registros"
+      }
+    }
+  },
+  "panels": {
+    "conversation": "Conversación",
+    "taskDetails": "Detalles de la tarea",
+    "resizeWidth": "Ajustar el ancho del panel"
+  },
   "editorNames": {
     "custom": "Personalizado"
   },
@@ -788,6 +809,7 @@
     "followCliValue": "Usar CLI · {{value}}",
     "builtinCatalog": "Lista de respaldo. Las capacidades del agente no están confirmadas.",
     "preset": "Preajuste",
+    "runSettings": "Ajustes de ejecución",
     "custom": "Personalizar",
     "permissions": "Permisos",
     "permissionAuto": "Auto",
@@ -2119,15 +2141,10 @@
     }
   },
   "projectWorkspaceDefault": {
-    "label": "Project default working location",
-    "loading": "Loading project working location",
-    "loadFailed": "Unable to load",
-    "loadFailedDescription": "The saved working location could not be resolved. Open project settings to review it.",
-    "empty": "Not configured",
-    "description": "This working location will prefill new executions. Git locations also include a base branch. You still confirm the actual workspace before an agent starts.",
-    "emptyDescription": "No hidden fallback will be used. Choose a working directory when starting an execution, or configure a project default.",
-    "configure": "Configure project working location",
-    "configureShort": "Configure"
+    "label": "Directorio de trabajo",
+    "loading": "Cargando directorio de trabajo",
+    "loadFailed": "Directorio no disponible",
+    "empty": "No hay directorio configurado"
   },
   "agentSessionResume": {
     "open": "Recent agent sessions",

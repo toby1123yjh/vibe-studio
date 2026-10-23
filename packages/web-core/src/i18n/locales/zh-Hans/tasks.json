@@ -112,6 +112,7 @@
     }
   },
   "diff": {
+    "unavailable": "无法加载文件变更",
     "filesChanged_one": "{{count}} 个文件已更改",
     "filesChanged_other": "{{count}} 个文件已更改"
   },
@@ -483,6 +484,16 @@
     },
     "executors": "执行器",
     "saveAsDefault": "设为默认",
+    "composer": {
+      "moreActions": "更多操作",
+      "addPrComments": "添加 PR 评论",
+      "removeTask": "取消关联 {{task}}",
+      "messagePlaceholder": "输入消息…",
+      "feedbackPlaceholder": "输入对计划的反馈…",
+      "editPlaceholder": "编辑消息…",
+      "changesPlaceholder": "描述需要调整的内容…",
+      "answerPlaceholder": "输入你的回答…"
+    },
     "updatedTodos": "更新的待办事项",
     "viewInChangesPanel": "在更改面板中查看",
     "openFilePreview": "打开文件预览",
