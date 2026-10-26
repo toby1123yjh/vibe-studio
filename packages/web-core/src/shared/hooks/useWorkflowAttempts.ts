@@ -1,8 +1,10 @@
 import { getCurrentHostId, useHostId } from '@/shared/providers/HostIdProvider';
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
+  queryOptions,
   type QueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query';
@@ -106,15 +108,39 @@ export function useProjectWorkflowAttempts(
   options: { enabled?: boolean } = {}
 ): UseQueryResult<WorkflowAttemptListResponse> {
   const hostId = useHostId();
-  const workflowApi = createWorkflowApi(hostId);
   const { enabled = true } = options;
 
   return useQuery({
-    queryKey: projectId
-      ? workflowAttemptQueryKeys.project(projectId, hostId)
-      : ['workflow-attempts', 'project', 'noop'],
-    queryFn: () => workflowApi.listProjectAttempts(projectId as string),
+    ...projectWorkflowAttemptsQueryOptions(projectId ?? '', hostId),
     enabled: !!projectId && enabled,
+  });
+}
+
+function projectWorkflowAttemptsQueryOptions(
+  projectId: string,
+  hostId: string | null
+) {
+  return queryOptions({
+    queryKey: workflowAttemptQueryKeys.project(projectId, hostId),
+    queryFn: ({ signal }) =>
+      createWorkflowApi(hostId).listProjectAttempts(projectId, signal),
+    refetchInterval: (query) =>
+      query.state.data?.attempts.some((attempt) =>
+        ['running', 'awaiting_human', 'awaiting_arena', 'cancelling'].includes(
+          attempt.status
+        )
+      )
+        ? 5_000
+        : false,
+  });
+}
+
+export function useWorkflowAttemptsForProjects(projectIds: readonly string[]) {
+  const hostId = useHostId();
+  return useQueries({
+    queries: projectIds.map((projectId) =>
+      projectWorkflowAttemptsQueryOptions(projectId, hostId)
+    ),
   });
 }
 

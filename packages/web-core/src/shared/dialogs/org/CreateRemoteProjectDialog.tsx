@@ -6,6 +6,7 @@ import { useHostId } from '@/shared/providers/HostIdProvider';
 import { Button } from '@vibe/ui/components/Button';
 import { Input } from '@vibe/ui/components/Input';
 import { Label } from '@vibe/ui/components/Label';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   Dialog,
   DialogContent,
@@ -612,7 +613,9 @@ function CreateRemoteProjectForm({
                   className="break-all rounded border border-border bg-secondary p-2 text-xs"
                   role="status"
                 >
-                  <div>{location.selection.path}</div>
+                  <div title={formatPathForDisplay(location.selection.path)}>
+                    {formatPathForDisplay(location.selection.path)}
+                  </div>
                   {location.selection.mode === 'worktree' && (
                     <div className="mt-1 text-low">
                       {location.selection.targetBranch}

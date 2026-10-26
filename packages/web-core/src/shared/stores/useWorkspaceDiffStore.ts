@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import { createContext, useContext } from 'react';
+import {
+  createContext,
+  createElement,
+  useContext,
+  useMemo,
+  type ReactNode,
+} from 'react';
 import type { Diff, DiffStats, UnifiedPrComment } from 'shared/types';
 import type { NormalizedGitHubComment } from '@/shared/hooks/useWorkspaceContext';
 
@@ -79,13 +85,36 @@ export const useWorkspaceDiffStore = create<WorkspaceDiffState>()((set) => ({
   clearWorkspaceDiffData: () => set(DEFAULT_DATA),
 }));
 
+const WorkspaceDiffDataContext = createContext<WorkspaceDiffData | null>(null);
+
+/** Bound tool views read their own diffs without changing the page's store. */
+export function WorkspaceDiffDataProvider({
+  value,
+  children,
+}: {
+  value: Partial<WorkspaceDiffData>;
+  children: ReactNode;
+}) {
+  const data = useMemo(() => ({ ...DEFAULT_DATA, ...value }), [value]);
+  return createElement(
+    WorkspaceDiffDataContext.Provider,
+    { value: data },
+    children
+  );
+}
+
+function useWorkspaceDiffData<T>(selector: (data: WorkspaceDiffData) => T): T {
+  const scopedData = useContext(WorkspaceDiffDataContext);
+  return useWorkspaceDiffStore((data) => selector(scopedData ?? data));
+}
+
 // ---------------------------------------------------------------------------
 // Atomic selectors — each subscribes to a single field to minimise rerenders
 // ---------------------------------------------------------------------------
 
-export const useDiffs = () => useWorkspaceDiffStore((s) => s.diffs);
+export const useDiffs = () => useWorkspaceDiffData((s) => s.diffs);
 
-export const useDiffError = () => useWorkspaceDiffStore((s) => s.diffError);
+export const useDiffError = () => useWorkspaceDiffData((s) => s.diffError);
 
 const WorkspaceDiffPathsContext = createContext<Set<string> | undefined>(
   undefined
@@ -96,33 +125,33 @@ export const WorkspaceDiffPathsProvider = WorkspaceDiffPathsContext.Provider;
 
 export const useDiffPaths = (scopedPaths?: Set<string>) => {
   const contextPaths = useContext(WorkspaceDiffPathsContext);
-  return useWorkspaceDiffStore(
+  return useWorkspaceDiffData(
     (s) => scopedPaths ?? contextPaths ?? s.diffPaths
   );
 };
 
-export const useDiffStats = () => useWorkspaceDiffStore((s) => s.diffStats);
+export const useDiffStats = () => useWorkspaceDiffData((s) => s.diffStats);
 
 export const useStoreDiffGitHubComments = () =>
-  useWorkspaceDiffStore((s) => s.gitHubComments);
+  useWorkspaceDiffData((s) => s.gitHubComments);
 
 export const useIsGitHubCommentsLoading = () =>
-  useWorkspaceDiffStore((s) => s.isGitHubCommentsLoading);
+  useWorkspaceDiffData((s) => s.isGitHubCommentsLoading);
 
 export const useShowGitHubComments = () =>
-  useWorkspaceDiffStore((s) => s.showGitHubComments);
+  useWorkspaceDiffData((s) => s.showGitHubComments);
 
 export const useSetShowGitHubComments = () =>
-  useWorkspaceDiffStore((s) => s.setShowGitHubComments);
+  useWorkspaceDiffData((s) => s.setShowGitHubComments);
 
 export const useGetGitHubCommentsForFile = () =>
-  useWorkspaceDiffStore((s) => s.getGitHubCommentsForFile);
+  useWorkspaceDiffData((s) => s.getGitHubCommentsForFile);
 
 export const useGetGitHubCommentCountForFile = () =>
-  useWorkspaceDiffStore((s) => s.getGitHubCommentCountForFile);
+  useWorkspaceDiffData((s) => s.getGitHubCommentCountForFile);
 
 export const useGetFilesWithGitHubComments = () =>
-  useWorkspaceDiffStore((s) => s.getFilesWithGitHubComments);
+  useWorkspaceDiffData((s) => s.getFilesWithGitHubComments);
 
 export const useGetFirstCommentLineForFile = () =>
-  useWorkspaceDiffStore((s) => s.getFirstCommentLineForFile);
+  useWorkspaceDiffData((s) => s.getFirstCommentLineForFile);

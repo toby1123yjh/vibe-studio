@@ -112,6 +112,7 @@ function BoundWorkspaceConversation({
           onSelectSession={ignoreSessionSelection}
           onStartNewSession={ignoreSessionSelection}
           presentation="embedded"
+          showSessionControls={false}
         />
       </WorkspaceFilePreviewActionsProvider>
     </ExecutionProcessesProvider>

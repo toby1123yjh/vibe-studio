@@ -19,7 +19,6 @@ const WorkerUrl = new URL(
 import { sortDiffs } from '@/shared/lib/fileTreeUtils';
 import { useChangesView } from '@/shared/hooks/useChangesView';
 import { useScrollSyncStateMachine } from '@/shared/hooks/useScrollSyncStateMachine';
-import { useFileInViewStore } from '@/shared/stores/useFileInViewStore';
 import {
   useDiffs,
   useShowGitHubComments,
@@ -599,7 +598,8 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
   workspaceId,
 }: ChangesPanelContainerProps) {
   const diffs = useDiffs();
-  const { registerScrollToFile } = useChangesView();
+  const { registerScrollToFile, setFileInView } = useChangesView();
+  const panelRef = useRef<HTMLDivElement>(null);
   const [processedPaths] = useState(() => new Set<string>());
   const [mountedCount, setMountedCount] = useState(0);
   const rafRef = useRef<number | null>(null);
@@ -686,9 +686,7 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
     [orderedPaths]
   );
 
-  const handleFileInViewChanged = useCallback((path: string | null) => {
-    useFileInViewStore.getState().setFileInView(path);
-  }, []);
+  const handleFileInViewChanged = setFileInView;
 
   const {
     scrollToFile: beginProgrammaticScroll,
@@ -710,7 +708,7 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
   useEffect(() => {
     if (!hasItems) return;
 
-    const firstWrapper = document.querySelector('[data-diff-path]');
+    const firstWrapper = panelRef.current?.querySelector('[data-diff-path]');
     const scrollRoot =
       firstWrapper instanceof HTMLElement
         ? firstWrapper.closest('.overflow-auto')
@@ -718,20 +716,21 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
 
     if (!(scrollRoot instanceof HTMLElement)) return;
 
-    topBandCandidatesRef.current.clear();
+    const candidates = topBandCandidatesRef.current;
+    candidates.clear();
 
     const intersectionObs = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (!(entry.target instanceof HTMLElement)) continue;
           if (!entry.target.isConnected) {
-            topBandCandidatesRef.current.delete(entry.target);
+            candidates.delete(entry.target);
             continue;
           }
           if (entry.isIntersecting) {
-            topBandCandidatesRef.current.add(entry.target);
+            candidates.add(entry.target);
           } else {
-            topBandCandidatesRef.current.delete(entry.target);
+            candidates.delete(entry.target);
           }
         }
 
@@ -739,9 +738,9 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
         let minDist = Infinity;
         const rootTop = scrollRoot.getBoundingClientRect().top;
 
-        for (const el of topBandCandidatesRef.current) {
+        for (const el of candidates) {
           if (!el.isConnected) {
-            topBandCandidatesRef.current.delete(el);
+            candidates.delete(el);
             continue;
           }
           const dist = Math.abs(el.getBoundingClientRect().top - rootTop);
@@ -785,7 +784,7 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
     mutationObs.observe(scrollRoot, { childList: true, subtree: true });
 
     return () => {
-      topBandCandidatesRef.current.clear();
+      candidates.clear();
       intersectionObs.disconnect();
       mutationObs.disconnect();
     };
@@ -810,7 +809,7 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
       latestScrollRequestRef.current = requestId;
 
       requestAnimationFrame(() => {
-        const wrapper = document.querySelector(
+        const wrapper = panelRef.current?.querySelector(
           `[data-diff-path="${CSS.escape(path)}"]`
         );
         if (!(wrapper instanceof HTMLElement)) {
@@ -846,35 +845,37 @@ export const ChangesPanelContainer = memo(function ChangesPanelContainer({
   );
 
   useEffect(() => {
-    registerScrollToFile(handleScrollToFile);
+    registerScrollToFile(hasItems ? handleScrollToFile : null);
     return () => {
       registerScrollToFile(null);
     };
-  }, [registerScrollToFile, handleScrollToFile]);
+  }, [registerScrollToFile, handleScrollToFile, hasItems]);
 
   return (
     <WorkerPoolContextProvider
       poolOptions={POOL_OPTIONS}
       highlighterOptions={HIGHLIGHTER_OPTIONS}
     >
-      <Virtualizer
-        {...({ ref: virtualizerRef } as Record<string, unknown>)}
-        className={`w-full h-full overflow-auto bg-secondary px-base pt-1 ${className}`}
-        contentClassName="flex flex-col gap-1"
-        style={{ contain: 'layout style paint' }}
-      >
-        {itemsToRender.map(({ diff, initialExpanded }) => {
-          const path = diff.newPath || diff.oldPath || '';
-          return (
-            <DiffFileItem
-              key={path}
-              diff={diff}
-              initialExpanded={initialExpanded}
-              workspaceId={workspaceId}
-            />
-          );
-        })}
-      </Virtualizer>
+      <div ref={panelRef} className="h-full min-h-0 min-w-0">
+        <Virtualizer
+          {...({ ref: virtualizerRef } as Record<string, unknown>)}
+          className={`w-full h-full overflow-auto bg-secondary px-base pt-1 ${className}`}
+          contentClassName="flex flex-col gap-1"
+          style={{ contain: 'layout style paint' }}
+        >
+          {itemsToRender.map(({ diff, initialExpanded }) => {
+            const path = diff.newPath || diff.oldPath || '';
+            return (
+              <DiffFileItem
+                key={path}
+                diff={diff}
+                initialExpanded={initialExpanded}
+                workspaceId={workspaceId}
+              />
+            );
+          })}
+        </Virtualizer>
+      </div>
     </WorkerPoolContextProvider>
   );
 });

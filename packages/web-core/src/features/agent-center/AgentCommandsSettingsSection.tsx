@@ -7,6 +7,7 @@ import {
 } from '@phosphor-icons/react';
 import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type {
   AgentCommandInventoryView,
   AgentCommandOperationError,
@@ -469,7 +470,7 @@ export function AgentCommandsSettingsSection({
             <div className="flex gap-2">
               <SettingsInput
                 id="agent-commands-project-path"
-                value={projectPath}
+                value={formatPathForDisplay(projectPath)}
                 onChange={setProjectPath}
                 placeholder={t('agentCenter.commands.projectPath.placeholder')}
               />

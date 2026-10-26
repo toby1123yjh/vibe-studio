@@ -50,7 +50,7 @@ import { OAuthDialog } from '@/shared/dialogs/global/OAuthDialog';
 import { CreateRemoteProjectDialog } from '@/shared/dialogs/org/CreateRemoteProjectDialog';
 import { ProjectActionsMenu } from '@/shared/components/ProjectActionsMenu';
 import { isDefaultProject } from '@/shared/lib/defaultProject';
-import { formatWorkspacePathForDisplay } from '@/shared/lib/workspaceContext';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { useDeleteProject } from '@/shared/hooks/useDeleteProject';
 import { useShape } from '@/shared/integrations/electric/hooks';
 import { bulkUpdateProjectStatuses } from '@/shared/lib/remoteApi';
@@ -807,7 +807,7 @@ export function RemoteProjectsSettingsSection({
       ? workspaceDefault.path
       : workspaceDefaultRepo?.path;
   const workspaceDirectoryLabel = workspaceDirectoryPath
-    ? formatWorkspacePathForDisplay(workspaceDirectoryPath)
+    ? formatPathForDisplay(workspaceDirectoryPath)
     : undefined;
 
   const isDirty = isProjectDirty || hasStatusChanges || hasDefaultRepoChanges;

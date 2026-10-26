@@ -11,6 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
 import { useDropzone } from 'react-dropzone';
 import { useTranslation } from 'react-i18next';
+import { WrenchIcon } from '@phosphor-icons/react';
 import {
   BaseAgentCapability,
   type Session,
@@ -55,6 +56,7 @@ import {
   SessionChatBox,
   type ExecutionStatus,
   type SessionChatBoxEditorRenderProps,
+  type SessionToolbarActionItem,
 } from '@vibe/ui/components/SessionChatBox';
 import { ModelSelectorContainer } from '@/shared/components/ModelSelectorContainer';
 import { useModelAttachmentGuard } from '@/shared/hooks/useModelAttachmentGuard';
@@ -81,6 +83,7 @@ import { resolveWorkspaceWorkingDirectory } from '@/shared/lib/workspaceContext'
 import { isExecutionProcessActive } from '@/shared/lib/executionProcessRuntime';
 import { deriveCanonicalAgentRunActionPolicy } from '@/features/agent-runtime';
 import { canonicalAgentControls } from '../model/canonicalAgentControls';
+import { useConversationToolsOptional } from '../model/ConversationToolsContext';
 import {
   isSessionDraftSubmissionCurrent,
   snapshotSessionDraft,
@@ -187,7 +190,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     showOpenWorkspaceButton,
     preferredExecutorConfig,
     presentation = 'full-page',
-    showSessionControls = presentation !== 'embedded',
+    showSessionControls = true,
     workspace: explicitWorkspace,
     diffPaths,
   } = props;
@@ -259,11 +262,20 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   const appNavigation = useAppNavigation();
 
   const actionsContext = useContext(ActionsContext);
+  const conversationTools = useConversationToolsOptional();
   const { setRightMainPanelMode } = useWorkspacePanelState(workspaceId);
 
   const handleViewCode = useCallback(() => {
-    setRightMainPanelMode(RIGHT_MAIN_PANEL_MODES.CHANGES);
-  }, [setRightMainPanelMode]);
+    if (conversationTools) {
+      conversationTools.openTools(RIGHT_MAIN_PANEL_MODES.CHANGES);
+    } else {
+      setRightMainPanelMode(RIGHT_MAIN_PANEL_MODES.CHANGES);
+    }
+  }, [conversationTools, setRightMainPanelMode]);
+  const handleOpenTools = useCallback(() => {
+    if (conversationTools) conversationTools.openTools();
+    else setRightMainPanelMode(RIGHT_MAIN_PANEL_MODES.FILES);
+  }, [conversationTools, setRightMainPanelMode]);
 
   const handleOpenWorkspace = useCallback(() => {
     if (!workspaceId) return;
@@ -484,17 +496,18 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     (s) => s.clearPendingComponentMarkdown
   );
 
+  const componentMarkdown = conversationTools
+    ? conversationTools.pendingComponentMarkdown
+    : presentation === 'full-page'
+      ? pendingComponentMarkdown
+      : null;
+  const clearComponentContext =
+    conversationTools?.clearComponentContext ?? clearPendingComponentMarkdown;
   useEffect(() => {
-    if (presentation === 'full-page' && pendingComponentMarkdown) {
-      handleInsertMarkdown(pendingComponentMarkdown);
-      clearPendingComponentMarkdown();
-    }
-  }, [
-    pendingComponentMarkdown,
-    handleInsertMarkdown,
-    clearPendingComponentMarkdown,
-    presentation,
-  ]);
+    if (!componentMarkdown) return;
+    handleInsertMarkdown(componentMarkdown);
+    clearComponentContext();
+  }, [componentMarkdown, handleInsertMarkdown, clearComponentContext]);
 
   const { uploadFiles, localAttachments, clearUploadedAttachments } =
     useSessionAttachments(workspaceId, sessionId, handleInsertMarkdown);
@@ -943,31 +956,44 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     }
   }, [workspaceId, repos, handleInsertMarkdown]);
 
-  // The composer has one page-only action. Its explicit target is the same
-  // workspace as the session, independent of the page's selected workspace.
-  const toolbarActionItems = useMemo(
-    () =>
-      presentation !== 'embedded' && workspaceId && workspace && actionsContext
-        ? [
-            {
-              id: Actions.StartReview.id,
-              icon: Actions.StartReview.icon,
-              label: t('common:actions.startReview', {
-                defaultValue: 'Start review',
-              }),
-              tooltip: t('common:actions.startReviewDescription', {
-                defaultValue: 'Review changes with agent',
-              }),
-              onClick: () =>
-                void actionsContext.executeAction(
-                  Actions.StartReview,
-                  workspaceId
-                ),
-            },
-          ]
-        : [],
-    [presentation, workspaceId, workspace, actionsContext, t]
-  );
+  const toolbarActionItems = useMemo<SessionToolbarActionItem[]>(() => {
+    if (!workspaceId || !workspace) return [];
+    const items: SessionToolbarActionItem[] = [
+      {
+        id: 'conversation-tools',
+        icon: WrenchIcon,
+        label: t('common:agentWorkbench.inspector.open', {
+          defaultValue: 'Open tools',
+        }),
+        onClick: handleOpenTools,
+        requiresIdle: false,
+      },
+    ];
+    // Starting a review may create a sibling Session. Fixed workflow bindings
+    // forbid that operation regardless of the window's size.
+    if (showSessionControls && actionsContext) {
+      items.push({
+        id: Actions.StartReview.id,
+        icon: Actions.StartReview.icon,
+        label: t('common:actions.startReview', {
+          defaultValue: 'Start review',
+        }),
+        tooltip: t('common:actions.startReviewDescription', {
+          defaultValue: 'Review changes with agent',
+        }),
+        onClick: () =>
+          void actionsContext.executeAction(Actions.StartReview, workspaceId),
+      });
+    }
+    return items;
+  }, [
+    workspaceId,
+    workspace,
+    handleOpenTools,
+    showSessionControls,
+    actionsContext,
+    t,
+  ]);
 
   const handleStop = useCallback(() => {
     if (activeAgentRun) {
@@ -1280,7 +1306,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         items: toolbarActionItems,
       }}
       onPrCommentClick={
-        presentation !== 'embedded' &&
         branchStatus?.some((repo) =>
           repo.merges?.some(
             (merge) => merge.type === 'pr' && merge.pr_info.status === 'open'
@@ -1346,9 +1371,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       dropzone={{ getRootProps, getInputProps, isDragActive }}
       modelSelector={modelSelectorNode}
       resumeSelector={
-        presentation === 'embedded' ||
-        needsExecutorSelection ||
-        configurationLocked
+        !showSessionControls || needsExecutorSelection || configurationLocked
           ? undefined
           : resumePickerNode
       }

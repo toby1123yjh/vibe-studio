@@ -13,6 +13,7 @@ interface ChangesViewContextValue {
   diffPaths: Set<string>;
   findMatchingDiffPath: (text: string) => string | null;
   registerScrollToFile: (callback: ScrollToFileCallback | null) => void;
+  setFileInView: (path: string | null) => void;
 }
 
 interface ChangesViewActionsContextValue {
@@ -32,6 +33,7 @@ const defaultValue: ChangesViewContextValue = {
   diffPaths: EMPTY_SET,
   findMatchingDiffPath: () => null,
   registerScrollToFile: () => {},
+  setFileInView: () => {},
 };
 
 const defaultActionsValue: ChangesViewActionsContextValue = {

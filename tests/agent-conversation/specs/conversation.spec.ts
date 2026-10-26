@@ -5,6 +5,37 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('timeline')).toContainText('Initial response');
 });
 
+test('tool locations display ordinary paths while native arguments stay intact', async ({
+  page,
+}) => {
+  const rawPath = String.raw`\\?\D:\目录 with spaces\file.txt`;
+  await page.evaluate((path) => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('file-tool', 'tool', {
+        tool_name: 'Read file',
+        tool_kind: 'file_read',
+        locations: [{ path, line: 42 }],
+        raw_arguments: path,
+        arguments: { path },
+      })
+    );
+  }, rawPath);
+  await page.getByRole('button', { name: 'Read file', exact: true }).click();
+  await expect(
+    page.getByText(String.raw`D:\目录 with spaces\file.txt:42`, { exact: true })
+  ).toBeVisible();
+  await expect(page.getByText(rawPath, { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).conversationFixture.state.blocks.find(
+          (block: { block_id: string }) => block.block_id === 'file-tool'
+        ).fields.arguments.path
+    )
+  ).toBe(rawPath);
+});
+
 test('multiline notices show a compact summary and keep their full diagnostic available', async ({
   page,
 }) => {

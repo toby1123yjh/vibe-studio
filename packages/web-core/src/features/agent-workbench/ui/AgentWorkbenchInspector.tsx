@@ -1,4 +1,11 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RepoWithTargetBranch, Workspace } from 'shared/types';
 
@@ -81,6 +88,9 @@ export interface AgentWorkbenchInspectorProps {
   rightMainPanelMode: RightMainPanelMode | null;
   onRightMainPanelModeChange: (mode: RightMainPanelMode | null) => void;
   activeTabOverride?: AgentWorkbenchInspectorTab;
+  compact?: boolean;
+  readOnly?: boolean;
+  panelOverrides?: Partial<Record<AgentWorkbenchInspectorTab, ReactNode>>;
 }
 
 export function AgentWorkbenchInspector({
@@ -89,21 +99,34 @@ export function AgentWorkbenchInspector({
   rightMainPanelMode,
   onRightMainPanelModeChange,
   activeTabOverride,
+  compact = false,
+  readOnly = false,
+  panelOverrides,
 }: AgentWorkbenchInspectorProps) {
   const { t } = useTranslation('common');
   const tabsId = useId();
   const inspectorVisible = useAgentWorkbenchInspectorVisibility();
+  const tabs = useMemo(
+    () =>
+      readOnly
+        ? AGENT_WORKBENCH_INSPECTOR_TABS.filter((tab) =>
+            ['changes', 'files', 'logs'].includes(tab)
+          )
+        : AGENT_WORKBENCH_INSPECTOR_TABS,
+    [readOnly]
+  );
   const storageKey = `vk-agent-workbench-inspector-tab:${workspace?.id ?? 'none'}`;
   const [selection, setSelection] = useState(() => ({
     scope: storageKey,
     tab: readInspectorTab(storageKey, rightMainPanelMode, activeTabOverride),
   }));
-  const activeTab =
+  const requestedTab =
     activeTabOverride ??
     modeToTab(rightMainPanelMode) ??
     (selection.scope === storageKey
       ? selection.tab
       : readInspectorTab(storageKey, rightMainPanelMode, activeTabOverride));
+  const activeTab = tabs.includes(requestedTab) ? requestedTab : 'files';
   const [mountedPanels, setMountedPanels] = useState<{
     scope: string;
     tabs: AgentWorkbenchInspectorTab[];
@@ -136,16 +159,21 @@ export function AgentWorkbenchInspector({
         <WorkspaceFilesSurfaceContainer
           className=""
           workspaceId={workspace.id}
+          mobile={compact}
         />
       ) : null,
       git: <GitPanelContainer selectedWorkspace={workspace} repos={repos} />,
-      terminal: <TerminalPanelContainer />,
+      terminal: <TerminalPanelContainer workspace={workspace} />,
       preview: workspace?.id ? (
-        <PreviewBrowserContainer workspaceId={workspace.id} className="" />
+        <PreviewBrowserContainer
+          workspaceId={workspace.id}
+          repos={repos}
+          className=""
+        />
       ) : null,
-      logs: <LogsContentContainer className="" />,
+      logs: <LogsContentContainer className="" workspace={workspace} />,
     }),
-    [repos, workspace]
+    [compact, repos, workspace]
   );
   const tabLabels = useMemo<Record<AgentWorkbenchInspectorTab, string>>(
     () => ({
@@ -181,29 +209,27 @@ export function AgentWorkbenchInspector({
     event: KeyboardEvent<HTMLButtonElement>,
     tab: AgentWorkbenchInspectorTab
   ) => {
-    const currentIndex = AGENT_WORKBENCH_INSPECTOR_TABS.indexOf(tab);
+    const currentIndex = tabs.indexOf(tab);
     let nextIndex: number | null = null;
     switch (event.key) {
       case 'ArrowLeft':
-        nextIndex =
-          (currentIndex - 1 + AGENT_WORKBENCH_INSPECTOR_TABS.length) %
-          AGENT_WORKBENCH_INSPECTOR_TABS.length;
+        nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
         break;
       case 'ArrowRight':
-        nextIndex = (currentIndex + 1) % AGENT_WORKBENCH_INSPECTOR_TABS.length;
+        nextIndex = (currentIndex + 1) % tabs.length;
         break;
       case 'Home':
         nextIndex = 0;
         break;
       case 'End':
-        nextIndex = AGENT_WORKBENCH_INSPECTOR_TABS.length - 1;
+        nextIndex = tabs.length - 1;
         break;
       default:
         return;
     }
 
     event.preventDefault();
-    const nextTab = AGENT_WORKBENCH_INSPECTOR_TABS[nextIndex];
+    const nextTab = tabs[nextIndex];
     selectTab(nextTab);
     document.getElementById(`${tabsId}-tab-${nextTab}`)?.focus();
   };
@@ -217,7 +243,7 @@ export function AgentWorkbenchInspector({
           defaultValue: 'Inspector',
         })}
       >
-        {AGENT_WORKBENCH_INSPECTOR_TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab}
             id={`${tabsId}-tab-${tab}`}
@@ -239,7 +265,7 @@ export function AgentWorkbenchInspector({
         ))}
       </div>
       <div className="relative min-h-0 flex-1">
-        {AGENT_WORKBENCH_INSPECTOR_TABS.map((tab) => (
+        {tabs.map((tab) => (
           <div
             key={tab}
             id={`${tabsId}-panel-${tab}`}
@@ -250,7 +276,7 @@ export function AgentWorkbenchInspector({
           >
             {mountedPanels.scope === storageKey &&
             mountedPanels.tabs.includes(tab)
-              ? panels[tab]
+              ? (panelOverrides?.[tab] ?? panels[tab])
               : null}
           </div>
         ))}

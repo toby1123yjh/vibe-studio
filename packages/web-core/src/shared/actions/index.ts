@@ -61,6 +61,7 @@ import { repoBranchKeys } from '@/shared/hooks/useRepoBranches';
 import { workspaceSummaryKeys } from '@/shared/hooks/workspaceSummaryKeys';
 import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 import { ChangeTargetDialog } from '@vibe/ui/components/ChangeTargetDialog';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { DeleteWorkspaceDialog } from '@vibe/ui/components/DeleteWorkspaceDialog';
 import { RebaseDialog } from '@/shared/dialogs/command-bar/RebaseDialog';
 import { ResolveConflictsDialog } from '@/shared/dialogs/tasks/ResolveConflictsDialog';
@@ -795,7 +796,9 @@ export const Actions = {
     isVisible: (ctx) => ctx.hasWorkspace,
     execute: async (ctx) => {
       if (!ctx.containerRef) return;
-      await navigator.clipboard.writeText(ctx.containerRef);
+      await navigator.clipboard.writeText(
+        formatPathForDisplay(ctx.containerRef)
+      );
     },
   },
 
@@ -1122,7 +1125,7 @@ export const Actions = {
       try {
         const repo = await repoApi.getById(repoId);
         if (repo?.path) {
-          await navigator.clipboard.writeText(repo.path);
+          await navigator.clipboard.writeText(formatPathForDisplay(repo.path));
         }
       } catch (err) {
         console.error('Failed to copy repo path:', err);

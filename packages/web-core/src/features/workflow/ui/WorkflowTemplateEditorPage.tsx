@@ -110,6 +110,7 @@ import {
   DialogTitle as DescriptionDialogTitle,
 } from '@vibe/ui/components/Dialog';
 import { WorkspaceContextHeader } from '@/shared/components/WorkspaceContextHeader';
+import { AgentIcon, getAgentName } from '@/shared/components/AgentIcon';
 import { useBlocker } from '@tanstack/react-router';
 import {
   Dialog,
@@ -312,7 +313,9 @@ export function WorkflowTemplateEditorPage({
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [isRouterConfigPanelOpen, setIsRouterConfigPanelOpen] = useState(false);
-  const [isMainAgentDialogOpen, setIsMainAgentDialogOpen] = useState(false);
+  const [mainAgentDialogWorkflowId, setMainAgentDialogWorkflowId] = useState<
+    string | null
+  >(null);
   const [contextMenu, setContextMenu] = useState<NodeContextMenuState | null>(
     null
   );
@@ -587,7 +590,8 @@ export function WorkflowTemplateEditorPage({
 
   const createAttemptFromLocalDraft = async (
     nextGraph: WorkflowGraph,
-    navigateAfterSave = true
+    navigateAfterSave = true,
+    configureMainAgentAfterSave = false
   ) => {
     if (!localDraft || !localDraftId) return null;
 
@@ -612,6 +616,9 @@ export function WorkflowTemplateEditorPage({
 
     deleteTaskWorkflowAttemptDraft(localDraftId);
     if (navigateAfterSave) {
+      if (configureMainAgentAfterSave) {
+        setMainAgentDialogWorkflowId(attempt.workflow_id);
+      }
       allowNavigationRef.current = true;
       navigation.goToProjectWorkflowEdit(projectId, attempt.workflow_id, {
         replace: true,
@@ -624,7 +631,8 @@ export function WorkflowTemplateEditorPage({
   };
 
   const handleSave = async (
-    navigateAfterLocalSave = true
+    navigateAfterLocalSave = true,
+    configureMainAgentAfterSave = false
   ): Promise<boolean> => {
     if (!graph || readOnly) return false;
     setRunStartError(null);
@@ -639,7 +647,11 @@ export function WorkflowTemplateEditorPage({
     try {
       if (isLocalDraft) {
         return Boolean(
-          await createAttemptFromLocalDraft(graph, navigateAfterLocalSave)
+          await createAttemptFromLocalDraft(
+            graph,
+            navigateAfterLocalSave,
+            configureMainAgentAfterSave
+          )
         );
       }
       if (authoringState) await persistWorkflowGraph(authoringState);
@@ -1271,12 +1283,17 @@ export function WorkflowTemplateEditorPage({
 
   return (
     <div className="workflow-canvas-shell flex h-full flex-col bg-primary">
-      {isMainAgentDialogOpen && loadedTemplate && !definitionLocked ? (
+      {mainAgentDialogWorkflowId === workflowId &&
+      loadedTemplate &&
+      !readOnly ? (
         <WorkflowMainAgentDialog
           key={loadedTemplate.id}
           projectId={projectId}
           template={loadedTemplate}
           taskId={workflowAttempt?.task_id}
+          mainSessionWorkflowId={
+            workflowAttempt?.template_id ?? workflowAttempt?.workflow_id
+          }
           onPublished={(saved, previousRevision) => {
             setAuthoringState((current) =>
               current
@@ -1288,7 +1305,7 @@ export function WorkflowTemplateEditorPage({
                 : current
             );
           }}
-          onClose={() => setIsMainAgentDialogOpen(false)}
+          onClose={() => setMainAgentDialogWorkflowId(null)}
         />
       ) : null}
       <Dialog
@@ -1468,14 +1485,6 @@ export function WorkflowTemplateEditorPage({
               <DropdownMenuItem onSelect={() => setIsDescriptionOpen(true)}>
                 {t('workflow.editor.descriptionPlaceholder')}
               </DropdownMenuItem>
-              {!isLocalDraft && !definitionLocked ? (
-                <DropdownMenuItem
-                  disabled={isWorkflowAttemptLoading || !!workflowAttemptError}
-                  onSelect={() => setIsMainAgentDialogOpen(true)}
-                >
-                  {t('workflow.management.mainAgent')}
-                </DropdownMenuItem>
-              ) : null}
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={readOnly} onSelect={handleTidyGraph}>
                 <LayoutGrid className="mr-2 h-4 w-4" />
@@ -1546,8 +1555,11 @@ export function WorkflowTemplateEditorPage({
               }
               taskId={workflowAttempt.task_id}
               disabled={
-                !!workflowAttempt.main_session_bound_at &&
-                !workflowAttempt.main_session_id
+                (!!workflowAttempt.main_session_bound_at &&
+                  !workflowAttempt.main_session_id) ||
+                (!loadedTemplate?.main_agent_config &&
+                  !workflowAttempt.main_session_id &&
+                  !workflowAttempt.main_session_bound_at)
               }
             />
           ) : null}
@@ -1610,6 +1622,55 @@ export function WorkflowTemplateEditorPage({
             </>
           )}
         </div>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-secondary bg-primary px-4 py-2 text-xs">
+        <span className="text-low">{t('workflow.management.mainAgent')}</span>
+        <span className="inline-flex items-center gap-1.5 text-normal">
+          {loadedTemplate?.main_agent_config ? (
+            <>
+              <AgentIcon
+                agent={loadedTemplate.main_agent_config.executor}
+                className="h-4 w-4"
+              />
+              {getAgentName(loadedTemplate.main_agent_config.executor)}
+            </>
+          ) : (
+            t('workflow.management.mainAgentNotConfigured')
+          )}
+        </span>
+        {!isSystem && !definitionLocked ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={
+              readOnly ||
+              isUpdating ||
+              isCreatingAttempt ||
+              (isLocalDraft && !isValid)
+            }
+            loading={isCreatingAttempt}
+            aria-label={t('workflow.management.configureMainAgent')}
+            onClick={() => {
+              if (isLocalDraft) void handleSave(true, true);
+              else setMainAgentDialogWorkflowId(workflowId);
+            }}
+          >
+            {isLocalDraft
+              ? t('workflow.management.saveAndConfigure')
+              : t('workflow.management.configureMainAgent')}
+          </Button>
+        ) : null}
+        {!loadedTemplate?.main_agent_config &&
+        !workflowAttempt?.main_session_id &&
+        !workflowAttempt?.main_session_bound_at ? (
+          <span className="text-low" role="status">
+            {definitionLocked
+              ? t('workflow.management.mainAgentMissingLocked')
+              : t('workflow.management.mainAgentOptional')}
+          </span>
+        ) : null}
       </div>
 
       {definitionLocked ? (

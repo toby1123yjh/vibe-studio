@@ -213,9 +213,19 @@ export function createWorkflowApi(hostId?: string | null) {
       );
     },
 
-    async list(projectId: string): Promise<WorkflowTemplateListResponse> {
+    async list(
+      projectId: string,
+      signal?: AbortSignal
+    ): Promise<WorkflowTemplateListResponse> {
       return getJson(
-        await localFetch(`/projects/${projectId}/workflows`),
+        await localFetch(`/projects/${projectId}/workflows`, { signal }),
+        'Failed to list workflows'
+      );
+    },
+
+    async listAll(signal?: AbortSignal): Promise<WorkflowTemplateListResponse> {
+      return getJson(
+        await localFetch('/fallback/workflows', { signal }),
         'Failed to list workflows'
       );
     },
@@ -290,10 +300,13 @@ export function createWorkflowApi(hostId?: string | null) {
     },
 
     async listProjectAttempts(
-      projectId: string
+      projectId: string,
+      signal?: AbortSignal
     ): Promise<WorkflowAttemptListResponse> {
       return getJson(
-        await localFetch(`/projects/${projectId}/workflow-attempts`),
+        await localFetch(`/projects/${projectId}/workflow-attempts`, {
+          signal,
+        }),
         'Failed to list project workflow attempts'
       );
     },

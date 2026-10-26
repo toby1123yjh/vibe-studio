@@ -179,6 +179,7 @@ export interface SessionToolbarActionItem {
   tooltip?: string;
   onClick: () => void;
   disabled?: boolean;
+  requiresIdle?: boolean;
 }
 
 interface ToolbarActionsProps {
@@ -1133,6 +1134,7 @@ export function SessionChatBox<TExecutor extends string = string>({
                   className={`flex items-center justify-center text-low hover:text-normal ${toolbarIconButtonClass}`}
                   aria-label={t('conversation.composer.moreActions')}
                   title={t('conversation.composer.moreActions')}
+                  data-conversation-actions-trigger
                   disabled={
                     isInFeedbackMode || isInEditMode || isInApprovalMode
                   }
@@ -1169,7 +1171,7 @@ export function SessionChatBox<TExecutor extends string = string>({
                             <span className="flex items-center gap-1.5 max-w-[200px]">
                               {renderAgentIcon?.(
                                 s.executor ?? null,
-                                'size-icon shrink-0'
+                                'size-icon-base shrink-0'
                               )}
                               <span className="truncate">
                                 {s.name
@@ -1246,7 +1248,10 @@ export function SessionChatBox<TExecutor extends string = string>({
                     key={item.id}
                     icon={item.icon}
                     onClick={item.onClick}
-                    disabled={isDisabled || isRunning || Boolean(item.disabled)}
+                    disabled={
+                      Boolean(item.disabled) ||
+                      (item.requiresIdle !== false && (isDisabled || isRunning))
+                    }
                   >
                     {item.label}
                   </DropdownMenuItem>

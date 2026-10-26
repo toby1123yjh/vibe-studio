@@ -130,6 +130,77 @@ test("opening the same session independently and browser history keep one select
   await expect(activeSidebarEntries(page)).toHaveText(["Session one"]);
 });
 
+for (const path of [
+  "/projects/one/workflows",
+  "/projects/one/workflows/workflow-one/edit",
+  "/projects/one/workflow-runs/run-one",
+]) {
+  test(`${path} selects only Workflows with retained project and session context`, async ({
+    page,
+  }) => {
+    await page.goto(`${path}?session_id=session-one`);
+    await expect(page.getByTestId("rendered")).toHaveText(path);
+    await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  });
+}
+
+test("workflow, session and project navigation keep exactly one sidebar selection", async ({
+  page,
+}) => {
+  await page.goto("/workspaces/workspace-one?session_id=session-one");
+  await expect(activeSidebarEntries(page)).toHaveText(["Session one"]);
+  await page.getByRole("link", { name: "Edit workflow", exact: true }).click();
+  await expectPage(
+    page,
+    "workflow-edit",
+    "/projects/one/workflows/workflow-one/edit",
+    "full-bleed",
+  );
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await page.getByRole("link", { name: "Workflow run", exact: true }).click();
+  await expectPage(
+    page,
+    "workflow-run",
+    "/projects/one/workflow-runs/run-one",
+    "full-bleed",
+  );
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await page
+    .getByRole("button", { name: "Session two, Codex", exact: true })
+    .click();
+  await expect(activeSidebarEntries(page)).toHaveText(["Session two"]);
+  await page.goBack();
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await page.goBack();
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await page.goBack();
+  await expect(activeSidebarEntries(page)).toHaveText(["Session one"]);
+  await page.goForward();
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await page.getByRole("button", { name: "Project One", exact: true }).click();
+  await expect(activeSidebarEntries(page)).toHaveText(["Project One"]);
+});
+
+test("workflow selection stays exclusive until a delayed destination commits", async ({
+  page,
+}) => {
+  await page.goto("/projects/one/workflow-runs/run-one?session_id=session-one");
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await control(page, "arm");
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByTestId("location")).toHaveText("/settings");
+  await expectPage(
+    page,
+    "workflow-run",
+    "/projects/one/workflow-runs/run-one",
+    "full-bleed",
+  );
+  await expect(activeSidebarEntries(page)).toHaveText(["Workflows"]);
+  await control(page, "release");
+  await expectPage(page, "settings", "/settings", "contained");
+  await expect(activeSidebarEntries(page)).toHaveCount(0);
+});
+
 test("standalone session query remains selected until a delayed destination commits", async ({
   page,
 }) => {

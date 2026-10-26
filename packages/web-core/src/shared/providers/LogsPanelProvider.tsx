@@ -3,14 +3,16 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useContext,
   type ReactNode,
 } from 'react';
 import type { LogsPanelContent } from '@/shared/types/actions';
 import {
   useWorkspacePanelState,
   RIGHT_MAIN_PANEL_MODES,
+  type RightMainPanelMode,
 } from '@/shared/stores/useUiPreferencesStore';
-import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
+import { WorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import {
   LogsPanelActionsContext,
   LogsPanelContext,
@@ -18,13 +20,26 @@ import {
 
 interface LogsPanelProviderProps {
   children: ReactNode;
+  workspaceId?: string;
+  rightMainPanelMode?: RightMainPanelMode | null;
+  onRightMainPanelModeChange?: (mode: RightMainPanelMode | null) => void;
 }
 
-export function LogsPanelProvider({ children }: LogsPanelProviderProps) {
-  const { workspaceId, isCreateMode } = useWorkspaceContext();
-  const { rightMainPanelMode, setRightMainPanelMode } = useWorkspacePanelState(
-    isCreateMode ? undefined : workspaceId
+export function LogsPanelProvider({
+  children,
+  workspaceId: boundWorkspaceId,
+  rightMainPanelMode: boundMode,
+  onRightMainPanelModeChange,
+}: LogsPanelProviderProps) {
+  const workspaceContext = useContext(WorkspaceContext);
+  const workspaceId = boundWorkspaceId ?? workspaceContext?.workspaceId;
+  const pagePanel = useWorkspacePanelState(
+    workspaceContext?.isCreateMode ? undefined : workspaceId
   );
+  const rightMainPanelMode =
+    boundMode === undefined ? pagePanel.rightMainPanelMode : boundMode;
+  const setRightMainPanelMode =
+    onRightMainPanelModeChange ?? pagePanel.setRightMainPanelMode;
   const [logsPanelContent, setLogsPanelContent] =
     useState<LogsPanelContent | null>(null);
   const [logSearchQuery, setLogSearchQuery] = useState('');

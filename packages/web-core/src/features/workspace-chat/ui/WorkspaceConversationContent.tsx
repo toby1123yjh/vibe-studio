@@ -39,12 +39,8 @@ import {
 import type { WorkspaceDetailState } from '@/shared/lib/workspaceDetailState';
 import { useDiffSummary } from '@/shared/hooks/useDiffSummary';
 import { useHostId } from '@/shared/providers/HostIdProvider';
-import { LogsPanelActionsContext } from '@/shared/hooks/useLogsPanel';
 import type { WorkspaceConversationViewState } from '../model/conversationViewState';
-import {
-  WorkspaceConversationLogs,
-  type ConversationLogPreview,
-} from './WorkspaceConversationLogs';
+import { WorkspaceConversationTools } from './WorkspaceConversationTools';
 
 /**
  * Isolated component that reads diffStats from WorkspaceContext.
@@ -160,7 +156,7 @@ function ConversationComposer({
       linesAdded={diffStats.lines_added}
       linesRemoved={diffStats.lines_removed}
       diffStatsUnavailable={Boolean(diffError)}
-      disableViewCode={presentation === 'embedded'}
+      disableViewCode={false}
       showOpenWorkspaceButton={false}
       presentation={presentation}
       showSessionControls={showSessionControls}
@@ -185,16 +181,29 @@ const EmbeddedConversationDiffContext = createContext<ReturnType<
 
 function EmbeddedConversationDiffScope({
   workspaceId,
+  workspace,
+  repos,
+  readOnly,
   children,
 }: {
   workspaceId: string | null;
+  workspace: Workspace | null;
+  repos: RepoWithTargetBranch[];
+  readOnly: boolean;
   children: ReactNode;
 }) {
   const summary = useDiffSummary(workspaceId);
   return (
     <EmbeddedConversationDiffContext.Provider value={summary}>
       <WorkspaceDiffPathsProvider value={summary.paths}>
-        {children}
+        <WorkspaceConversationTools
+          workspace={workspace}
+          repos={repos}
+          diffPaths={summary.paths}
+          readOnly={readOnly}
+        >
+          {children}
+        </WorkspaceConversationTools>
       </WorkspaceDiffPathsProvider>
     </EmbeddedConversationDiffContext.Provider>
   );
@@ -295,34 +304,7 @@ export const WorkspaceConversationContent = forwardRef<
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const conversationFocusRef = useRef<HTMLElement | null>(null);
   const previewWasVisibleRef = useRef(false);
-  const [logPreview, setLogPreview] = useState<ConversationLogPreview | null>(
-    null
-  );
-  const closeLogPreview = useCallback(() => setLogPreview(null), []);
-  const embeddedLogActions = useMemo(
-    () => ({
-      viewProcessInPanel: (processId: string) => {
-        if (processId) setLogPreview({ type: 'process', processId });
-      },
-      viewToolContentInPanel: (
-        toolName: string,
-        content: string,
-        command?: string
-      ) => setLogPreview({ type: 'tool', toolName, content, command }),
-      expandTerminal: () => {},
-      collapseTerminal: closeLogPreview,
-    }),
-    [closeLogPreview]
-  );
-  const visiblePreview =
-    previewContent ??
-    (presentation === 'embedded' && logPreview ? (
-      <WorkspaceConversationLogs
-        key={logPreview.type === 'process' ? logPreview.processId : 'tool'}
-        content={logPreview}
-        onBack={closeLogPreview}
-      />
-    ) : null);
+  const visiblePreview = previewContent;
   const previewIsVisible = Boolean(visiblePreview);
 
   useLayoutEffect(() => {
@@ -543,13 +525,15 @@ export const WorkspaceConversationContent = forwardRef<
   );
 
   return presentation === 'embedded' ? (
-    <LogsPanelActionsContext.Provider value={embeddedLogActions}>
-      <EmbeddedConversationDiffScope
-        workspaceId={selectedWorkspace?.id ?? null}
-      >
-        {content}
-      </EmbeddedConversationDiffScope>
-    </LogsPanelActionsContext.Provider>
+    <EmbeddedConversationDiffScope
+      key={`${hostId ?? 'local'}:${selectedWorkspace?.id ?? 'none'}:${selectedSessionId ?? 'new'}`}
+      workspaceId={selectedWorkspace?.id ?? null}
+      workspace={selectedWorkspace}
+      repos={repos}
+      readOnly={readOnly}
+    >
+      {content}
+    </EmbeddedConversationDiffScope>
   ) : (
     content
   );

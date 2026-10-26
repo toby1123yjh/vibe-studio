@@ -14,6 +14,7 @@ import {
 } from "@/shared/hooks/useUserSystem";
 import { AppRuntimeProvider } from "@/shared/hooks/useAppRuntime";
 import { HostIdProvider } from "@/shared/providers/HostIdProvider";
+import { TerminalProvider } from "@/shared/providers/TerminalProvider";
 import { useScratch } from "@/shared/hooks/useScratch";
 import { ScratchType } from "shared/types";
 
@@ -87,7 +88,7 @@ export function createConversationFixtureRouter(children: ReactNode) {
           <HostIdProvider>
             <NiceModalProvider>
               <HotkeysProvider initiallyActiveScopes={["global", "workspace"]}>
-                {children}
+                <TerminalProvider>{children}</TerminalProvider>
               </HotkeysProvider>
             </NiceModalProvider>
           </HostIdProvider>

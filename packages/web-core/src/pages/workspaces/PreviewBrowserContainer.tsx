@@ -5,7 +5,9 @@ import {
   useLayoutEffect,
   useRef,
   useMemo,
+  useContext,
 } from 'react';
+import type { RepoWithTargetBranch } from 'shared/types';
 import {
   PreviewBrowser,
   MOBILE_WIDTH,
@@ -21,17 +23,19 @@ import {
 } from '@/shared/hooks/usePreviewSettings';
 import { useLogStream } from '@/shared/hooks/useLogStream';
 import { useUiPreferencesStore } from '@/shared/stores/useUiPreferencesStore';
-import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
+import { WorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { ScriptFixerDialog } from '@/shared/dialogs/scripts/ScriptFixerDialog';
 import { usePreviewNavigation } from '@/shared/hooks/usePreviewNavigation';
 import { PreviewDevToolsBridge } from '@/shared/lib/previewDevToolsBridge';
 import { useInspectModeStore } from '@/features/workspace-chat/model/store/useInspectModeStore';
+import { useConversationToolsOptional } from '@/features/workspace-chat/model/ConversationToolsContext';
 import type { PreviewDevToolsMessage } from '@/shared/types/previewDevTools';
 
 const MIN_RESPONSIVE_WIDTH = 320;
 const MIN_RESPONSIVE_HEIGHT = 480;
+const EMPTY_REPOS: RepoWithTargetBranch[] = [];
 
 const noop = () => {};
 
@@ -169,11 +173,13 @@ function getTargetDevPort(url: URL, previewProxyPort?: number): string {
 interface PreviewBrowserContainerProps {
   workspaceId: string;
   className: string;
+  repos?: RepoWithTargetBranch[];
 }
 
 export function PreviewBrowserContainer({
   workspaceId,
   className,
+  repos: boundRepos,
 }: PreviewBrowserContainerProps) {
   // ─── Data Sources ───────────────────────────────────────────────────────────
   // Workspace context, preview proxy config, dev server state, log streams,
@@ -185,7 +191,8 @@ export function PreviewBrowserContainer({
   const triggerPreviewRefresh = useUiPreferencesStore(
     (s) => s.triggerPreviewRefresh
   );
-  const { repos, workspaceId: activeWorkspaceId } = useWorkspaceContext();
+  const workspaceContext = useContext(WorkspaceContext);
+  const repos = boundRepos ?? workspaceContext?.repos ?? EMPTY_REPOS;
   const { previewProxyPort } = useUserSystem();
   const hostId = useHostId();
 
@@ -196,7 +203,7 @@ export function PreviewBrowserContainer({
     isStopping,
     runningDevServers,
     devServerProcesses,
-  } = usePreviewDevServer(activeWorkspaceId ?? workspaceId);
+  } = usePreviewDevServer(workspaceId);
 
   const primaryDevServer = useMemo(() => {
     if (runningDevServers.length === 0) return undefined;
@@ -229,7 +236,7 @@ export function PreviewBrowserContainer({
     responsiveDimensions,
     setScreenSize,
     setResponsiveDimensions,
-  } = usePreviewSettings(activeWorkspaceId ?? workspaceId);
+  } = usePreviewSettings(workspaceId);
 
   // ─── URL Bar State ──────────────────────────────────────────────────────────
   // effectiveUrl:       The override URL (if set) or the auto-detected dev server URL.
@@ -337,9 +344,12 @@ export function PreviewBrowserContainer({
   // Inspect mode state
   const isInspectMode = useInspectModeStore((s) => s.isInspectMode);
   const toggleInspectMode = useInspectModeStore((s) => s.toggleInspectMode);
-  const setPendingComponentMarkdown = useInspectModeStore(
+  const setGlobalComponentMarkdown = useInspectModeStore(
     (s) => s.setPendingComponentMarkdown
   );
+  const conversationTools = useConversationToolsOptional();
+  const setPendingComponentMarkdown =
+    conversationTools?.insertComponentContext ?? setGlobalComponentMarkdown;
 
   // ─── Navigation Bridge ────────────────────────────────────────────────────
   // The Rust proxy injects devtools_script.js into every iframe response.
@@ -895,7 +905,7 @@ export function PreviewBrowserContainer({
   // This duplication is intentional — they may diverge in the future to support
   // different dialog configurations (e.g., edit vs. auto-fix modes).
   const handleEditDevScript = useCallback(() => {
-    const targetWorkspaceId = activeWorkspaceId ?? workspaceId;
+    const targetWorkspaceId = workspaceId;
     if (!targetWorkspaceId || repos.length === 0) return;
 
     const sessionId = devServerProcesses[0]?.session_id;
@@ -907,10 +917,10 @@ export function PreviewBrowserContainer({
       sessionId,
       initialRepoId: repos.length === 1 ? repos[0].id : undefined,
     });
-  }, [activeWorkspaceId, workspaceId, repos, devServerProcesses]);
+  }, [workspaceId, repos, devServerProcesses]);
 
   const handleFixDevScript = useCallback(() => {
-    const targetWorkspaceId = activeWorkspaceId ?? workspaceId;
+    const targetWorkspaceId = workspaceId;
     if (!targetWorkspaceId || repos.length === 0) return;
 
     // Get session ID from the latest dev server process
@@ -923,7 +933,7 @@ export function PreviewBrowserContainer({
       sessionId,
       initialRepoId: repos.length === 1 ? repos[0].id : undefined,
     });
-  }, [activeWorkspaceId, workspaceId, repos, devServerProcesses]);
+  }, [workspaceId, repos, devServerProcesses]);
 
   return (
     <PreviewBrowser

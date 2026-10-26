@@ -7,6 +7,7 @@ import {
 } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
+import { formatPathForDisplay } from '../lib/path';
 import { getFileChangeStats, parseUnifiedDiffStats } from '../lib/diffStats';
 import { ToolStatusDot, type ToolStatusLike } from './ToolStatusDot';
 import type { ChatFileEntryDiffInput } from './ChatFileEntry';
@@ -103,7 +104,7 @@ function getActionLabel(
     case 'rename':
       return change.new_path
         ? t('conversation.aggregated.actions.renameTo', {
-            path: change.new_path,
+            path: formatPathForDisplay(change.new_path),
           })
         : t('conversation.aggregated.actions.rename');
     default:
@@ -305,7 +306,12 @@ export function ChatAggregatedDiffEntries({
               </span>
             )}
           </span>
-          <span className="text-sm text-normal truncate">{filePath}</span>
+          <span
+            className="text-sm text-normal truncate"
+            title={formatPathForDisplay(filePath)}
+          >
+            {formatPathForDisplay(filePath)}
+          </span>
           <span className="text-xs text-low shrink-0">
             ·{' '}
             {t('conversation.aggregated.changeCount', {

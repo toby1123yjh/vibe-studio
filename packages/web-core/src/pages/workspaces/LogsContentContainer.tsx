@@ -9,6 +9,7 @@ import { useLogStream } from '@/shared/hooks/useLogStream';
 import { useLogsPanel } from '@/shared/hooks/useLogsPanel';
 import { TerminalPanelContainer } from '@/shared/components/TerminalPanelContainer';
 import { ArrowsInSimpleIcon } from '@phosphor-icons/react';
+import type { Workspace } from 'shared/types';
 
 export type LogsPanelContent =
   | { type: 'process'; processId: string }
@@ -22,9 +23,13 @@ export type LogsPanelContent =
 
 interface LogsContentContainerProps {
   className: string;
+  workspace?: Workspace;
 }
 
-export function LogsContentContainer({ className }: LogsContentContainerProps) {
+export function LogsContentContainer({
+  className,
+  workspace,
+}: LogsContentContainerProps) {
   const {
     logsPanelContent: content,
     logSearchQuery: searchQuery,
@@ -120,7 +125,7 @@ export function LogsContentContainer({ className }: LogsContentContainerProps) {
         </div>
         <div className="flex-1 flex min-h-0 border-t border-border">
           <div className="flex-1 min-h-0 w-full">
-            <TerminalPanelContainer />
+            <TerminalPanelContainer workspace={workspace} />
           </div>
         </div>
       </div>

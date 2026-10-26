@@ -1,11 +1,17 @@
-import { useEffect, useRef } from 'react';
-import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
+import { useContext, useEffect, useRef } from 'react';
+import type { Workspace } from 'shared/types';
+import { WorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import { useTerminal } from '@/shared/hooks/useTerminal';
 import { TerminalPanel } from '@vibe/ui/components/TerminalPanel';
 import { XTermInstance } from './XTermInstance';
 
-export function TerminalPanelContainer() {
-  const { workspace } = useWorkspaceContext();
+export function TerminalPanelContainer({
+  workspace: boundWorkspace,
+}: {
+  workspace?: Workspace;
+}) {
+  const context = useContext(WorkspaceContext);
+  const workspace = boundWorkspace ?? context?.workspace;
   const {
     getTabsForWorkspace,
     getActiveTab,

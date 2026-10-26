@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@vibe/ui/components/Button';
 import { Input } from '@vibe/ui/components/Input';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { FolderPickerDialog } from '@/shared/dialogs/shared/FolderPickerDialog';
 import { useSettingsMachineClient } from './SettingsHostContext';
 import { useSettingsMachineState } from './SettingsMachineUserSystemProvider';
@@ -86,7 +87,8 @@ export function ManagedWorkspaceDirectoryField({
       <div className="flex flex-wrap gap-half">
         <Input
           id="managed-workspace-root"
-          value={value ?? ''}
+          value={formatPathForDisplay(value ?? '')}
+          title={formatPathForDisplay(value ?? '')}
           onChange={(event) => onChange(event.target.value || null)}
           disabled={blocked}
           placeholder={t('settings.general.managedDirectory.default', {

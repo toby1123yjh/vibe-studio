@@ -142,6 +142,20 @@ const navigation: AppNavigation = {
     const { foundRoute, routeParams } = router.getMatchedRoutes(path);
     if (foundRoute?.id === project.id)
       return { kind: "project", projectId: routeParams.projectId };
+    if (foundRoute?.id === projectWorkflows.id)
+      return { kind: "project-workflows", projectId: routeParams.projectId };
+    if (foundRoute?.id === workflowEdit.id)
+      return {
+        kind: "project-workflow-edit",
+        projectId: routeParams.projectId,
+        workflowId: routeParams.workflowId,
+      };
+    if (foundRoute?.id === workflowRun.id)
+      return {
+        kind: "project-workflow-run",
+        projectId: routeParams.projectId,
+        runId: routeParams.runId,
+      };
     if (foundRoute?.id === taskWorkspace.id)
       return {
         kind: "project-task-workspace",
@@ -245,6 +259,18 @@ function Shell() {
             >
               Task
             </Link>{" "}
+            <Link
+              to="/projects/$projectId/workflows/$workflowId/edit"
+              params={{ projectId: "one", workflowId: "workflow-one" }}
+            >
+              Edit workflow
+            </Link>{" "}
+            <Link
+              to="/projects/$projectId/workflow-runs/$runId"
+              params={{ projectId: "one", runId: "run-one" }}
+            >
+              Workflow run
+            </Link>{" "}
             <Link to="/settings">Settings</Link>{" "}
             <Link to="/dashboard">Dashboard</Link>
           </nav>
@@ -269,6 +295,21 @@ const taskWorkspace = createRoute({
   getParentRoute: () => root,
   path: "/projects/$projectId/tasks/$taskId/workspaces/$workspaceId",
   component: () => <Page name="task" />,
+});
+const projectWorkflows = createRoute({
+  getParentRoute: () => root,
+  path: "/projects/$projectId/workflows",
+  component: () => <Page name="project-workflows" />,
+});
+const workflowEdit = createRoute({
+  getParentRoute: () => root,
+  path: "/projects/$projectId/workflows/$workflowId/edit",
+  component: () => <Page name="workflow-edit" />,
+});
+const workflowRun = createRoute({
+  getParentRoute: () => root,
+  path: "/projects/$projectId/workflow-runs/$runId",
+  component: () => <Page name="workflow-run" />,
 });
 const workspace = createRoute({
   getParentRoute: () => root,
@@ -310,6 +351,9 @@ const router = createRouter({
   routeTree: root.addChildren([
     project,
     taskWorkspace,
+    projectWorkflows,
+    workflowEdit,
+    workflowRun,
     workspace,
     workspaceCreate,
     projects,

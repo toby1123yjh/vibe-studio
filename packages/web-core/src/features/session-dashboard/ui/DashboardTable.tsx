@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type {
   DashboardAgent,
   DashboardChildRow,
@@ -249,6 +250,9 @@ const WorkRow = memo(function WorkRow({
   const { t } = useTranslation('common');
   const [contextOpen, setContextOpen] = useState(false);
   const source = child ?? row;
+  const directoryPath = source.directory.path
+    ? formatPathForDisplay(source.directory.path)
+    : undefined;
   const target = source.open_target;
   const mode = child?.role === 'arena_candidate' ? 'arena' : row.work.kind;
   const open = (
@@ -398,8 +402,8 @@ const WorkRow = memo(function WorkRow({
           ) : null}
           <div className="session-dashboard__mobile-meta">
             {row.project ? dashboardProjectTitle(row.project, t) : null}
-            {source.directory.path ? (
-              <span title={source.directory.path}>{source.directory.path}</span>
+            {directoryPath ? (
+              <span title={directoryPath}>{directoryPath}</span>
             ) : null}
           </div>
         </td>
@@ -407,11 +411,8 @@ const WorkRow = memo(function WorkRow({
           <span className="session-dashboard__project-name">
             {dashboardProjectTitle(row.project, t)}
           </span>
-          <span
-            className="session-dashboard__path"
-            title={source.directory.path ?? undefined}
-          >
-            {source.directory.path ?? t('sessionDashboard.directory.unknown')}
+          <span className="session-dashboard__path" title={directoryPath}>
+            {directoryPath ?? t('sessionDashboard.directory.unknown')}
           </span>
           <span className="session-dashboard__muted session-dashboard__branch">
             {source.directory.git_branch ? (

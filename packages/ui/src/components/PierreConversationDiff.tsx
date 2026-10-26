@@ -12,6 +12,7 @@ import {
   type ChangeContent,
 } from '@pierre/diffs';
 import { cn } from '../lib/cn';
+import { formatPathForDisplay } from '../lib/path';
 import { ToolStatusDot, type ToolStatusLike } from './ToolStatusDot';
 import '../styles/diff-style-overrides.css';
 
@@ -299,8 +300,11 @@ export function DiffViewCard({
               </span>
             )}
           </span>
-          <span className="text-sm text-normal truncate font-ibm-plex-mono">
-            {filePath}
+          <span
+            className="text-sm text-normal truncate font-ibm-plex-mono"
+            title={formatPathForDisplay(filePath)}
+          >
+            {formatPathForDisplay(filePath)}
           </span>
           {hasStats && (
             <span className="text-sm shrink-0">

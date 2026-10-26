@@ -142,7 +142,7 @@ export function WorkflowAgentExecutorField({
                 <span className="flex items-center gap-2">
                   <AgentIcon
                     agent={option.executor}
-                    className="size-icon shrink-0"
+                    className="size-icon-base shrink-0"
                   />
                   {getAgentName(option.executor)}
                 </span>

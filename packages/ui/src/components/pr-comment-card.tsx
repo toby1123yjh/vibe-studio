@@ -1,6 +1,7 @@
 import { MessageSquare, Code, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
+import { formatPathForDisplay } from '../lib/path';
 
 export interface PrCommentCardProps {
   author: string;
@@ -75,7 +76,8 @@ function CompactCard({
   const { t } = useTranslation('tasks');
   const isReview = commentType === 'review';
   const Icon = isReview ? Code : MessageSquare;
-  const displayText = isReview && path ? `${path}: ${body}` : body;
+  const displayText =
+    isReview && path ? `${formatPathForDisplay(path)}: ${body}` : body;
 
   return (
     <span
@@ -161,7 +163,7 @@ function FullCard({
       {/* File path for review comments */}
       {isReview && path && (
         <div className="text-xs font-mono text-primary/70 mb-1">
-          {path}
+          {formatPathForDisplay(path)}
           {line ? `:${line}` : ''}
         </div>
       )}

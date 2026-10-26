@@ -12,6 +12,7 @@ import { Button } from './Button';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { FolderSimpleIcon, SpinnerIcon } from '@phosphor-icons/react';
 import { defineModal } from '../lib/modals';
+import { formatPathForDisplay } from '../lib/path';
 
 export interface CreateRepoDialogProps {
   onBrowseForPath?: (currentPath: string) => Promise<string | null | undefined>;
@@ -112,7 +113,7 @@ const CreateRepoDialogImpl = NiceModal.create<CreateRepoDialogProps>(
               <div className="flex gap-2">
                 <input
                   type="text"
-                  value={parentPath}
+                  value={formatPathForDisplay(parentPath)}
                   onChange={(e) => setParentPath(e.target.value)}
                   placeholder={t('git.createRepo.form.locationPlaceholder')}
                   disabled={isSubmitting}

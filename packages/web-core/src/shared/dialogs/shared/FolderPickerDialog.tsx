@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@vibe/ui/components/Button';
 import { Input } from '@vibe/ui/components/Input';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   Dialog,
   DialogContent,
@@ -141,7 +142,8 @@ const FolderPickerDialogImpl = create<FolderPickerDialogProps>(
               <label className="flex flex-col gap-half text-sm">
                 {t('folderPicker.path')}
                 <Input
-                  value={path}
+                  value={formatPathForDisplay(path)}
+                  title={formatPathForDisplay(path)}
                   onChange={(event) => setPath(event.target.value)}
                   autoFocus
                 />

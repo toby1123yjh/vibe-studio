@@ -16,15 +16,14 @@ import {
 import type { WorkflowContextFileView } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
 import {
-  FloatingPanel,
   FloatingPanelDescription,
   FloatingPanelHeader,
   FloatingPanelTitle,
 } from '@vibe/ui/components/FloatingPanel';
 import { WorkspaceSessionConversation } from '../../workspace-chat/ui/WorkspaceSessionConversation';
+import { ConversationWindow } from '../../workspace-chat/ui/ConversationWindow';
 import type { WorkspaceConversationViewState } from '../../workspace-chat/model/conversationViewState';
 import { createWorkflowApi } from '@/shared/lib/workflowApi';
-import { CONVERSATION_PANEL_SIZING } from '@/shared/lib/floatingPanelSizing';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { useArenaGroup } from '@/shared/hooks/useArenaGroup';
 import {
@@ -332,14 +331,8 @@ function WorkflowConversationPanelForScope({
   );
 
   return (
-    <FloatingPanel
-      open
-      portal={false}
-      autoFocus={false}
-      restoreFocus={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <ConversationWindow
+      onClose={onClose}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && view.preview && !event.defaultPrevented) {
           event.preventDefault();
@@ -348,12 +341,6 @@ function WorkflowConversationPanelForScope({
         }
       }}
       closeLabel={t('workflow.runCanvas.closeNodeDetails')}
-      resize={{
-        ...CONVERSATION_PANEL_SIZING,
-        label: t('panels.resizeWidth', { defaultValue: 'Resize panel width' }),
-      }}
-      className="absolute bottom-6 right-6 top-6 !max-w-[calc(100%_-_3rem)] max-md:!max-w-none motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-150"
-      contentClassName="flex min-h-0 flex-col overflow-hidden"
       data-testid="workflow-conversation-panel"
       data-run-id={resolved.runId}
       data-session-id={resolved.sessionId ?? ''}
@@ -478,7 +465,7 @@ function WorkflowConversationPanelForScope({
           </div>
         )}
       </div>
-    </FloatingPanel>
+    </ConversationWindow>
   );
 }
 

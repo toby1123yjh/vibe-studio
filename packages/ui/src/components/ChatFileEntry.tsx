@@ -7,6 +7,7 @@ import {
   FileTextIcon,
 } from '@phosphor-icons/react';
 import { cn } from '../lib/cn';
+import { formatPathForDisplay } from '../lib/path';
 import { ToolStatusDot, type ToolStatusLike } from './ToolStatusDot';
 
 export type ChatFileEntryDiffInput =
@@ -78,6 +79,7 @@ export function ChatFileEntry({
   const isDenied = status?.status === 'denied';
   const hasDiffContent = Boolean(diffContent && renderDiffBody);
   const previewTitle = filePreviewTitle ?? t('conversation.openFilePreview');
+  const displayFilename = formatPathForDisplay(filename);
 
   const handleClick = () => {
     if (isVSCode) {
@@ -127,7 +129,12 @@ export function ChatFileEntry({
                 </span>
               )}
             </span>
-            <span className="text-sm text-normal truncate">{filename}</span>
+            <span
+              className="text-sm text-normal truncate"
+              title={displayFilename}
+            >
+              {displayFilename}
+            </span>
             {onOpenFilePreview && (
               <button
                 type="button"
@@ -210,7 +217,9 @@ export function ChatFileEntry({
             </span>
           )}
         </span>
-        <span className="text-sm text-normal truncate">{filename}</span>
+        <span className="text-sm text-normal truncate" title={displayFilename}>
+          {displayFilename}
+        </span>
         {onOpenFilePreview && (
           <button
             type="button"

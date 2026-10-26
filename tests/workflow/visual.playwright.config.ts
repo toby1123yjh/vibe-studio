@@ -6,7 +6,7 @@ const port = 4198;
 
 export default defineConfig({
   ...base,
-  testMatch: "workflow-visual.spec.ts",
+  testMatch: ["workflow-visual.spec.ts", "workflow-conversation-tools.spec.ts"],
   testIgnore: [],
   outputDir: `${process.cwd()}/test-results/workflow-visual`,
   reporter: "list",

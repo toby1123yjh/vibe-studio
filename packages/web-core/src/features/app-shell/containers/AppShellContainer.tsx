@@ -168,8 +168,11 @@ export function AppShellContainer({
   const fetchNextProjectPage = projectsQuery.fetchNextPage;
   const refetchSessions = sessionsQuery.refetch;
 
-  const activeProjectId =
-    getProjectDestination(currentDestination)?.projectId ?? null;
+  // A module owns its nested routes, even when their data belongs to a project.
+  const activeModule = deriveActiveShellModule(renderedPathname);
+  const activeProjectId = activeModule
+    ? null
+    : (getProjectDestination(currentDestination)?.projectId ?? null);
   const activeWorkspaceId =
     currentDestination && 'workspaceId' in currentDestination
       ? currentDestination.workspaceId
@@ -183,8 +186,9 @@ export function AppShellContainer({
   // Sidebar selection belongs to the rendered page, not a retained
   // conversation or a session shown inside a project/workflow/dashboard panel.
   const activeSessionId =
-    currentDestination?.kind === 'workspace' ||
-    currentDestination?.kind === 'workspace-vscode'
+    !activeModule &&
+    (currentDestination?.kind === 'workspace' ||
+      currentDestination?.kind === 'workspace-vscode')
       ? selectedSessionId
       : null;
   const openSearch = useCallback(() => {
@@ -345,7 +349,7 @@ export function AppShellContainer({
           <div className="vk-app-shell__layout" data-search-open={searchOpen}>
             <ProductSidebar
               adapter={adapter}
-              activeModule={deriveActiveShellModule(renderedPathname)}
+              activeModule={activeModule}
               activeProjectId={activeProjectId}
               activeSessionId={activeSessionId}
               projects={projectState}

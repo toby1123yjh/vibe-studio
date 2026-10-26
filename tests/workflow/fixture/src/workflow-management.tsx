@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { HotkeysProvider } from 'react-hotkeys-hook';
 import { WorkflowLandingPage } from '@/features/workflow/ui/WorkflowLandingPage';
 import { WorkflowTemplateEditorPage } from '@/features/workflow/ui/WorkflowTemplateEditorPage';
+import { WorkflowRunPage } from '@/features/workflow/ui/WorkflowRunPage';
 import { WorkflowMainSessionButton } from '@/features/workflow/ui/WorkflowMainSessionButton';
 import { workflowNotificationEntries } from '@/features/workflow/model/workflowNotifications';
 import { AppNavigationProvider } from '@/shared/hooks/useAppNavigation';
@@ -21,6 +22,7 @@ import {
   type WorkspaceContextValue,
 } from '@/shared/hooks/useWorkspaceContext';
 import { useWorkflowNotifications } from '@/shared/hooks/useWorkflowManagement';
+import { UserSystemContext, useUserSystem } from '@/shared/hooks/useUserSystem';
 import type { AppNavigation } from '@/shared/lib/routes/appNavigation';
 
 const timestamp = '2026-10-04T01:00:00Z';
@@ -142,18 +144,33 @@ const workspaceContext: WorkspaceContextValue = {
   retryRepos: async () => undefined,
 };
 
-function EditorHarness() {
+function WorkflowPageHarness({
+  workflowId,
+  showRun,
+}: {
+  workflowId: string;
+  showRun: boolean;
+}) {
+  const userSystem = useUserSystem();
   return (
-    <ProjectContext.Provider value={projectContext}>
-      <UserContext.Provider value={userContext}>
-        <WorkspaceContext.Provider value={workspaceContext}>
-          <WorkflowTemplateEditorPage
-            projectId="project-one"
-            workflowId="report-template"
-          />
-        </WorkspaceContext.Provider>
-      </UserContext.Provider>
-    </ProjectContext.Provider>
+    <UserSystemContext.Provider
+      value={{ ...userSystem, profiles: { CODEX: {} } }}
+    >
+      <ProjectContext.Provider value={projectContext}>
+        <UserContext.Provider value={userContext}>
+          <WorkspaceContext.Provider value={workspaceContext}>
+            {showRun ? (
+              <WorkflowRunPage projectId="project-one" runId="report-run" />
+            ) : (
+              <WorkflowTemplateEditorPage
+                projectId="project-one"
+                workflowId={workflowId}
+              />
+            )}
+          </WorkspaceContext.Provider>
+        </UserContext.Provider>
+      </ProjectContext.Provider>
+    </UserSystemContext.Provider>
   );
 }
 
@@ -212,10 +229,17 @@ function NotificationHarness() {
 
 export function WorkflowManagementHarness() {
   const params = new URLSearchParams(window.location.search);
-  const [projectId, setProjectId] = useState<string>();
   const [projectRetries, setProjectRetries] = useState(0);
   const [projectPages, setProjectPages] = useState(0);
   const [openedRun, setOpenedRun] = useState<string>();
+  const [openedTask, setOpenedTask] = useState<{
+    projectId: string;
+    taskId: string;
+  }>();
+  const [openedWorkflow, setOpenedWorkflow] = useState<{
+    projectId: string;
+    workflowId: string;
+  }>();
   const isRemote = params.get('remote') === '1';
   const blocked = params.get('blocked') === '1';
   const emptyProjects =
@@ -225,7 +249,11 @@ export function WorkflowManagementHarness() {
     <AppNavigationProvider
       value={{
         ...navigation,
+        goToProjectWorkflowEdit: (projectId, workflowId) =>
+          setOpenedWorkflow({ projectId, workflowId }),
         goToProjectWorkflowRun: (_projectId, runId) => setOpenedRun(runId),
+        goToProjectTask: (projectId, taskId) =>
+          setOpenedTask({ projectId, taskId }),
         ...(blocked
           ? { agentExecutionUnavailableReason: 'Host is offline' }
           : {}),
@@ -251,12 +279,17 @@ export function WorkflowManagementHarness() {
                   created_at: timestamp,
                   updated_at: timestamp,
                 },
-              ],
+              ].filter(
+                (project) =>
+                  params.get('lateProject') !== '1' ||
+                  projectPages > 0 ||
+                  project.id === 'project-one'
+              ),
           isLoading: false,
           isError: emptyProjects,
           isFetching: false,
           isFetchNextPageError: false,
-          hasNextPage: projectPages === 0,
+          hasNextPage: params.get('lateProject') === '1' && projectPages === 0,
           isFetchingNextPage: false,
           retry: async () => setProjectRetries((count) => count + 1),
           loadNextPage: async () => setProjectPages((count) => count + 1),
@@ -267,8 +300,16 @@ export function WorkflowManagementHarness() {
             data-testid="workflow-management"
             style={{ height: '100%', padding: 16 }}
           >
-            {params.get('mode') === 'management-editor' ? (
-              <EditorHarness />
+            {params.get('mode') === 'management-editor' ||
+            params.get('mode') === 'management-run' ? (
+              <WorkflowPageHarness
+                workflowId={
+                  openedWorkflow?.workflowId ??
+                  params.get('workflow') ??
+                  'report-template'
+                }
+                showRun={params.get('mode') === 'management-run'}
+              />
             ) : params.get('mode') === 'management-notifications' ? (
               <NotificationHarness />
             ) : params.get('mode') === 'management-button' ? (
@@ -278,10 +319,7 @@ export function WorkflowManagementHarness() {
                 taskId={params.get('task') ?? undefined}
               />
             ) : (
-              <WorkflowLandingPage
-                projectId={projectId}
-                onProjectChange={setProjectId}
-              />
+              <WorkflowLandingPage />
             )}
             <output data-testid="project-retries" hidden>
               {projectRetries}
@@ -291,6 +329,12 @@ export function WorkflowManagementHarness() {
             </output>
             <output data-testid="opened-run" hidden>
               {openedRun}
+            </output>
+            <output data-testid="opened-task" hidden>
+              {JSON.stringify(openedTask)}
+            </output>
+            <output data-testid="opened-workflow" hidden>
+              {JSON.stringify(openedWorkflow)}
             </output>
           </div>
         </HotkeysProvider>

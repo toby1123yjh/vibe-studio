@@ -17,6 +17,7 @@ import { ChatToolSummary } from '@vibe/ui/components/ChatToolSummary';
 import { ChatTodoList } from '@vibe/ui/components/ChatTodoList';
 import { ChatApprovalCard } from '@vibe/ui/components/ChatApprovalCard';
 import { Button } from '@vibe/ui/components/Button';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { usePersistedExpanded } from '@/shared/stores/useUiPreferencesStore';
 import { agentConversationApi } from '@/shared/lib/agentConversationApi';
 import {
@@ -466,7 +467,7 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
                   key={`${location.path}:${location.line ?? ''}`}
                   className="break-all font-ibm-plex-mono text-sm text-low"
                 >
-                  {location.path}
+                  {formatPathForDisplay(location.path)}
                   {location.line ? `:${location.line}` : ''}
                 </p>
               ))}

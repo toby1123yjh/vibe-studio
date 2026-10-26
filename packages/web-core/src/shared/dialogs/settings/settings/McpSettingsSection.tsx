@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PlusIcon } from '@phosphor-icons/react';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type { BaseCodingAgent, ExecutorProfile } from 'shared/types';
 import { McpConfig } from 'shared/types';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
@@ -326,7 +327,7 @@ export function McpSettingsSection() {
                     {t('settings.mcp.labels.saveLocation')}
                     {mcpConfigPath && (
                       <span className="ml-2 font-mono text-xs">
-                        {mcpConfigPath}
+                        {formatPathForDisplay(mcpConfigPath)}
                       </span>
                     )}
                   </>

@@ -12,6 +12,7 @@ import {
 } from '@vibe/ui/components/KeyboardDialog';
 import { Button } from '@vibe/ui/components/Button';
 import { Label } from '@vibe/ui/components/Label';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   Select,
   SelectContent,
@@ -311,7 +312,7 @@ const ScriptFixerDialogImpl = create<ScriptFixerDialogProps>(
                   <SelectContent>
                     {repos.map((repo) => (
                       <SelectItem key={repo.id} value={repo.id}>
-                        {repo.display_name || repo.path}
+                        {repo.display_name || formatPathForDisplay(repo.path)}
                       </SelectItem>
                     ))}
                   </SelectContent>

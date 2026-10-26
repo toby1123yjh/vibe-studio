@@ -1,9 +1,45 @@
 import { expect, test } from '@playwright/test';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   buildWorkspaceContext,
   joinWorkspacePath,
   resolveWorkspaceWorkingDirectory,
 } from './workspaceContext';
+
+test.describe('shared filesystem path display', () => {
+  const cases = [
+    ['', ''],
+    ['C:\\', 'C:\\'],
+    ['\\\\?\\C:\\', 'C:\\'],
+    ['\\\\?\\d:\\目录 with spaces\\文件.txt', 'd:\\目录 with spaces\\文件.txt'],
+    ['\\\\?\\UNC\\host\\share\\目录', '\\\\host\\share\\目录'],
+    ['\\\\?\\uNc\\host\\share\\', '\\\\host\\share\\'],
+    ['\\\\host\\share', '\\\\host\\share'],
+    ['/home/user/目录', '/home/user/目录'],
+    ['../relative/file.txt', '../relative/file.txt'],
+    ['C:relative\\file.txt', 'C:relative\\file.txt'],
+    ['\\\\.\\pipe\\agent', '\\\\.\\pipe\\agent'],
+    ['\\\\?\\Volume{abc}\\folder', '\\\\?\\Volume{abc}\\folder'],
+    [
+      '\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1',
+      '\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1',
+    ],
+    ['/tmp/\\\\?\\C:\\literal', '/tmp/\\\\?\\C:\\literal'],
+    ['https://host/path', 'https://host/path'],
+  ];
+
+  for (const [nativePath, displayPath] of cases) {
+    test('preserves path meaning: ' + JSON.stringify(nativePath), () => {
+      expect(formatPathForDisplay(nativePath)).toBe(displayPath);
+      expect(formatPathForDisplay(displayPath)).toBe(displayPath);
+    });
+  }
+
+  test('does not shorten long paths or modify their contents', () => {
+    const suffix = 'directory with spaces\\'.repeat(20) + '文件.txt';
+    expect(formatPathForDisplay('\\\\?\\D:\\' + suffix)).toBe('D:\\' + suffix);
+  });
+});
 
 test.describe('workspace context projection', () => {
   test('joins Windows and Unix workspace paths', () => {

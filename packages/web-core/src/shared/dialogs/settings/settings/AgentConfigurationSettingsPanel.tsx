@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from '@vibe/ui/components/KeyboardDialog';
 import { Switch } from '@vibe/ui/components/Switch';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   AgentSettingsProvider,
   BaseCodingAgent,
@@ -1233,7 +1234,7 @@ export function AgentConfigurationSettingsPanel({
       >
         <div className="flex gap-2">
           <SettingsInput
-            value={projectPathInput}
+            value={formatPathForDisplay(projectPathInput)}
             onChange={setProjectPathInput}
             placeholder="/absolute/path/to/project"
             disabled={busy}

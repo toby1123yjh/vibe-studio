@@ -1,6 +1,13 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  useContext,
+} from 'react';
 import { useActions } from '@/shared/hooks/useActions';
-import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
+import { WorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import { usePush } from '@/shared/hooks/usePush';
 import { useRenameBranch } from '@/shared/hooks/useRenameBranch';
 import { useBranchStatus } from '@/shared/hooks/useBranchStatus';
@@ -25,7 +32,9 @@ export function GitPanelContainer({
   repos,
 }: GitPanelContainerProps) {
   const { executeAction } = useActions();
-  const { activeWorkspaces, archivedWorkspaces } = useWorkspaceContext();
+  const workspaceContext = useContext(WorkspaceContext);
+  const activeWorkspaces = workspaceContext?.activeWorkspaces;
+  const archivedWorkspaces = workspaceContext?.archivedWorkspaces;
   const repoActions = useUiPreferencesStore((s) => s.repoActions);
   const setRepoAction = useUiPreferencesStore((s) => s.setRepoAction);
 
@@ -37,8 +46,8 @@ export function GitPanelContainer({
   const summaryPr = useMemo(() => {
     if (!selectedWorkspace?.id) return undefined;
     const ws =
-      activeWorkspaces.find((w) => w.id === selectedWorkspace.id) ??
-      archivedWorkspaces.find((w) => w.id === selectedWorkspace.id);
+      activeWorkspaces?.find((w) => w.id === selectedWorkspace.id) ??
+      archivedWorkspaces?.find((w) => w.id === selectedWorkspace.id);
     if (!ws?.prStatus || !ws.prNumber) return undefined;
     return {
       prNumber: ws.prNumber,

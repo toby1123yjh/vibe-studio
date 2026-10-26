@@ -20,6 +20,7 @@ import {
   PlusIcon,
 } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
+import { formatPathForDisplay } from '../lib/path';
 import { useTypeaheadOpen } from './TypeaheadOpenContext';
 import { TypeaheadMenu } from './TypeaheadMenu';
 
@@ -572,8 +573,11 @@ export function FileTagTypeaheadPlugin({
                             />
                             <span>{file.name}</span>
                           </div>
-                          <div className="text-xs text-low truncate">
-                            {file.path}
+                          <div
+                            className="text-xs text-low truncate"
+                            title={formatPathForDisplay(file.path)}
+                          >
+                            {formatPathForDisplay(file.path)}
                           </div>
                         </TypeaheadMenu.Item>
                       );

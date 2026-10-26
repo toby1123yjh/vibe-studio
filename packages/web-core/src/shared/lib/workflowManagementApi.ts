@@ -1,4 +1,5 @@
 import type {
+  PrepareWorkflowMainSessionRequest,
   WorkflowContextView,
   WorkflowMainSessionView,
   WorkflowNotificationPage,
@@ -32,12 +33,7 @@ export const workflowManagementApi = {
   },
 
   async prepareMainSession(
-    payload: {
-      project_id: string;
-      workflow_id: string;
-      request_id: string;
-      task_id?: string;
-    },
+    payload: PrepareWorkflowMainSessionRequest,
     hostId?: string | null
   ): Promise<WorkflowMainSessionView> {
     return handleApiResponse(

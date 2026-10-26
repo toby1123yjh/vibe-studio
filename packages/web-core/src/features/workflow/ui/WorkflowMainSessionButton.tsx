@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@vibe/ui/components/Button';
+import { ApiError } from '@/shared/lib/api';
 import { workflowManagementApi } from '@/shared/lib/workflowManagementApi';
 import { buildWorkspaceSessionHref } from '@/shared/lib/routes/workspaceRoutes';
 import { useAppShellProjects } from '@/shared/hooks/useAppShellProjects';
@@ -69,7 +70,7 @@ export function WorkflowMainSessionButton({
         {
           project_id: projectId,
           workflow_id: workflowId,
-          task_id: taskId,
+          issue_id: taskId,
           request_id: scope.requestId,
         },
         hostId
@@ -95,10 +96,28 @@ export function WorkflowMainSessionButton({
       }
     } catch (err) {
       if (scopeRef.current === scope) {
+        let error = err instanceof Error ? err.message : String(err);
+        const details: unknown =
+          err instanceof ApiError ? err.error_data : undefined;
+        if (
+          details !== null &&
+          typeof details === 'object' &&
+          'message' in details &&
+          typeof details.message === 'string' &&
+          details.message.trim()
+        ) {
+          error =
+            'code' in details &&
+            details.code === 'workflow_conflict' &&
+            details.message ===
+              "Configure this workflow's captured main Agent before opening its Session"
+              ? t('workflow.management.mainAgentMissing')
+              : details.message;
+        }
         setState({
           key: scopeKey,
           pending: false,
-          error: err instanceof Error ? err.message : String(err),
+          error,
         });
       }
     } finally {

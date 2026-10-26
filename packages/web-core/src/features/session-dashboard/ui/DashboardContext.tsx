@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check, Copy, ExternalLink, GitBranch, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type { DashboardWorkRef } from 'shared/types';
 import { createDashboardApi } from '@/shared/lib/dashboardApi';
 
@@ -128,7 +129,9 @@ export function DashboardContext({
                 <dt>{t('sessionDashboard.context.directory')}</dt>
                 <dd>
                   {session.directory.path ? (
-                    <CopyValue value={session.directory.path} />
+                    <CopyValue
+                      value={formatPathForDisplay(session.directory.path)}
+                    />
                   ) : (
                     t('sessionDashboard.unavailable')
                   )}
@@ -196,7 +199,7 @@ export function DashboardContext({
             <div key={repo.path} className="session-dashboard__repository">
               <div>
                 <GitBranch size={14} aria-hidden="true" />
-                <CopyValue value={repo.path} />
+                <CopyValue value={formatPathForDisplay(repo.path)} />
               </div>
               <p>
                 {t(`sessionDashboard.git.${repo.status}`, {

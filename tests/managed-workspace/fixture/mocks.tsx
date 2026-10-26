@@ -1,13 +1,13 @@
-import React, { useSyncExternalStore } from "react";
-import type { ComponentProps } from "react";
-import type { CreateChatBox as RealCreateChatBox } from "@vibe/ui/components/CreateChatBox";
+import React, { useSyncExternalStore } from 'react';
+import type { ComponentProps } from 'react';
+import type { CreateChatBox as RealCreateChatBox } from '@vibe/ui/components/CreateChatBox';
 
 const params = new URLSearchParams(location.search);
 const repo = {
-  id: "repo-1",
-  name: "project-repo",
-  display_name: "Project repo",
-  path: "/project",
+  id: 'repo-1',
+  name: 'project-repo',
+  display_name: 'Project repo',
+  path: '/project',
 };
 const listeners = new Set<() => void>();
 let version = 0;
@@ -21,7 +21,7 @@ export function useFixture() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    () => version,
+    () => version
   );
 }
 type ChatProps = ComponentProps<typeof RealCreateChatBox>;
@@ -45,16 +45,16 @@ export const fixture = {
   targetDeferred: false,
   resolveTarget: () => {},
   state: {
-    repos: params.has("repo") ? [repo] : [],
-    targetBranches: { "repo-1": "main" } as Record<string, string>,
-    directFolderPath: params.get("path") ?? "",
-    message: "Hello agent",
-    hasInitialValue: !params.has("loading"),
-    hasResolvedInitialWorkspaceDefaults: !params.has("defaultsLoading"),
-    linkedTask: params.has("project")
-      ? { remoteProjectId: "project-1", taskId: "issue-1", simpleId: "P-1" }
+    repos: params.has('repo') ? [repo] : [],
+    targetBranches: { 'repo-1': 'main' } as Record<string, string>,
+    directFolderPath: params.get('path') ?? '',
+    message: 'Hello agent',
+    hasInitialValue: !params.has('loading'),
+    hasResolvedInitialWorkspaceDefaults: !params.has('defaultsLoading'),
+    linkedTask: params.has('project')
+      ? { remoteProjectId: 'project-1', taskId: 'issue-1', simpleId: 'P-1' }
       : null,
-    hostId: "host-a",
+    hostId: 'host-a',
   } as FixtureState,
   submissions: [] as Submission[],
   created: [] as string[],
@@ -116,7 +116,7 @@ export function useCreateMode() {
   useFixture();
   return {
     ...fixture.state,
-    initialProjectId: params.has("initialProject") ? "project-1" : undefined,
+    initialProjectId: params.has('initialProject') ? 'project-1' : undefined,
     ...actions,
     attachments: [],
     executorConfig: null,
@@ -140,7 +140,7 @@ const mutation = {
       });
     fixture.pending = false;
     if (fixture.fail) {
-      fixture.error = new Error("creation failed");
+      fixture.error = new Error('creation failed');
       notify();
       throw fixture.error;
     }
@@ -159,14 +159,14 @@ export function useCreateWorkspace() {
   };
 }
 export const useCurrentAppDestination = () => ({
-  kind: "workspaces-create",
+  kind: 'workspaces-create',
   hostId: fixture.state.hostId,
 });
 export const useUserSystem = () => ({ profiles: {}, config: {} });
-const executorConfig = { executor: "CODEX", variant: null };
+const executorConfig = { executor: 'CODEX', variant: null };
 export const useExecutorConfig = () => ({
   executorConfig,
-  effectiveExecutor: "CODEX",
+  effectiveExecutor: 'CODEX',
   selectedVariant: null,
   executorOptions: [],
   variantOptions: [],
@@ -189,23 +189,23 @@ export const getProjectWorkspaceDefaultOrThrow = async () => {
     await new Promise<void>((resolve) => {
       fixture.resolveTarget = resolve;
     });
-  if (fixture.targetFailure) throw new Error("workspace lookup failed");
+  if (fixture.targetFailure) throw new Error('workspace lookup failed');
   if (savedWorkspace !== undefined) return savedWorkspace;
-  if (params.has("repo"))
-    return { kind: "git", repo: { repo_id: "repo-1", target_branch: "main" } };
-  if (params.has("path"))
-    return { kind: "direct_folder", path: params.get("path") };
+  if (params.has('repo'))
+    return { kind: 'git', repo: { repo_id: 'repo-1', target_branch: 'main' } };
+  if (params.has('path'))
+    return { kind: 'direct_folder', path: params.get('path') };
   return null;
 };
 export const useAppShellProjects = () => ({
-  deployment: "remote",
+  deployment: 'remote',
   hostId: fixture.state.hostId,
 });
 export const executionDataApi = {
   listProjects: async () => ({
     projects: [
-      { id: "00000000-0000-0000-0000-000000000003", name: "Default project" },
-      { id: "project-1", name: "My project" },
+      { id: '00000000-0000-0000-0000-000000000003', name: 'Default project' },
+      { id: 'project-1', name: 'My project' },
     ],
     next_cursor: null,
   }),
@@ -230,6 +230,7 @@ export const useDropzone = () => ({
 });
 export const FolderOpenIcon = () => null;
 export const AgentIcon = () => null;
+export const getAgentName = (agent: string) => agent;
 export const ModelSelectorContainer = () => null;
 export const AgentSessionResumePicker = () => null;
 export const AgentSessionResumeChip = () => null;

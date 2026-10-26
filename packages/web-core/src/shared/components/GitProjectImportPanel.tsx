@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { GitImportJob, GitRemoteInspection } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
 import { Input } from '@vibe/ui/components/Input';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { gitImportApi } from '@/shared/lib/gitImportApi';
 import { ApiError } from '@/shared/lib/api';
 import { FolderPickerDialog } from '@/shared/dialogs/shared/FolderPickerDialog';
@@ -413,9 +414,9 @@ export function GitProjectImportPanel({
           <label className="block space-y-1 text-sm">
             {t('gitImport.directory', 'Download directory')}
             <Input
-              value={directory}
+              value={formatPathForDisplay(directory)}
               disabled={locked}
-              placeholder={inspection.suggested_directory}
+              placeholder={formatPathForDisplay(inspection.suggested_directory)}
               onChange={(e) => {
                 setDirectory(e.target.value);
                 requestId.current = null;
@@ -451,7 +452,9 @@ export function GitProjectImportPanel({
           <p>
             {t(`gitImport.state.${job.state}`, { defaultValue: job.state })}
           </p>
-          <p className="break-all text-xs text-low">{job.directory_path}</p>
+          <p className="break-all text-xs text-low">
+            {formatPathForDisplay(job.directory_path)}
+          </p>
           {job.progress !== null && active(job) && (
             <progress
               className="w-full"

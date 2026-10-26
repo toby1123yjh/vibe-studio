@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { Button } from '@vibe/ui/components/Button';
 import { Input } from '@vibe/ui/components/Input';
 import { Textarea } from '@vibe/ui/components/Textarea';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   Dialog,
   DialogContent,
@@ -90,7 +91,7 @@ function getRepoDisplayName(repo: Repo): string {
 }
 
 function getRepoOptionLabel(repo: Repo): string {
-  return `${getRepoDisplayName(repo)} - ${repo.path}`;
+  return `${getRepoDisplayName(repo)} - ${formatPathForDisplay(repo.path)}`;
 }
 
 function isActiveArenaConflict(errorMessage: string): boolean {
@@ -564,10 +565,10 @@ const CreateArenaDialogImpl = create<CreateArenaDialogProps>(
                 {selectedRepo ? (
                   <p
                     className="truncate text-[11px] text-low"
-                    title={selectedRepo.path}
+                    title={formatPathForDisplay(selectedRepo.path)}
                   >
                     {t('arena.create.loadedFrom', {
-                      path: selectedRepo.path,
+                      path: formatPathForDisplay(selectedRepo.path),
                     })}
                   </p>
                 ) : null}

@@ -1,4 +1,10 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import type {
+  ExecutorConfig,
+  PrepareWorkflowMainSessionRequest,
+  WorkflowRunResponse,
+  WorkflowTemplateResponse,
+} from '../../../shared/types';
 
 const timestamp = '2026-10-04T01:00:00Z';
 const mainConfig = {
@@ -6,7 +12,7 @@ const mainConfig = {
   variant: 'DEFAULT',
   model_id: 'gpt-publication-test',
   reasoning_id: 'high',
-};
+} satisfies ExecutorConfig;
 const graph = {
   version: 2,
   nodes: [
@@ -89,8 +95,8 @@ const capturedContext = {
   workflow_name: template.name,
   main_agent_config: mainConfig,
   main_agent_prompt: template.main_agent_prompt,
-  prepared_task_id: null,
-  task_id: null,
+  prepared_issue_id: null,
+  issue_id: null,
   instance_id: null,
   workspace_id: 'prepared-workspace',
   latest_run_id: null,
@@ -117,6 +123,10 @@ interface ApiCall {
 }
 
 interface MockOptions {
+  mainAgentConfigured?: boolean;
+  list?: (route: Route) => Promise<void>;
+  workflows?: unknown[];
+  projectAttempts?: (route: Route, projectId: string) => Promise<void>;
   prepare?: (route: Route, call: ApiCall) => Promise<void>;
   update?: (route: Route, call: ApiCall) => Promise<void>;
   notifications?: (route: Route, url: URL) => Promise<void>;
@@ -135,7 +145,16 @@ function success(data: unknown) {
 
 async function mockManagement(page: Page, options: MockOptions = {}) {
   const calls: ApiCall[] = [];
-  let currentTemplate = { ...template };
+  let currentTemplate: WorkflowTemplateResponse = {
+    ...template,
+    source: 'project',
+    main_agent_config:
+      options.mainAgentConfigured === false
+        ? null
+        : { ...mainConfig, executor: 'CODEX' },
+    main_agent_prompt:
+      options.mainAgentConfigured === false ? null : template.main_agent_prompt,
+  };
 
   // Model discovery is also a read-only backend boundary. Exercise the real
   // controls without needing a local CLI or a second browser-side store.
@@ -183,7 +202,13 @@ async function mockManagement(page: Page, options: MockOptions = {}) {
     };
     calls.push(call);
 
-    if (
+    if (url.pathname === '/api/local/v1/fallback/workflows') {
+      if (options.list) await options.list(route);
+      else
+        await json(route, {
+          workflows: options.workflows ?? [currentTemplate],
+        });
+    } else if (
       /\/projects\/[^/]+\/workflows$/.test(url.pathname) &&
       call.method === 'GET'
     ) {
@@ -191,6 +216,24 @@ async function mockManagement(page: Page, options: MockOptions = {}) {
       await json(route, {
         workflows: [{ ...currentTemplate, project_id: projectId }],
       });
+    } else if (
+      /\/projects\/[^/]+\/workflows$/.test(url.pathname) &&
+      call.method === 'POST'
+    ) {
+      currentTemplate = {
+        ...currentTemplate,
+        id: 'created-template',
+        project_id: url.pathname.split('/').at(-2)!,
+        name: String(call.body?.name),
+      };
+      await json(route, { data: currentTemplate, txid: 1 });
+    } else if (/\/projects\/[^/]+\/workflow-attempts$/.test(url.pathname)) {
+      const projectId = url.pathname.split('/').at(-2)!;
+      if (options.projectAttempts) {
+        await options.projectAttempts(route, projectId);
+      } else {
+        await json(route, { attempts: [] });
+      }
     } else if (/\/projects\/[^/]+\/scheduled-tasks$/.test(url.pathname)) {
       await json(route, { tasks: [] });
     } else if (
@@ -208,6 +251,39 @@ async function mockManagement(page: Page, options: MockOptions = {}) {
       options.run
     ) {
       await options.run(route, call);
+    } else if (
+      url.pathname ===
+      '/api/local/v1/projects/project-one/tasks/report-issue/workflow-attempts'
+    ) {
+      currentTemplate = {
+        ...currentTemplate,
+        name: String(call.body?.name),
+        graph_json: String(call.body?.graph_json),
+      };
+      await json(route, { data: instance, txid: 1 });
+    } else if (url.pathname === '/api/local/v1/workflow-runs/report-run') {
+      await json(route, {
+        id: 'report-run',
+        orchestration_run_id: null,
+        workflow_id: template.id,
+        attempt_id: instance.id,
+        task_id: instance.task_id,
+        workspace_id: instance.workspace_id,
+        trigger_source: 'manual',
+        input_text: 'Prepare a report.',
+        output_text: null,
+        status: 'succeeded',
+        started_at: timestamp,
+        finished_at: timestamp,
+        error_text: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+        nodes: [],
+        split_batches: [],
+        handoffs: [],
+        delivery: null,
+        request_path: null,
+      } satisfies WorkflowRunResponse);
     } else if (url.pathname === '/api/workspaces/prepared-workspace') {
       await json(
         route,
@@ -284,6 +360,25 @@ async function mockManagement(page: Page, options: MockOptions = {}) {
     } else if (
       url.pathname === '/api/workflow-management/prepare-main-session'
     ) {
+      // The production Rust request denies unknown fields. Keep that boundary
+      // here so UI Task terminology cannot silently change the wire contract.
+      const allowedFields = new Set<string>([
+        'project_id',
+        'workflow_id',
+        'request_id',
+        'issue_id',
+      ] satisfies Array<keyof PrepareWorkflowMainSessionRequest>);
+      if (
+        !call.body ||
+        Object.keys(call.body).some((key) => !allowedFields.has(key))
+      ) {
+        await json(
+          route,
+          { success: false, message: 'Unknown main-session request field' },
+          422
+        );
+        return;
+      }
       if (options.prepare) await options.prepare(route, call);
       else await json(route, success(preparedSession));
     } else if (
@@ -323,21 +418,18 @@ function mutations(calls: ApiCall[]) {
   return calls.filter((call) => call.method !== 'GET');
 }
 
-async function selectProject(page: Page, name = 'Report project') {
-  await page.getByRole('combobox', { name: 'Project' }).click();
-  await page.getByRole('option', { name, exact: true }).click();
+async function openMainSettings(page: Page) {
   await expect(
     page.getByRole('heading', { name: 'Report workflow' })
   ).toBeVisible();
-}
-
-async function openMainSettings(page: Page) {
-  await selectProject(page);
+  await page
+    .getByRole('button', { name: 'Actions for Report workflow', exact: true })
+    .click();
   await page.getByRole('button', { name: 'Main Agent', exact: true }).click();
   await expect(page.getByLabel('Main Agent instructions')).toBeVisible();
 }
 
-test('requires explicit project choice, preserves scope, and opens settings without execution', async ({
+test('shows workflows and owning projects immediately without a project chooser or execution', async ({
   page,
 }) => {
   const { calls } = await mockManagement(page);
@@ -345,36 +437,462 @@ test('requires explicit project choice, preserves scope, and opens settings with
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/?mode=management');
   await expect(
-    page.getByText('Choose the project whose workspace this workflow will use.')
+    page.getByRole('heading', { name: 'Report workflow' })
   ).toBeVisible();
-  expect(calls).toEqual([]);
-
-  await page.getByRole('button', { name: 'Load more projects' }).click();
-  await expect(page.getByTestId('project-pages')).toHaveText('1');
+  await expect(page.getByText('Project · Report project')).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Project' })).toHaveCount(0);
+  await expect(page.getByTestId('project-pages')).toHaveText('0');
   await openMainSettings(page);
   await expect(page.getByLabel('Main Agent instructions')).toHaveValue(
     template.main_agent_prompt
   );
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.getByLabel('Main Agent instructions')).toHaveCount(0);
-  await selectProject(page, 'Research project');
   expect(
-    calls.some((call) => call.path.includes('/projects/project-two/workflows'))
+    calls.some((call) => call.path === '/api/local/v1/fallback/workflows')
   ).toBe(true);
   expect(mutations(calls)).toEqual([]);
   expect(errors).toEqual([]);
 });
 
-test('project discovery failure retries the real chooser without selecting a fallback', async ({
+test('project discovery failure preserves workflows and retries their project metadata', async ({
   page,
 }) => {
   const { calls } = await mockManagement(page);
   await page.goto('/?mode=management&projectsError=1');
+  await expect(
+    page.getByRole('heading', { name: 'Report workflow' })
+  ).toBeVisible();
   await expect(page.getByText('Could not load projects')).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
-  await expect(page.getByRole('combobox', { name: 'Project' })).toBeVisible();
+  await expect(page.getByText('Project · Report project')).toBeVisible();
   await expect(page.getByTestId('project-retries')).toHaveText('1');
-  expect(calls).toEqual([]);
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('task workflows appear without reusable definitions and open their existing run and task', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    workflows: [],
+    projectAttempts: async (route, projectId) =>
+      json(route, {
+        attempts:
+          projectId === 'project-one'
+            ? [
+                {
+                  ...instance,
+                  workflow_id: 'task-backing-workflow',
+                  template_id: null,
+                  status: 'succeeded',
+                  latest_run_id: 'completed-report-run',
+                  definition_locked_at: timestamp,
+                },
+              ]
+            : [],
+      }),
+  });
+  await page.goto('/?mode=management');
+  await expect(
+    page.getByRole('heading', { name: 'Report instance' })
+  ).toBeVisible();
+  await expect(page.getByText('Project · Report project')).toBeVisible();
+  await expect(page.getByText('Task workflow', { exact: true })).toBeVisible();
+  await expect(page.getByText('Succeeded', { exact: true })).toBeVisible();
+  await expect(page.getByText('No workflows yet')).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Actions for Report instance', exact: true })
+    .click();
+  await expect(page.getByRole('switch')).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Main Agent', exact: true })
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Scheduled task', exact: true })
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'View task', exact: true }).click();
+  await expect(page.getByTestId('opened-task')).toHaveText(
+    JSON.stringify({ projectId: 'project-one', taskId: 'report-issue' })
+  );
+  await expect(page.getByTestId('opened-run')).toBeEmpty();
+  await page.getByRole('heading', { name: 'Report instance' }).click();
+  await expect(page.getByTestId('opened-run')).toHaveText(
+    'completed-report-run'
+  );
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('discovers task-only workflows on later project pages and opens saved drafts by their backing workflow id', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    workflows: [],
+    projectAttempts: async (route, projectId) =>
+      json(route, {
+        attempts:
+          projectId === 'project-two'
+            ? [
+                {
+                  ...instance,
+                  project_id: projectId,
+                  workflow_id: 'research-draft-workflow',
+                  template_id: null,
+                },
+              ]
+            : [],
+      }),
+  });
+  await page.goto('/?mode=management&lateProject=1');
+  await expect(
+    page.getByRole('heading', { name: 'Report instance' })
+  ).toBeVisible();
+  await expect(page.getByText('Project · Research project')).toBeVisible();
+  await expect(page.getByText('Draft', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('project-pages')).toHaveText('1');
+  const card = page.getByRole('button').filter({
+    has: page.getByRole('heading', { name: 'Report instance' }),
+  });
+  await card.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('opened-workflow')).toHaveText(
+    JSON.stringify({
+      projectId: 'project-two',
+      workflowId: 'research-draft-workflow',
+    })
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('waits for task workflow discovery before displaying an empty list', async ({
+  page,
+}) => {
+  let release: (() => void) | undefined;
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { calls } = await mockManagement(page, {
+    workflows: [],
+    projectAttempts: async (route) => {
+      await delayed;
+      await json(route, { attempts: [] });
+    },
+  });
+  await page.goto('/?mode=management');
+  await expect
+    .poll(() => calls.some((call) => call.path.endsWith('/workflow-attempts')))
+    .toBe(true);
+  await expect(page.getByText('No workflows yet')).toHaveCount(0);
+  release!();
+  await expect(page.getByText('No workflows yet')).toBeVisible();
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('task workflow discovery errors retain definitions and retry the failed project', async ({
+  page,
+}) => {
+  let failed = true;
+  const { calls } = await mockManagement(page, {
+    projectAttempts: async (route, projectId) => {
+      if (projectId !== 'project-one') {
+        await json(route, { attempts: [] });
+      } else if (failed) {
+        await json(
+          route,
+          { message: 'Project workflow list unavailable' },
+          503
+        );
+      } else {
+        await json(route, {
+          attempts: [{ ...instance, workflow_id: 'task-backing-workflow' }],
+        });
+      }
+    },
+  });
+  await page.goto('/?mode=management');
+  await expect(
+    page.getByRole('heading', { name: 'Report workflow' })
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Project workflow list unavailable/)
+  ).toBeVisible();
+  failed = false;
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Report instance' })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Report workflow' })
+  ).toBeVisible();
+  await expect(page.getByText(/Project workflow list unavailable/)).toHaveCount(
+    0
+  );
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('opens each workflow with its owning project without another selection', async ({
+  page,
+}) => {
+  const researchTemplate = {
+    ...template,
+    id: 'research-template',
+    project_id: 'project-two',
+    name: 'Research workflow',
+  };
+  const { calls } = await mockManagement(page, {
+    workflows: [template, researchTemplate],
+  });
+  await page.goto('/?mode=management');
+  await expect(page.getByText('Project · Report project')).toBeVisible();
+  await expect(page.getByText('Project · Research project')).toBeVisible();
+  await page.getByRole('heading', { name: 'Research workflow' }).click();
+  await expect(page.getByTestId('opened-workflow')).toHaveText(
+    JSON.stringify({
+      projectId: 'project-two',
+      workflowId: 'research-template',
+    })
+  );
+  await page.getByRole('heading', { name: 'Report workflow' }).click();
+  await expect(page.getByTestId('opened-workflow')).toHaveText(
+    JSON.stringify({ projectId: 'project-one', workflowId: 'report-template' })
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(mutations(calls)).toEqual([]);
+  // Schedules are fetched once per project, never once per card.
+  expect(
+    calls
+      .filter((call) => call.path.endsWith('/scheduled-tasks'))
+      .map((call) => call.path)
+      .sort()
+  ).toEqual([
+    '/api/local/v1/projects/project-one/scheduled-tasks',
+    '/api/local/v1/projects/project-two/scheduled-tasks',
+  ]);
+});
+
+test('workflow metadata discovers later project pages automatically', async ({
+  page,
+}) => {
+  await mockManagement(page, {
+    workflows: [{ ...template, project_id: 'project-two' }],
+  });
+  await page.goto('/?mode=management&lateProject=1');
+  await expect(page.getByText('Project · Research project')).toBeVisible();
+  await expect(page.getByTestId('project-pages')).toHaveText('1');
+  await expect(page.getByRole('combobox')).toHaveCount(0);
+});
+
+test('Main Agent preparation uses the workflow owner without a separate project selection', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    workflows: [
+      { ...template, id: 'research-template', project_id: 'project-two' },
+    ],
+    prepare: async (route) =>
+      json(
+        route,
+        success({
+          ...preparedSession,
+          context: {
+            ...capturedContext,
+            project_id: 'project-two',
+            workflow_id: 'research-template',
+          },
+        })
+      ),
+  });
+  await page.goto('/?mode=management');
+  await openMainSettings(page);
+  await page.getByRole('button', { name: 'Open main conversation' }).click();
+  await expect(page.getByTestId('prepared-workspace')).toBeVisible();
+  expect(mutations(calls)).toMatchObject([
+    {
+      method: 'POST',
+      path: '/api/workflow-management/prepare-main-session',
+      body: { project_id: 'project-two', workflow_id: 'research-template' },
+    },
+  ]);
+});
+
+test('workflow management shows project workflows without built-in templates or source badges', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    workflows: [
+      template,
+      {
+        ...template,
+        id: 'system-template',
+        project_id: null,
+        source: 'system',
+        name: 'Built-in workflow',
+      },
+    ],
+  });
+  await page.goto('/?mode=management');
+  await expect(
+    page.getByRole('heading', { name: 'Report workflow' })
+  ).toBeVisible();
+  await expect(page.getByText('Project · Report project')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Built-in workflow' })
+  ).toHaveCount(0);
+  await expect(page.getByText('Built-in', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Project workflow', { exact: true })).toHaveCount(
+    0
+  );
+  await expect(page.getByText('Available to all projects')).toHaveCount(0);
+  await expect(page.getByRole('combobox')).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Actions for Report workflow', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Main Agent', exact: true })
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole('button', { name: 'Scheduled task', exact: true })
+  ).toHaveCount(1);
+  await expect(page.getByRole('switch')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await page.getByRole('heading', { name: 'Report workflow' }).click();
+  await expect(page.getByTestId('opened-workflow')).toHaveText(
+    JSON.stringify({ projectId: 'project-one', workflowId: 'report-template' })
+  );
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('only built-in templates leaves workflow management empty with a create action', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    workflows: [
+      {
+        ...template,
+        id: 'system-template',
+        project_id: null,
+        source: 'system',
+        name: 'Built-in workflow',
+      },
+    ],
+  });
+  await page.goto('/?mode=management');
+  await expect(page.getByText('No workflows yet')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Built-in workflow' })
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Main Agent', exact: true })
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Scheduled task', exact: true })
+  ).toHaveCount(0);
+  await expect(page.getByRole('switch')).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Create workflow', exact: true })
+    .click();
+  await expect(page.getByRole('combobox', { name: 'Project' })).toBeVisible();
+  expect(
+    calls.filter((call) => call.path.endsWith('/scheduled-tasks'))
+  ).toEqual([]);
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('creating a global workflow chooses its owner once and refreshes global discovery', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page);
+  await page.goto('/?mode=management');
+  await page.getByRole('button', { name: 'New workflow', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Create workflow', exact: true })
+  ).toBeDisabled();
+  await page.getByRole('combobox', { name: 'Project' }).click();
+  await page
+    .getByRole('option', { name: 'Research project', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Create workflow', exact: true })
+    .click();
+  await expect(page.getByTestId('opened-workflow')).toHaveText(
+    JSON.stringify({
+      projectId: 'project-two',
+      workflowId: 'created-template',
+    })
+  );
+  await expect(
+    page.getByRole('heading', { name: 'New workflow', exact: true })
+  ).toBeVisible();
+  await expect(page.getByText('Project · Research project')).toBeVisible();
+  expect(mutations(calls)).toMatchObject([
+    { method: 'POST', path: '/api/local/v1/projects/project-two/workflows' },
+  ]);
+  expect(
+    calls.filter((call) => call.path === '/api/local/v1/fallback/workflows')
+      .length
+  ).toBeGreaterThan(1);
+});
+
+test('global list loading failure retries and a successful empty list retains creation', async ({
+  page,
+}) => {
+  let failed = true;
+  await mockManagement(page, {
+    list: async (route) => {
+      if (failed) await json(route, { message: 'List offline' }, 503);
+      else await json(route, { workflows: [] });
+    },
+  });
+  await page.goto('/?mode=management');
+  await expect(
+    page.getByText(/Failed to load workflows: List offline/)
+  ).toBeVisible();
+  failed = false;
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByText('No workflows yet')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Create workflow', exact: true })
+  ).toBeVisible();
+});
+
+test('failed creation keeps its selected project and exposes a retry in the dialog', async ({
+  page,
+}) => {
+  await mockManagement(page);
+  let failures = 0;
+  await page.route(
+    '**/api/local/v1/projects/project-two/workflows',
+    async (route) => {
+      if (route.request().method() === 'POST' && failures++ === 0) {
+        await json(route, { message: 'Could not create workflow' }, 503);
+      } else await route.fallback();
+    }
+  );
+  await page.goto('/?mode=management');
+  await page.getByRole('button', { name: 'New workflow', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Project' }).click();
+  await page
+    .getByRole('option', { name: 'Research project', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Create workflow', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText(
+    'Could not create workflow'
+  );
+  await expect(page.getByRole('combobox', { name: 'Project' })).toContainText(
+    'Research project'
+  );
+  await page
+    .getByRole('button', { name: 'Create workflow', exact: true })
+    .click();
+  await expect(page.getByTestId('opened-workflow')).toHaveText(
+    JSON.stringify({
+      projectId: 'project-two',
+      workflowId: 'created-template',
+    })
+  );
 });
 
 test('publishes full provider/model/reasoning and prompt with the current revision, without graph changes', async ({
@@ -472,12 +990,11 @@ test('opening a conversation saves first and navigates to the returned exact Ses
     '/api/local/v1/workflows/report-template',
     '/api/workflow-management/prepare-main-session',
   ]);
-  expect(mutations(calls)[1]?.body).toMatchObject({
+  expect(mutations(calls)[1]?.body).toEqual({
     project_id: 'project-one',
     workflow_id: template.id,
     request_id: expect.any(String),
   });
-  expect(mutations(calls)[1]?.body?.task_id).toBeUndefined();
 });
 
 test('preparation retry keeps request identity and explicit Task, including remote exact-session navigation', async ({
@@ -496,7 +1013,7 @@ test('preparation retry keeps request identity and explicit Task, including remo
       else await json(route, success(preparedSession));
     },
   });
-  await page.goto('/?mode=management-button&remote=1&issue=report-issue');
+  await page.goto('/?mode=management-button&remote=1&task=report-issue');
   await page.getByRole('button', { name: 'Open main conversation' }).click();
   await expect(page.getByRole('alert')).toContainText(
     'Temporary preparation error'
@@ -511,11 +1028,76 @@ test('preparation retry keeps request identity and explicit Task, including remo
   const prepares = mutations(calls);
   expect(prepares).toHaveLength(2);
   expect(prepares[0].body).toEqual(prepares[1].body);
-  expect(prepares[0].body).toMatchObject({
-    task_id: 'report-issue',
+  expect(prepares[0].body).toEqual({
+    project_id: 'project-one',
+    workflow_id: template.id,
+    issue_id: 'report-issue',
     request_id: expect.any(String),
   });
+  expect(prepares.map((call) => call.path)).toEqual([
+    '/api/workflow-management/prepare-main-session',
+    '/api/workflow-management/prepare-main-session',
+  ]);
 });
+
+for (const { locale, buttonName, errorMessage } of [
+  {
+    locale: 'en-US',
+    buttonName: 'Open main conversation',
+    errorMessage:
+      'This workflow has no main Agent configured, so its main Session cannot be opened. Configure the main Agent before starting the workflow.',
+  },
+  {
+    locale: 'zh-CN',
+    buttonName: '打开主会话',
+    errorMessage:
+      '本次工作流未配置主智能体，无法打开主会话。请在工作流开始前配置主智能体。',
+  },
+]) {
+  test.describe(`missing captured main Agent (${locale})`, () => {
+    test.use({ locale });
+
+    test('explains the structured configuration conflict without changing the instance', async ({
+      page,
+    }) => {
+      const { calls } = await mockManagement(page, {
+        prepare: async (route) =>
+          json(
+            route,
+            {
+              success: false,
+              data: null,
+              error_data: {
+                code: 'workflow_conflict',
+                message:
+                  "Configure this workflow's captured main Agent before opening its Session",
+              },
+              message: null,
+            },
+            409
+          ),
+      });
+      await page.goto('/?mode=management-button&task=report-issue');
+      await page.getByRole('button', { name: buttonName }).click();
+      await expect(page.getByRole('alert')).toHaveText(errorMessage);
+      await page.getByRole('button', { name: buttonName }).click();
+      await expect(page.getByRole('alert')).toHaveText(errorMessage);
+      await expect(page.getByTestId('prepared-workspace')).toHaveCount(0);
+      const prepares = mutations(calls);
+      expect(prepares.map((call) => call.path)).toEqual([
+        '/api/workflow-management/prepare-main-session',
+        '/api/workflow-management/prepare-main-session',
+      ]);
+      expect(prepares[0].body).toEqual(prepares[1].body);
+      expect(prepares[0].body).toEqual({
+        project_id: 'project-one',
+        workflow_id: template.id,
+        issue_id: 'report-issue',
+        request_id: expect.any(String),
+      });
+    });
+  });
+}
 
 test('a deleted original main Session is not silently replaced by another create path', async ({
   page,
@@ -526,14 +1108,18 @@ test('a deleted original main Session is not silently replaced by another create
         route,
         {
           success: false,
-          error_data: { code: 'instance_binding_conflict' },
-          message:
-            'The original main Session was deleted and cannot be replaced.',
+          data: null,
+          error_data: {
+            code: 'instance_binding_conflict',
+            message:
+              'The original main Session was deleted and cannot be replaced.',
+          },
+          message: null,
         },
         409
       ),
   });
-  await page.goto('/?mode=management-button&issue=report-issue');
+  await page.goto('/?mode=management-button&task=report-issue');
   await page.getByRole('button', { name: 'Open main conversation' }).click();
   await expect(page.getByRole('alert')).toContainText('cannot be replaced');
   await page.getByRole('button', { name: 'Open main conversation' }).click();
@@ -558,10 +1144,214 @@ test('an unavailable execution Host disables preparation without any requests', 
 });
 
 async function openEditorMainSettings(page: Page) {
-  await page.getByRole('button', { name: 'More actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Main Agent', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Configure main Agent', exact: true })
+    .click();
   await expect(page.getByLabel('Main Agent instructions')).toBeVisible();
 }
+
+test('an unconfigured main Agent has a direct editor entry and can be saved before opening a conversation', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    mainAgentConfigured: false,
+    attempt: async (route) => json(route, instance),
+  });
+  await page.goto('/?mode=management-editor');
+  await expect(page.getByText('Not configured', { exact: true })).toBeVisible();
+  await expect(page.getByText('Optional.', { exact: false })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeDisabled();
+  // A main Agent is optional for runtime-controlled execution.
+  await expect(
+    page.getByRole('button', { name: 'Run workflow attempt' })
+  ).toBeEnabled();
+  await openEditorMainSettings(page);
+  const dialog = page.locator('.vk-keyboard-dialog');
+  await dialog.getByRole('button', { name: 'Select executor' }).click();
+  await page.getByRole('menuitem', { name: 'Codex', exact: true }).click();
+  await dialog.getByLabel('Main Agent instructions').fill('Manage the report.');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(
+    dialog.getByRole('button', { name: 'Save', exact: true })
+  ).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByText('Not configured', { exact: true })).toHaveCount(
+    0
+  );
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeEnabled();
+  expect(mutations(calls).map((call) => call.path)).toEqual([
+    '/api/local/v1/workflows/report-template',
+  ]);
+  expect(mutations(calls)[0].body).toMatchObject({
+    main_agent_config: { executor: 'CODEX' },
+    main_agent_prompt: 'Manage the report.',
+    graph_json: null,
+  });
+});
+
+test('a new local draft saves its canvas and opens main Agent configuration without starting work', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    mainAgentConfigured: false,
+    attempt: async (route) => json(route, instance),
+  });
+  await page.addInitScript(
+    (draft) => {
+      sessionStorage.setItem(
+        `vibe.workflowAttemptDraft.${draft.id}`,
+        JSON.stringify(draft)
+      );
+    },
+    {
+      id: 'local-report',
+      projectId: 'project-one',
+      taskId: 'report-issue',
+      taskTitle: 'Prepare report',
+      name: 'Draft report workflow',
+      graphJson: JSON.stringify(graph),
+      repos: [],
+      directoryPath: '/fixtures/report-workspace',
+      createdAt: timestamp,
+    }
+  );
+  await page.goto('/?mode=management-editor&workflow=draft-local-report');
+  await expect(page.getByLabel('Workflow name')).toHaveValue(
+    'Draft report workflow'
+  );
+  await page.getByLabel('Workflow name').fill('My prepared workflow');
+  await expect(
+    page.getByText('Save and configure', { exact: true })
+  ).toBeVisible();
+  await openEditorMainSettings(page);
+  expect(mutations(calls)).toMatchObject([
+    {
+      method: 'POST',
+      path: '/api/local/v1/projects/project-one/tasks/report-issue/workflow-attempts',
+      body: {
+        name: 'My prepared workflow',
+        directory_path: '/fixtures/report-workspace',
+      },
+    },
+  ]);
+  const savedGraph = JSON.parse(String(mutations(calls)[0].body?.graph_json));
+  expect(savedGraph.nodes).toHaveLength(graph.nodes.length);
+  await expect(page.getByTestId('opened-workflow')).toContainText(
+    'report-template'
+  );
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem('vibe.workflowAttemptDraft.local-report')
+    )
+  ).toBeNull();
+});
+
+test('an accepted workflow without a main Agent explains the unavailable conversation without allowing edits', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    mainAgentConfigured: false,
+    attempt: async (route) =>
+      json(route, { ...instance, definition_locked_at: timestamp }),
+  });
+  await page.goto('/?mode=management-editor');
+  await expect(
+    page.getByText('No main Agent was configured when this workflow started.', {
+      exact: false,
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Configure main Agent', exact: true })
+  ).toHaveCount(0);
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('a run with no captured main Agent disables preparation and retains its canvas', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    mainAgentConfigured: false,
+    attempt: async (route) =>
+      json(route, { ...instance, definition_locked_at: timestamp }),
+  });
+  await page.goto('/?mode=management-run');
+  await expect(
+    page.getByText('No main Agent was configured when this workflow started.', {
+      exact: false,
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeDisabled();
+  await expect(page.locator('.react-flow')).toBeAttached();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('an original main Session stays reopenable even when main Agent configuration is absent', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    mainAgentConfigured: false,
+    attempt: async (route) =>
+      json(route, {
+        ...instance,
+        main_session_id: 'main-session',
+        main_session_bound_at: timestamp,
+        definition_locked_at: timestamp,
+      }),
+  });
+  await page.goto('/?mode=management-run');
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeEnabled();
+  await expect(
+    page.getByText('No main Agent was configured when this workflow started.', {
+      exact: false,
+    })
+  ).toHaveCount(0);
+  expect(mutations(calls)).toEqual([]);
+});
+
+test('captured configuration lookup failure has a local retry and enables opening after recovery', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    attempt: async (route) => json(route, instance),
+  });
+  let failed = true;
+  await page.route(
+    '**/api/local/v1/workflows/report-template',
+    async (route) => {
+      if (failed)
+        await json(route, { message: 'Configuration unavailable' }, 503);
+      else await route.fallback();
+    }
+  );
+  await page.goto('/?mode=management-run');
+  await expect(
+    page.getByText('Could not load the captured main Agent configuration.', {
+      exact: false,
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeDisabled();
+  failed = false;
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Open main conversation' })
+  ).toBeEnabled();
+  await expect(page.locator('.react-flow')).toBeAttached();
+  expect(mutations(calls)).toEqual([]);
+});
 
 test('the production instance dialog prepares the existing Task rather than an unrelated discussion', async ({
   page,
@@ -582,17 +1372,44 @@ test('the production instance dialog prepares the existing Task rather than an u
     .click();
   await expect(page.getByTestId('prepared-workspace')).toBeVisible();
   expect(mutations(calls)).toHaveLength(1);
-  expect(mutations(calls)[0]).toMatchObject({
+  expect(mutations(calls)[0]).toEqual({
+    method: 'POST',
     path: '/api/workflow-management/prepare-main-session',
     body: {
-      task_id: 'report-issue',
+      issue_id: 'report-issue',
       project_id: 'project-one',
       workflow_id: template.id,
+      request_id: expect.any(String),
     },
   });
   await expect(page.getByTestId('management-location')).toContainText(
     '"session_id":"main-session"'
   );
+});
+
+test('the instance configuration dialog opens the original publication Session', async ({
+  page,
+}) => {
+  const { calls } = await mockManagement(page, {
+    attempt: async (route) =>
+      json(route, { ...instance, template_id: 'original-publication' }),
+  });
+  await page.goto('/?mode=management-editor');
+  await openEditorMainSettings(page);
+  await page
+    .locator('.vk-keyboard-dialog')
+    .getByRole('button', { name: 'Open main conversation' })
+    .click();
+  await expect(page.getByTestId('prepared-workspace')).toBeVisible();
+  expect(mutations(calls)).toMatchObject([
+    {
+      path: '/api/workflow-management/prepare-main-session',
+      body: {
+        issue_id: instance.task_id,
+        workflow_id: 'original-publication',
+      },
+    },
+  ]);
 });
 
 test('publishing Main Agent configuration retains unsaved canvas work and advances its save revision', async ({
@@ -683,11 +1500,9 @@ test('an unresolved instance lookup never exposes editable definitions and stays
   await expect(
     page.getByRole('button', { name: 'Save', exact: true })
   ).toBeDisabled();
-  await page.getByRole('button', { name: 'More actions' }).click();
   await expect(
-    page.getByRole('menuitem', { name: 'Main Agent', exact: true })
-  ).toHaveAttribute('aria-disabled', 'true');
-  await page.keyboard.press('Escape');
+    page.getByRole('button', { name: 'Configure main Agent', exact: true })
+  ).toBeDisabled();
 
   release!();
   await expect(
@@ -724,10 +1539,9 @@ test('instance discovery errors fail closed without enabling publication, rename
   await expect(
     page.getByRole('button', { name: 'Save', exact: true })
   ).toBeDisabled();
-  await page.getByRole('button', { name: 'More actions' }).click();
   await expect(
-    page.getByRole('menuitem', { name: 'Main Agent', exact: true })
-  ).toHaveAttribute('aria-disabled', 'true');
+    page.getByRole('button', { name: 'Configure main Agent', exact: true })
+  ).toBeDisabled();
   expect(mutations(calls)).toEqual([]);
 });
 

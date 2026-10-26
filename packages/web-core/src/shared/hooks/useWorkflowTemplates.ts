@@ -17,6 +17,8 @@ export const workflowTemplateQueryKeys = {
   all: ['workflow-templates'] as const,
   host: (hostId = getCurrentHostId()) =>
     ['workflow-templates', hostId] as const,
+  globalList: (hostId = getCurrentHostId()) =>
+    ['workflow-templates', hostId, 'global'] as const,
   list: (projectId: string, hostId = getCurrentHostId()) =>
     ['workflow-templates', hostId, 'project', projectId] as const,
   detail: (workflowId: string, hostId = getCurrentHostId()) =>
@@ -25,6 +27,7 @@ export const workflowTemplateQueryKeys = {
 
 export interface UseWorkflowTemplatesOptions {
   enabled?: boolean;
+  allProjects?: boolean;
 }
 
 export function useWorkflowTemplates(
@@ -33,14 +36,19 @@ export function useWorkflowTemplates(
 ): UseQueryResult<WorkflowTemplateListResponse> {
   const hostId = useHostId();
   const workflowApi = createWorkflowApi(hostId);
-  const { enabled = true } = options;
+  const { enabled = true, allProjects = false } = options;
 
   return useQuery({
     queryKey: projectId
       ? workflowTemplateQueryKeys.list(projectId, hostId)
-      : ['workflow-templates', 'noop'],
-    queryFn: () => workflowApi.list(projectId as string),
-    enabled: !!projectId && enabled,
+      : allProjects
+        ? workflowTemplateQueryKeys.globalList(hostId)
+        : ['workflow-templates', hostId, 'noop'],
+    queryFn: ({ signal }) =>
+      projectId
+        ? workflowApi.list(projectId, signal)
+        : workflowApi.listAll(signal),
+    enabled: (!!projectId || allProjects) && enabled,
   });
 }
 
@@ -74,9 +82,9 @@ export function useWorkflowTemplateMutations() {
       projectId: string;
       payload: CreateWorkflowRequest;
     }) => workflowApi.create(projectId, payload),
-    onSuccess: (data, variables) => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({
-        queryKey: workflowTemplateQueryKeys.list(variables.projectId, hostId),
+        queryKey: workflowTemplateQueryKeys.host(hostId),
       });
       queryClient.setQueryData(
         workflowTemplateQueryKeys.detail(data.id, hostId),

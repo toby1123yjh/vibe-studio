@@ -22,6 +22,7 @@ import {
 import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
 import { Switch } from '@vibe/ui/components/Switch';
 import { Textarea } from '@vibe/ui/components/Textarea';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type {
   AgentToolDefinitionSummary,
   AgentToolInventoryView,
@@ -541,9 +542,11 @@ export function AgentToolsSettingsSection({
       const result = await machineClient.revealAgentTool(
         locatorFor(item, normalizedProjectPath)
       );
-      await navigator.clipboard.writeText(result.native_path);
+      await navigator.clipboard.writeText(
+        formatPathForDisplay(result.native_path)
+      );
       return t('agentCenter.tools.notices.pathCopied', {
-        path: result.native_path,
+        path: formatPathForDisplay(result.native_path),
       });
     });
   };
@@ -619,7 +622,7 @@ export function AgentToolsSettingsSection({
           <div className="flex gap-2">
             <SettingsInput
               id="agent-tools-project-path"
-              value={projectPath}
+              value={formatPathForDisplay(projectPath)}
               onChange={setProjectPath}
               placeholder={t('agentCenter.tools.projectPath.placeholder')}
             />
@@ -1063,7 +1066,7 @@ export function AgentToolsSettingsSection({
                   <p className="text-xs text-low">
                     {t('agentCenter.tools.editor.projectTarget', {
                       path:
-                        normalizedProjectPath ||
+                        formatPathForDisplay(normalizedProjectPath) ||
                         t('agentCenter.tools.editor.noProjectPath'),
                     })}
                   </p>

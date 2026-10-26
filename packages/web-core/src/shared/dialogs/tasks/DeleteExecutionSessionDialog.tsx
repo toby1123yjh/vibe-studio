@@ -8,6 +8,7 @@ import type {
   SessionDeletionResult,
 } from 'shared/types';
 import { ConfirmDialogView } from '@vibe/ui/components/ConfirmDialog';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { defineModal, type DeleteResult } from '@/shared/lib/modals';
 import { ApiError } from '@/shared/lib/api';
 import './delete-task-session-dialog.css';
@@ -250,7 +251,11 @@ const DeleteExecutionSessionDialogImpl =
                     defaultValue: 'Working directory',
                   })}
                 </summary>
-                <code>{target.deletionInfo.managed_directory_path}</code>
+                <code>
+                  {formatPathForDisplay(
+                    target.deletionInfo.managed_directory_path ?? ''
+                  )}
+                </code>
               </details>
             </section>
           )}

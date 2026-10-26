@@ -13,6 +13,7 @@ import {
 } from '@/shared/hooks/useWorkflowRun';
 import { useWorkflowRunEvents } from '@/shared/hooks/useWorkflowRunEvents';
 import { useWorkflowTemplate } from '@/shared/hooks/useWorkflowTemplates';
+import { useWorkflowAttemptForWorkflow } from '@/shared/hooks/useWorkflowAttempts';
 import { cn } from '@/shared/lib/utils';
 import { buildWorkflowRunDashboardSummary } from '../model/workflowRunView';
 import {
@@ -48,9 +49,21 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
     error,
     refetch,
   } = useWorkflowRun(runId);
-  const { data: template } = useWorkflowTemplate(run?.workflow_id, {
+  const {
+    data: template,
+    isPending: isTemplatePending,
+    isFetching: isTemplateFetching,
+    refetch: refetchTemplate,
+  } = useWorkflowTemplate(run?.workflow_id, {
     enabled: Boolean(run?.workflow_id),
   });
+  const {
+    data: workflowAttempt,
+    isPending: isAttemptPending,
+    isFetching: isAttemptFetching,
+    isSuccess: isAttemptReady,
+    refetch: refetchAttempt,
+  } = useWorkflowAttemptForWorkflow(run?.workflow_id);
   const { cancelRun, isCanceling } = useWorkflowRunMutations();
   const cancelLockRef = useRef(false);
   const [cancelState, setCancelState] = useState<CancelSubmissionState>('idle');
@@ -97,6 +110,28 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
   }
 
   const runtimeView = getWorkflowRuntimeView(run);
+  const mainSessionWorkflowId =
+    isAttemptReady &&
+    workflowAttempt &&
+    workflowAttempt.id === run.attempt_id &&
+    workflowAttempt.project_id === projectId &&
+    workflowAttempt.task_id === run.task_id &&
+    workflowAttempt.workflow_id === run.workflow_id
+      ? (workflowAttempt.template_id ?? workflowAttempt.workflow_id)
+      : null;
+  const hasMainSessionBinding = Boolean(
+    workflowAttempt?.main_session_id || workflowAttempt?.main_session_bound_at
+  );
+  const hasCapturedTemplate = template?.id === run.workflow_id;
+  const canOpenMainSession =
+    mainSessionWorkflowId &&
+    (hasMainSessionBinding ||
+      (hasCapturedTemplate && !!template?.main_agent_config));
+  const isMainSessionPending =
+    isAttemptPending ||
+    (!!mainSessionWorkflowId && !hasMainSessionBinding && isTemplatePending);
+  const mainSessionLookupFailed =
+    !mainSessionWorkflowId || !hasCapturedTemplate;
   const runActionGate = getWorkflowRunActionGate(run);
   const cancelPending =
     runActionGate.cancellationPending ||
@@ -201,19 +236,62 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <WorkflowMainSessionButton
-            key={`${hostId}:${run.id}`}
-            projectId={projectId}
-            workflowId={run.workflow_id}
-            taskId={run.task_id}
-            onPrepared={(prepared, trigger) =>
-              setMainSessionRequest({
-                scope: `${hostId}:${run.id}`,
-                prepared,
-                trigger,
-              })
-            }
-          />
+          {canOpenMainSession && mainSessionWorkflowId ? (
+            <WorkflowMainSessionButton
+              key={`${hostId}:${run.id}`}
+              projectId={projectId}
+              workflowId={mainSessionWorkflowId}
+              taskId={run.task_id}
+              onPrepared={(prepared, trigger) =>
+                setMainSessionRequest({
+                  scope: `${hostId}:${run.id}`,
+                  prepared,
+                  trigger,
+                })
+              }
+            />
+          ) : (
+            <div className="flex max-w-xs flex-col gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                disabled
+                loading={isMainSessionPending}
+              >
+                {t('workflow.management.openConversation')}
+              </Button>
+              {!isMainSessionPending ? (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 text-xs text-low"
+                >
+                  <span>
+                    {t(
+                      !mainSessionWorkflowId
+                        ? 'workflow.management.sessionBindingFailed'
+                        : !hasCapturedTemplate
+                          ? 'workflow.management.mainAgentLoadFailed'
+                          : 'workflow.management.mainAgentMissingLocked'
+                    )}
+                  </span>
+                  {mainSessionLookupFailed ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      loading={isAttemptFetching || isTemplateFetching}
+                      onClick={() => {
+                        if (!mainSessionWorkflowId) void refetchAttempt();
+                        else void refetchTemplate();
+                      }}
+                    >
+                      {t('buttons.retry')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )}
           <WorkflowRunResult key={run.id} run={run} projectId={projectId} />
           {showCancel ? (
             <Button

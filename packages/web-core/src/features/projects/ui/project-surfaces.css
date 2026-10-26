@@ -727,24 +727,21 @@
 }
 
 .vk-task-action-row {
-  display: flex;
+  --vk-task-action-size: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--vk-task-action-size);
   align-items: center;
   gap: var(--vk-space-1);
   min-width: 0;
-}
-
-.vk-task-action-row > .vk-kanban-task-preview,
-.vk-task-action-row > .vk-task-task-row {
-  flex: 1;
+  min-height: var(--vk-task-action-size);
 }
 
 .vk-task-delete-action {
   display: inline-flex;
-  flex: 0 0 24px;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--vk-task-action-size);
+  height: var(--vk-task-action-size);
   padding: 0;
   border: 0;
   border-radius: var(--vk-radius-sm);
@@ -775,10 +772,11 @@
 }
 
 @media (hover: none), (pointer: coarse) {
+  .vk-task-action-row {
+    --vk-task-action-size: 44px;
+  }
+
   .vk-task-delete-action {
-    flex-basis: 44px;
-    width: 44px;
-    height: 44px;
     opacity: 1;
   }
 }

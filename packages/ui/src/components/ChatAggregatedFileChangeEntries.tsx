@@ -14,6 +14,7 @@ import {
 } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
+import { formatPathForDisplay } from '../lib/path';
 import { getFileChangeStats } from '../lib/diffStats';
 import { ToolStatusDot, type ToolStatusLike } from './ToolStatusDot';
 import type { ChatFileEntryDiffInput } from './ChatFileEntry';
@@ -111,7 +112,7 @@ function getActionLabel(
     case 'rename':
       return change.new_path
         ? t('conversation.aggregated.actions.renameTo', {
-            path: change.new_path,
+            path: formatPathForDisplay(change.new_path),
           })
         : t('conversation.aggregated.actions.rename');
     default:
@@ -225,8 +226,11 @@ function FileChangeRow({
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-base">
-            <span className="truncate text-sm text-normal">
-              {entry.filePath}
+            <span
+              className="truncate text-sm text-normal"
+              title={formatPathForDisplay(entry.filePath)}
+            >
+              {formatPathForDisplay(entry.filePath)}
             </span>
             <span className="shrink-0 text-xs text-low">
               {getActionLabel(entry.change, t)}

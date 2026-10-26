@@ -54,6 +54,7 @@ import { ChatAggregatedToolEntries } from '@vibe/ui/components/ChatAggregatedToo
 import { ChatAggregatedDiffEntries } from '@vibe/ui/components/ChatAggregatedDiffEntries';
 import { ChatAggregatedFileChangeEntries } from '@vibe/ui/components/ChatAggregatedFileChangeEntries';
 import { ChatCollapsedThinking } from '@vibe/ui/components/ChatCollapsedThinking';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import { AppChatMarkdown } from './AppChatMarkdown';
 import {
   DiffViewBody,
@@ -189,7 +190,9 @@ function getToolSummary(
 
   switch (action_type.action) {
     case 'file_read':
-      return t('conversation.toolSummary.read', { path: action_type.path });
+      return t('conversation.toolSummary.read', {
+        path: formatPathForDisplay(action_type.path),
+      });
     case 'search':
       return t('conversation.toolSummary.searched', {
         query: action_type.query,

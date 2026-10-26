@@ -1,4 +1,5 @@
 import { NodeKey, SerializedLexicalNode, Spread } from 'lexical';
+import { formatPathForDisplay } from '../lib/path';
 import {
   Tooltip,
   TooltipContent,
@@ -76,14 +77,16 @@ function ComponentInfoComponent({
     }
   }
 
-  const displayPath = file ? toRelativePath(file) : null;
+  const displayPath = file ? toRelativePath(formatPathForDisplay(file)) : null;
   const fileLine = displayPath
     ? line != null
       ? `${displayPath}:${line}`
       : displayPath
     : null;
 
-  const fileName = file?.split('/').pop();
+  const fileName = file
+    ? formatPathForDisplay(file).split(/[\\/]/).pop()
+    : undefined;
   const badgeLabel = fileName
     ? line != null
       ? column != null

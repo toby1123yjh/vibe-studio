@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@vibe/ui/components/KeyboardDialog';
 import { Textarea } from '@vibe/ui/components/Textarea';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type {
   AgentCommandProviderInventoryView,
   AgentCommandScope,
@@ -156,7 +157,7 @@ export function AgentCommandEditorDialog({
                 <p className="text-xs text-low">
                   {t('agentCenter.commands.editor.projectTarget', {
                     path:
-                      projectPath ||
+                      formatPathForDisplay(projectPath) ||
                       t('agentCenter.commands.editor.noProjectPath'),
                   })}
                 </p>

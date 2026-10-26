@@ -15,6 +15,7 @@ import type { Repo, UpdateRepo } from 'shared/types';
 import { SearchableDropdownContainer } from '@/shared/components/ui-new/containers/SearchableDropdownContainer';
 import { FolderPickerDialog } from '@/shared/dialogs/shared/FolderPickerDialog';
 import { Button } from '@vibe/ui/components/Button';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   Dialog,
   DialogContent,
@@ -666,7 +667,7 @@ export function ReposSettingsSection({
                 )}
               >
                 <SettingsInput
-                  value={draft.default_working_dir}
+                  value={formatPathForDisplay(draft.default_working_dir)}
                   onChange={(value) =>
                     updateDraft({ default_working_dir: value })
                   }
@@ -698,8 +699,11 @@ export function ReposSettingsSection({
                 label={t('settings.repos.general.path.label')}
                 description=""
               >
-                <div className="text-sm text-low font-mono bg-secondary px-base py-half rounded-sm">
-                  {selectedRepo.path}
+                <div
+                  className="break-all text-sm text-low font-mono bg-secondary px-base py-half rounded-sm"
+                  title={formatPathForDisplay(selectedRepo.path)}
+                >
+                  {formatPathForDisplay(selectedRepo.path)}
                 </div>
               </SettingsField>
 
@@ -710,7 +714,7 @@ export function ReposSettingsSection({
                 )}
               >
                 <SettingsInput
-                  value={draft.default_working_dir}
+                  value={formatPathForDisplay(draft.default_working_dir)}
                   onChange={(value) =>
                     updateDraft({ default_working_dir: value })
                   }

@@ -12,6 +12,7 @@ import type { DirectoryInspection, GitBranch, Repo } from 'shared/types';
 import { Button } from '@vibe/ui/components/Button';
 import { Tooltip } from '@vibe/ui/components/Tooltip';
 import { Input } from '@vibe/ui/components/Input';
+import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   Dialog,
   DialogContent,
@@ -426,7 +427,8 @@ const WorkspaceTargetDialogImpl = create<WorkspaceTargetDialogProps>(
               <div className="flex min-w-0 gap-half">
                 <Input
                   id="workspace-directory-path"
-                  value={path}
+                  value={formatPathForDisplay(path)}
+                  title={formatPathForDisplay(path)}
                   onChange={(event) => handlePathChange(event.target.value)}
                   onBlur={() => {
                     if (path.trim() && !inspection && !isBusy) {
