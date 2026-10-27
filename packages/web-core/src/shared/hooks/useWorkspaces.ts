@@ -61,6 +61,10 @@ type WorkspacesState = {
 
 const EMPTY_WORKSPACE_SUMMARIES = new Map<string, WorkspaceSummary>();
 
+function indexWorkspaceSummaries(summaries: WorkspaceSummary[]) {
+  return new Map(summaries.map((summary) => [summary.workspace_id, summary]));
+}
+
 // Transform WorkspaceWithStatus to SidebarWorkspace, optionally merging summary data
 function toSidebarWorkspace(
   ws: WorkspaceWithStatus,
@@ -104,7 +108,7 @@ export const workspaceKeys = {
 async function fetchWorkspaceSummariesByArchived(
   archived: boolean,
   hostId: string | null
-): Promise<Map<string, WorkspaceSummary>> {
+): Promise<WorkspaceSummary[]> {
   const response = await makeLocalApiRequest('/api/workspaces/summaries', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -122,11 +126,10 @@ async function fetchWorkspaceSummariesByArchived(
     throw new Error('Workspace summaries response was invalid');
   }
 
-  const map = new Map<string, WorkspaceSummary>();
-  for (const summary of data.data.summaries) {
-    map.set(summary.workspace_id, summary);
-  }
-  return map;
+  // Keep query data JSON-compatible so unchanged polls retain their identity.
+  // A Map in the cache bypasses React Query's structural sharing and rebuilds
+  // the global workspace context even when every summary is unchanged.
+  return data.data.summaries;
 }
 
 export function useWorkspaces(): UseWorkspacesResult {
@@ -184,6 +187,7 @@ export function useWorkspaces(): UseWorkspacesResult {
   } = useQuery({
     queryKey: workspaceSummaryKeys.byArchived(false, hostId),
     queryFn: () => fetchWorkspaceSummariesByArchived(false, hostId),
+    select: indexWorkspaceSummaries,
     enabled: activeIsInitialized,
     staleTime: 1000,
     refetchInterval: 15000,
@@ -199,6 +203,7 @@ export function useWorkspaces(): UseWorkspacesResult {
   } = useQuery({
     queryKey: workspaceSummaryKeys.byArchived(true, hostId),
     queryFn: () => fetchWorkspaceSummariesByArchived(true, hostId),
+    select: indexWorkspaceSummaries,
     enabled: archivedIsInitialized,
     staleTime: 1000,
     refetchInterval: 15000,

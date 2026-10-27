@@ -165,6 +165,7 @@ export class AgentConversationStore {
   >();
   private readonly blockListeners = new Map<string, Set<Listener>>();
   private readonly listeners = new Set<Listener>();
+  private readonly changedBlockIds = new Set<string>();
   private ids: string[] = [];
   private entries: PatchTypeWithKey[] = [];
   private runs: AgentRunSummary[] = [];
@@ -236,6 +237,19 @@ export class AgentConversationStore {
     };
   };
 
+  private notify(sessionChanged = false) {
+    // A group may subscribe the same callback to hundreds of blocks. Notify it
+    // once after the entire page and its metadata are committed, rather than
+    // rescanning the group for every block or exposing a partially applied page.
+    const listeners = new Set<Listener>(sessionChanged ? this.listeners : []);
+    for (const id of this.changedBlockIds)
+      this.blockListeners
+        .get(id)
+        ?.forEach((listener) => listeners.add(listener));
+    this.changedBlockIds.clear();
+    listeners.forEach((listener) => listener());
+  }
+
   private publish(status: Partial<ConversationSessionSnapshot> = {}) {
     const previous = this.snapshot;
     const timeline = this.timeline;
@@ -266,18 +280,16 @@ export class AgentConversationStore {
           }
         : conversation,
     };
-    if (
-      (Object.keys(next) as Array<keyof ConversationSessionSnapshot>).every(
-        (key) => next[key] === previous[key]
-      )
-    )
-      return;
-    this.snapshot = next;
-    this.listeners.forEach((listener) => listener());
+    const sessionChanged = (
+      Object.keys(next) as Array<keyof ConversationSessionSnapshot>
+    ).some((key) => next[key] !== previous[key]);
+    if (sessionChanged) this.snapshot = next;
+    this.notify(sessionChanged);
   }
 
   private ingest(blocks: readonly ConversationBlock[], addToWindow: boolean) {
     let orderChanged = false;
+    let hasNewer = false;
     for (const block of blocks) {
       const previous = this.blocks.get(block.block_id);
       // A full baseline at the same revision replaces an optional append fast
@@ -299,7 +311,7 @@ export class AgentConversationStore {
         latestPosition &&
         block.position > latestPosition
       ) {
-        this.publish({ hasNewer: true });
+        hasNewer = true;
         continue;
       }
       this.blocks.set(block.block_id, block);
@@ -310,9 +322,7 @@ export class AgentConversationStore {
         this.ids.push(block.block_id);
         orderChanged = true;
       }
-      this.blockListeners
-        .get(block.block_id)
-        ?.forEach((listener) => listener());
+      this.changedBlockIds.add(block.block_id);
     }
     if (orderChanged)
       this.ids.sort((a, b) => {
@@ -324,6 +334,7 @@ export class AgentConversationStore {
             ? 1
             : a.localeCompare(b);
       });
+    return hasNewer;
   }
 
   private reconcile(
@@ -362,7 +373,7 @@ export class AgentConversationStore {
           isCanonicalRunActive(after?.state)
         ) {
           this.blocks.set(id, { ...block });
-          this.blockListeners.get(id)?.forEach((listener) => listener());
+          this.changedBlockIds.add(id);
         }
       }
     }
@@ -378,9 +389,7 @@ export class AgentConversationStore {
       const previous = this.blocks.get(block.block_id);
       if (!previous || compareRevision(block.revision, previous.revision) > 0) {
         this.blocks.set(block.block_id, block);
-        this.blockListeners
-          .get(block.block_id)
-          ?.forEach((listener) => listener());
+        this.changedBlockIds.add(block.block_id);
       }
     }
     const retained = new Set([
@@ -391,7 +400,7 @@ export class AgentConversationStore {
       if (!retained.has(id)) {
         this.blocks.delete(id);
         this.references.delete(id);
-        this.blockListeners.get(id)?.forEach((listener) => listener());
+        this.changedBlockIds.add(id);
       }
     const next = this.ids.flatMap((id) => {
       const block = this.blocks.get(id);
@@ -422,8 +431,7 @@ export class AgentConversationStore {
       this.windowAtTail = true;
       this.cursor = page.cursor;
       if (epochChanged) this.metadataRevision = null;
-      for (const id of oldIds)
-        this.blockListeners.get(id)?.forEach((listener) => listener());
+      for (const id of oldIds) this.changedBlockIds.add(id);
     }
     // A backward page may race a newer live snapshot; retain newer blocks.
     this.ingest(page.blocks, true);
@@ -456,12 +464,12 @@ export class AgentConversationStore {
       return false;
     if (compareRevision(page.cursor.revision, this.cursor.revision) < 0)
       return true;
-    this.ingest(page.blocks, false);
+    const hasNewer = this.ingest(page.blocks, false);
     for (const id of page.tombstones) {
       this.blocks.delete(id);
       this.references.delete(id);
       this.ids = this.ids.filter((candidate) => candidate !== id);
-      this.blockListeners.get(id)?.forEach((listener) => listener());
+      this.changedBlockIds.add(id);
     }
     if (this.ids.length > MAX_WINDOW_BLOCKS) {
       this.ids = this.ids.slice(-MAX_WINDOW_BLOCKS);
@@ -472,6 +480,7 @@ export class AgentConversationStore {
     this.publish({
       error: null,
       hasMore: this.snapshot.hasMore || this.ids.length === MAX_WINDOW_BLOCKS,
+      hasNewer: hasNewer || this.snapshot.hasNewer,
     });
     return true;
   };
@@ -520,9 +529,7 @@ export class AgentConversationStore {
               : item
           ),
         });
-        this.blockListeners
-          .get(block.block_id)
-          ?.forEach((listener) => listener());
+        this.changedBlockIds.add(block.block_id);
         continue;
       }
       this.blocks.set(block.block_id, {
@@ -540,11 +547,10 @@ export class AgentConversationStore {
             : item
         ),
       });
-      this.blockListeners
-        .get(block.block_id)
-        ?.forEach((listener) => listener());
+      this.changedBlockIds.add(block.block_id);
     }
     // Only a committed changes page advances the session recovery cursor.
+    this.notify();
   };
 
   private recoverBlock(id: string, field: string, revision: string) {
@@ -569,9 +575,9 @@ export class AgentConversationStore {
           this.controller?.signal
         );
         if (generation !== this.generation) return;
-        this.ingest([detail.block], false);
+        const hasNewer = this.ingest([detail.block], false);
         this.reconcile(this.runs, this.pending);
-        this.publish();
+        this.publish({ hasNewer: hasNewer || this.snapshot.hasNewer });
         if (compareRevision(detail.block.revision, target.revision) >= 0)
           return;
       }
@@ -592,9 +598,9 @@ export class AgentConversationStore {
    * changes and therefore cannot advance the recovery cursor. */
   acceptDetailBlock = (block: ConversationBlock) => {
     if (!this.blocks.has(block.block_id)) return;
-    this.ingest([block], false);
+    const hasNewer = this.ingest([block], false);
     this.reconcile(this.runs, this.pending);
-    this.publish();
+    this.publish({ hasNewer: hasNewer || this.snapshot.hasNewer });
   };
 
   loadPrevious = async () => {

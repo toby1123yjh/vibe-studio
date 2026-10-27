@@ -25,7 +25,6 @@ import {
 } from '@/shared/hooks/useWorkspaceRepo';
 import { useBranchStatus } from '@/shared/hooks/useBranchStatus';
 import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
-import { useWorkspaces } from '@/shared/hooks/useWorkspaces';
 import { workspacesApi, type Result } from '@/shared/lib/api';
 import { ResolveConflictsDialog } from '@/shared/dialogs/tasks/ResolveConflictsDialog';
 import { RebaseInProgressDialog } from '@vibe/ui/components/RebaseInProgressDialog';
@@ -55,8 +54,8 @@ function RebaseDialogContent({
 
   const git = useGitOperations(workspaceId, repoId);
   const { data: workspace } = useWorkspaceRecord(workspaceId);
-  const { workspaceId: activeWorkspaceId } = useWorkspaceContext();
-  const { workspaces } = useWorkspaces();
+  const { workspaceId: activeWorkspaceId, activeWorkspaces: workspaces } =
+    useWorkspaceContext();
   const isWorkspaceRunning =
     workspaces.find((w) => w.id === workspaceId)?.isRunning ?? false;
 

@@ -53,6 +53,23 @@ export default defineConfig({
     alias: {
       '@': `${repoRoot}/packages/web-core/src`,
       '@vibe/ui': `${repoRoot}/packages/ui/src`,
+      ...Object.fromEntries(
+        [
+          '@lexical/react/LexicalComposer',
+          '@lexical/react/LexicalComposerContext',
+          '@lexical/react/LexicalRichTextPlugin',
+          '@lexical/react/LexicalContentEditable',
+          '@lexical/react/LexicalErrorBoundary',
+          '@lexical/markdown',
+          '@lexical/rich-text',
+          'lexical',
+        ].map((name) => [
+          name,
+          require.resolve(name, {
+            paths: [resolve(repoRoot, 'packages/web-core')],
+          }),
+        ])
+      ),
       shared: `${repoRoot}/shared`,
       '@tanstack/react-query': `${repoRoot}/packages/web-core/node_modules/@tanstack/react-query`,
       '@tanstack/react-router': `${repoRoot}/packages/web-core/node_modules/@tanstack/react-router`,

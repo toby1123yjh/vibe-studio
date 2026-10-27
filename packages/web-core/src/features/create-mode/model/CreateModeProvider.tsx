@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import type { CreateModeInitialState } from '@/shared/types/createMode';
 import { useCreateModeState } from '@/features/create-mode/model/useCreateModeState';
-import { useWorkspaces } from '@/shared/hooks/useWorkspaces';
+import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import { useCurrentAppDestination } from '@/shared/hooks/useCurrentAppDestination';
 import { getDestinationHostId } from '@/shared/lib/routes/appNavigation';
 import {
@@ -20,12 +20,12 @@ export function CreateModeProvider({
   initialState,
   draftId,
 }: CreateModeProviderProps) {
-  // Fetch most recent workspace to seed project selection only
+  // Reuse shell discovery when seeding project selection.
   const {
-    workspaces: activeWorkspaces,
+    activeWorkspaces,
     archivedWorkspaces,
-    isLoading: localWorkspacesLoading,
-  } = useWorkspaces();
+    isWorkspacesListLoading: localWorkspacesLoading,
+  } = useWorkspaceContext();
   const destination = useCurrentAppDestination();
   const hostId = useMemo(
     () => getDestinationHostId(destination),

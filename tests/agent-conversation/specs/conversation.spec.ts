@@ -5,6 +5,155 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('timeline')).toContainText('Initial response');
 });
 
+test('tool groups show useful activity without counters and reveal details on demand', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock({
+      ...fixture.block('tool-a', 'tool', {
+        tool_name: 'Read file',
+        tool_kind: 'file_read',
+        status: 'succeeded',
+      }),
+      finished: true,
+    });
+    const output = `BEGINNING ${'full tool output '.repeat(5000)}END`;
+    fixture.bodies.set('tool-b:output_text', output);
+    fixture.updateBlock({
+      ...fixture.block('tool-b', 'tool', {
+        tool_name: 'Search source',
+        status: 'succeeded',
+        locations: [{ path: String.raw`\\?\D:\project\source.ts` }],
+        arguments: { query: 'retained argument' },
+        output_text: output.slice(0, 16384),
+      }),
+      finished: true,
+      bodies: [{ field: 'output_text', byte_length: output.length }],
+    });
+  });
+  const group = page.getByRole('button', { name: /Tool activity/ });
+  await expect(group).toContainText(
+    String.raw`Search source · D:\project\source.ts`
+  );
+  await expect(group).not.toContainText(/\d+ tool calls?|\d+\/\d+|finished/);
+  await expect(group).toHaveAttribute('aria-expanded', 'false');
+  await expect(
+    page.getByRole('button', { name: 'Search source', exact: true })
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).conversationFixture.requests.filter((request: any) =>
+            request.path.includes('/blocks/')
+          ).length
+      )
+    )
+    .toBe(0);
+  await group.focus();
+  await group.press('Enter');
+  await expect(group).toHaveAttribute('aria-expanded', 'true');
+  await page
+    .getByRole('button', { name: 'Search source', exact: true })
+    .click();
+  await expect(
+    page.getByText('retained argument', { exact: false })
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Load more content' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).conversationFixture.requests.filter((request: any) =>
+            request.path.includes('/blocks/')
+          ).length
+      )
+    )
+    .toBeGreaterThan(0);
+  await group.focus();
+  await group.press('Space');
+  await expect(group).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('collapsed tool groups follow canonical running, failure and terminal state', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('tool-a', 'tool', {
+        tool_name: 'Read file',
+        status: 'running',
+      })
+    );
+    fixture.updateBlock(
+      fixture.block('tool-b', 'tool', {
+        tool_name: 'Run command',
+        status: 'failed',
+      })
+    );
+  });
+  const group = page.getByRole('button', { name: /Tool activity/ });
+  await expect(group).toContainText('Read file');
+  await expect(group).toContainText('Tool error');
+  await expect(group.locator('.vk-activity-text')).toHaveCount(1);
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.state.runs[0].state.status = 'succeeded';
+    fixture.updateBlock(
+      fixture.block('unrelated', 'notice', { text: 'Run finished' })
+    );
+  });
+  await expect(group.locator('.vk-activity-text')).toHaveCount(0);
+  await expect(group).toContainText('Tool error');
+  await expect(group).toContainText('Run command');
+});
+
+test('collapsed approval cue requires the matching unresolved canonical request', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.state.runs[0].state.status = 'awaiting_approval';
+    fixture.updateBlock(
+      fixture.block('tool-a', 'tool', {
+        tool_name: 'Run command',
+        tool_call_id: 'call-a',
+        status: 'waiting_approval',
+      })
+    );
+    fixture.updateBlock(
+      fixture.block('request', 'interaction', {
+        interaction: {
+          request_id: 'permission-a',
+          tool_call_id: 'call-a',
+          kind: 'permission',
+          status: 'pending',
+          actionable: false,
+          title: 'Command permission',
+          options: [],
+          questions: [],
+        },
+      }),
+      true
+    );
+  });
+  const group = page.getByRole('button', { name: /Tool activity/ });
+  await expect(group).toContainText('Permission required');
+  await expect(group.locator('.vk-activity-text')).toHaveCount(1);
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.state.pending_interactions = [];
+    fixture.updateBlock(
+      fixture.block('unrelated', 'notice', { text: 'Request resolved' })
+    );
+  });
+  await expect(group).not.toContainText('Permission required');
+  await expect(group.locator('.vk-activity-text')).toHaveCount(0);
+  await expect(group).toContainText('Result not confirmed');
+});
+
 test('tool locations display ordinary paths while native arguments stay intact', async ({
   page,
 }) => {

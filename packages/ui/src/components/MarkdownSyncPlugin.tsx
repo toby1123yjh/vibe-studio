@@ -15,6 +15,8 @@ type MarkdownSyncPluginProps = {
   transformers: Transformer[];
 };
 
+const MARKDOWN_SYNC_TAG = 'markdown-sync';
+
 /**
  * Handles bidirectional markdown synchronization between Lexical editor and external state.
  *
@@ -47,24 +49,27 @@ export function MarkdownSyncPlugin({
     if (value === lastSerializedRef.current) return;
 
     try {
-      editor.update(() => {
-        if (value.trim() === '') {
-          $getRoot().clear();
-        } else {
-          $convertFromMarkdownString(value, transformers);
-        }
-
-        // Only position cursor at end if editor already has focus (user is actively editing)
-        // This prevents unwanted focus when value changes externally (e.g., panel opening)
-        const rootElement = editor.getRootElement();
-        if (rootElement?.contains(document.activeElement)) {
-          const root = $getRoot();
-          const lastNode = root.getLastChild();
-          if (lastNode) {
-            lastNode.selectEnd();
+      editor.update(
+        () => {
+          if (value.trim() === '') {
+            $getRoot().clear();
+          } else {
+            $convertFromMarkdownString(value, transformers);
           }
-        }
-      });
+
+          // Only position cursor at end if editor already has focus (user is actively editing)
+          // This prevents unwanted focus when value changes externally (e.g., panel opening)
+          const rootElement = editor.getRootElement();
+          if (rootElement?.contains(document.activeElement)) {
+            const root = $getRoot();
+            const lastNode = root.getLastChild();
+            if (lastNode) {
+              lastNode.selectEnd();
+            }
+          }
+        },
+        { tag: MARKDOWN_SYNC_TAG }
+      );
       lastSerializedRef.current = value;
     } catch (err) {
       console.error('Failed to parse markdown', err);
@@ -73,20 +78,33 @@ export function MarkdownSyncPlugin({
 
   // Handle editor changes (editor → external)
   useEffect(() => {
-    return editor.registerUpdateListener(({ editorState }) => {
-      onEditorStateChange?.(editorState);
-      if (!onChange) return;
+    // Transcript blocks only consume Markdown. Avoid a second full traversal
+    // to serialize each incoming token (and avoid registering idle listeners).
+    if ((!editable || !onChange) && !onEditorStateChange) return;
 
-      const markdown = editorState.read(() =>
-        $convertToMarkdownString(transformers)
-      );
+    return editor.registerUpdateListener(
+      ({ editorState, dirtyElements, dirtyLeaves, tags }) => {
+        onEditorStateChange?.(editorState);
+        if (
+          !editable ||
+          !onChange ||
+          tags.has(MARKDOWN_SYNC_TAG) ||
+          (dirtyElements.size === 0 && dirtyLeaves.size === 0)
+        ) {
+          return;
+        }
 
-      if (markdown === lastSerializedRef.current) return;
+        const markdown = editorState.read(() =>
+          $convertToMarkdownString(transformers)
+        );
 
-      lastSerializedRef.current = markdown;
-      onChange(markdown);
-    });
-  }, [editor, onChange, onEditorStateChange, transformers]);
+        if (markdown === lastSerializedRef.current) return;
+
+        lastSerializedRef.current = markdown;
+        onChange(markdown);
+      }
+    );
+  }, [editor, editable, onChange, onEditorStateChange, transformers]);
 
   return null;
 }

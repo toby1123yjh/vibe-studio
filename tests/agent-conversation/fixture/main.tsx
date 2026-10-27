@@ -52,11 +52,7 @@ const attempt = {
 function ListTimeline() {
   return (
     <div className="list-host">
-      <ConversationListContainer
-        ref={list}
-        attempt={attempt}
-        readOnly
-      />
+      <ConversationListContainer ref={list} attempt={attempt} readOnly />
     </div>
   );
 }
@@ -80,12 +76,15 @@ function Timeline() {
   const { conversation } = useAgentRunSession();
   return (
     <div data-testid="timeline" style={{ height: 420, overflow: 'auto' }}>
-      {conversation.entries.map((entry) => (
-        <ConversationBlockEntry
-          key={entry.patchKey}
-          blockId={entry.conversationBlockId!}
-        />
-      ))}
+      {conversation.entries.map(
+        (entry) =>
+          !['tool-a', 'tool-b'].includes(entry.conversationBlockId!) && (
+            <ConversationBlockEntry
+              key={entry.patchKey}
+              blockId={entry.conversationBlockId!}
+            />
+          )
+      )}
     </div>
   );
 }

@@ -2,14 +2,20 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CaretDownIcon, ListMagnifyingGlassIcon } from '@phosphor-icons/react';
 import type { ConversationBlock } from 'shared/types';
-import type { ToolStatusLike } from '@vibe/ui/components/ToolStatusDot';
+import {
+  ToolStatusDot,
+  type ToolStatusLike,
+} from '@vibe/ui/components/ToolStatusDot';
+import { ActivityText } from '@vibe/ui/components/ActivityText';
 import { ChatAssistantMessage } from '@vibe/ui/components/ChatAssistantMessage';
 import { ChatUserMessage } from '@vibe/ui/components/ChatUserMessage';
 import { ChatThinkingMessage } from '@vibe/ui/components/ChatThinkingMessage';
@@ -664,29 +670,117 @@ export function ConversationBlockGroup({
 }) {
   const { t } = useTranslation('common');
   const store = useAgentConversationStore();
+  const contentId = useId();
   const subscribe = useCallback(
     (listener: () => void) => {
-      const unsubscribers = ids.map((id) =>
-        store?.subscribeBlock(id, listener)
-      );
+      const unsubscribers = [
+        store?.subscribe(listener),
+        ...ids.map((id) => store?.subscribeBlock(id, listener)),
+      ];
       return () => unsubscribers.forEach((unsubscribe) => unsubscribe?.());
     },
     [store, ids]
   );
-  const getProgress = useCallback(
-    () =>
-      ids.filter((id) => {
-        const block = store?.getBlock(id);
-        return (
-          block?.finished ||
-          ['succeeded', 'failed', 'cancelled', 'denied', 'timed_out'].includes(
-            block?.fields.status ?? ''
-          )
+  const getSummary = useCallback(() => {
+    const snapshot = store?.getSnapshot();
+    const tools = ids.flatMap((id) => {
+      const block = store?.getBlock(id);
+      if (!block) return [];
+      const run = snapshot?.timeline?.runs.find(
+        (item) => item.summary.agent_run_id === block.agent_run_id
+      )?.summary.state;
+      const pending =
+        block.fields.status == null ||
+        ['created', 'running', 'waiting_approval'].includes(
+          block.fields.status
         );
-      }).length,
-    [store, ids]
+      const currentAttempt =
+        !run?.last_run_attempt_id ||
+        run.last_run_attempt_id === block.run_attempt_id;
+      const pendingInCurrentRun =
+        pending &&
+        !block.finished &&
+        currentAttempt &&
+        isCanonicalRunActive(run);
+      const awaitingApproval =
+        pendingInCurrentRun &&
+        block.fields.status === 'waiting_approval' &&
+        run?.status === 'awaiting_approval' &&
+        snapshot?.pendingInteractions.some(
+          (request) =>
+            request.run_attempt_id === block.run_attempt_id &&
+            request.fields.interaction?.tool_call_id != null &&
+            request.fields.interaction.tool_call_id ===
+              block.fields.tool_call_id &&
+            ['pending', 'delivering', 'delivered', 'delivery_unknown'].includes(
+              request.fields.interaction.status
+            )
+        );
+      const active = Boolean(
+        pendingInCurrentRun &&
+          (block.fields.status !== 'waiting_approval' || awaitingApproval)
+      );
+      return [
+        {
+          block,
+          active,
+          status:
+            block.fields.status === 'waiting_approval' && !awaitingApproval
+              ? 'unconfirmed'
+              : displayToolStatus(block, active).status,
+        },
+      ];
+    });
+    const latest = [...tools].reverse();
+    const approval = latest.find((tool) => tool.status === 'pending_approval');
+    const failed = latest.find((tool) =>
+      ['failed', 'denied', 'timed_out'].includes(tool.status)
+    );
+    const running = latest.find((tool) => tool.active);
+    const selected = approval ?? running ?? failed ?? latest[0];
+    const status =
+      approval?.status ??
+      failed?.status ??
+      running?.status ??
+      selected?.status ??
+      'success';
+    // Only display metadata participates in this scalar snapshot. Streamed
+    // arguments/results must not rerender the collapsed group or load bodies.
+    return JSON.stringify([
+      selected?.block.fields.tool_name ??
+        selected?.block.fields.tool_kind ??
+        '',
+      selected?.block.fields.locations?.[0]?.path ?? '',
+      status,
+      Boolean(running),
+    ]);
+  }, [store, ids]);
+  const summarySnapshot = useSyncExternalStore(
+    subscribe,
+    getSummary,
+    getSummary
   );
-  const completed = useSyncExternalStore(subscribe, getProgress, getProgress);
+  const [name, location, status, active] = JSON.parse(summarySnapshot) as [
+    string,
+    string,
+    string,
+    boolean,
+  ];
+  const summary = [name, location && formatPathForDisplay(location)]
+    .filter(Boolean)
+    .join(' · ');
+  const statusLabel =
+    status === 'pending_approval'
+      ? t('conversation.permissionRequest')
+      : ['failed', 'denied', 'timed_out'].includes(status)
+        ? t('conversation.toolGroupFailed', { defaultValue: 'Tool error' })
+        : status === 'cancelled'
+          ? t('agentWorkbench.timeline.cancelled', {
+              defaultValue: 'Cancelled',
+            })
+          : status === 'unconfirmed'
+            ? t('conversation.toolResultUnconfirmed')
+            : null;
   const [expanded, toggle] = usePersistedExpanded(
     `entry:tool-group:${store?.hostId ?? 'local'}:${store?.sessionId ?? ''}:${ids[0]}`,
     false
@@ -696,32 +790,52 @@ export function ConversationBlockGroup({
       <button
         type="button"
         aria-expanded={expanded}
+        aria-controls={contentId}
         onClick={() => toggle()}
-        className="flex w-full items-center justify-between gap-2 rounded py-1 text-left text-sm text-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="flex w-full min-w-0 items-center gap-2 rounded py-1 text-left text-sm text-low transition-colors hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transition-none"
       >
-        <span className="flex-1">
-          {t('conversation.toolGroupCount', {
-            defaultValue: '{{count}} tool calls',
-            count: ids.length,
+        <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
+          <ListMagnifyingGlassIcon className="size-icon-base" />
+          {status !== 'success' && (
+            <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
+              <ToolStatusDot status={{ status }} active={active} />
+            </span>
+          )}
+        </span>
+        <span className="shrink-0">
+          {t('conversation.toolGroupLabel', {
+            defaultValue: 'Tool activity',
           })}
         </span>
-        <span>
-          {t('conversation.toolGroupProgress', {
-            defaultValue: '{{completed}}/{{total}} finished',
-            completed,
-            total: ids.length,
-          })}
-        </span>
-        <span aria-hidden>{expanded ? '−' : '+'}</span>
+        <ActivityText
+          active={active}
+          title={summary}
+          className="min-w-0 flex-1 truncate"
+        >
+          {summary}
+        </ActivityText>
+        {statusLabel && <span className="shrink-0 text-xs">{statusLabel}</span>}
+        {active && (
+          <span className="sr-only">
+            {t('conversation.toolGroupRunning', { defaultValue: 'Running' })}
+          </span>
+        )}
+        <CaretDownIcon
+          aria-hidden
+          className={`size-icon-sm shrink-0 transition-transform duration-150 motion-reduce:transition-none${expanded ? '' : ' -rotate-90'}`}
+        />
       </button>
-      {expanded &&
-        ids.map((id) => (
-          <ConversationBlockEntry
-            key={id}
-            blockId={id}
-            workspaceId={workspaceId}
-          />
-        ))}
+      {expanded && (
+        <div id={contentId} className="mt-1 border-l border-border">
+          {ids.map((id) => (
+            <ConversationBlockEntry
+              key={id}
+              blockId={id}
+              workspaceId={workspaceId}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
