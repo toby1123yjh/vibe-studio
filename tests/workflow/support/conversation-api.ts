@@ -1,5 +1,9 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
-import type { AgentRunStatus, ConversationBlock } from "shared/types";
+import {
+  AgentRuntimeToolStatus,
+  type AgentRunStatus,
+  type ConversationBlock,
+} from "../../../shared/types";
 
 const timestamp = "2026-10-15T00:00:00Z";
 const sessions = ["research", "review", "analysis", "main"].map((work) => ({
@@ -44,10 +48,12 @@ export async function mockWorkflowConversations(
     holdFirstDraftWrite = false,
     withToolOutput = false,
     initialRunStatus = "succeeded",
+    initialHistory = true,
   }: {
     holdFirstDraftWrite?: boolean;
     withToolOutput?: boolean;
     initialRunStatus?: `${AgentRunStatus}`;
+    initialHistory?: boolean;
   } = {},
 ) {
   const writes: string[] = [];
@@ -56,6 +62,10 @@ export async function mockWorkflowConversations(
   const requests: string[] = [];
   const runSockets = new Map<string, Set<WebSocketRoute>>();
   const runStatuses = new Map<string, `${AgentRunStatus}`>();
+  const userTurns = new Map<
+    string,
+    Array<{ runId: string; prompt: string; status: `${AgentRunStatus}` }>
+  >();
   let revision = 1;
   const currentState = (sessionId: string) =>
     runState(
@@ -63,6 +73,19 @@ export async function mockWorkflowConversations(
       withToolOutput,
       runStatuses.get(sessionId) ?? initialRunStatus,
     );
+  const acknowledgement = (
+    sessionId: string,
+    runId = `agent-${sessionId}`,
+    status: `${AgentRunStatus}` = "running",
+  ) => ({
+    agent_run_id: runId,
+    state: {
+      ...runState(sessionId, false, status),
+      agent_run_id: runId,
+      turn_id: `turn-${runId}`,
+      last_run_attempt_id: `attempt-${runId}`,
+    },
+  });
   let heldFirstDraftWrite = false;
   let releaseDraftWrite = () => {};
   const conversation = (sessionId: string) => {
@@ -91,34 +114,71 @@ export async function mockWorkflowConversations(
       session_id: sessionId,
       cursor: { epoch: `epoch-${sessionId}`, revision: String(revision) },
       blocks: [
-        block("text", { text: `Original reply for ${sessionId}` }),
-        ...(withToolOutput
+        ...(initialHistory
+          ? [block("text", { text: `Original reply for ${sessionId}` })]
+          : []),
+        ...(initialHistory && withToolOutput
           ? [
               block("tool", {
                 tool_call_id: `tool-call-${sessionId}`,
                 tool_name: "inspect_fixture",
-                status: "succeeded",
+                status: AgentRuntimeToolStatus.succeeded,
                 arguments: { query: "fixture documents" },
                 output_text:
                   "Exact tool output retained in the original viewer",
               }),
             ]
           : []),
+        ...(userTurns.get(sessionId) ?? []).map((turn, index) => ({
+          ...block("text", { text: turn.prompt }),
+          block_id: `user-${turn.runId}`,
+          agent_run_id: turn.runId,
+          run_attempt_id: `attempt-${turn.runId}`,
+          role: "user",
+          position: `3:${String(index).padStart(4, "0")}`,
+          source_event_id: `submitted-${turn.runId}`,
+        })),
       ],
       runs: [
-        {
-          agent_run_id: `agent-${sessionId}`,
+        ...(initialHistory
+          ? [
+              {
+                agent_run_id: `agent-${sessionId}`,
+                session_id: sessionId,
+                turn_id: `turn-${sessionId}`,
+                state: currentState(sessionId),
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+            ]
+          : []),
+        ...(userTurns.get(sessionId) ?? []).map((turn) => ({
+          ...acknowledgement(sessionId, turn.runId, turn.status),
           session_id: sessionId,
-          turn_id: `turn-${sessionId}`,
-          state: currentState(sessionId),
+          turn_id: `turn-${turn.runId}`,
           created_at: timestamp,
           updated_at: timestamp,
-        },
+        })),
       ],
       pending_interactions: [],
       previous_cursor: null,
       has_more: false,
     };
+  };
+  const publishConversation = (sessionId: string) => {
+    revision += 1;
+    for (const socket of runSockets.get(sessionId) ?? []) {
+      socket.send(
+        JSON.stringify({
+          type: "changes",
+          data: {
+            ...conversation(sessionId),
+            tombstones: [],
+            reset_required: false,
+          },
+        }),
+      );
+    }
   };
 
   await page.route("**/api/**", async (route) => {
@@ -162,16 +222,7 @@ export async function mockWorkflowConversations(
       return fulfill(conversation(path.split("/")[3]));
     if (path.startsWith("/api/agent-runs/session/")) {
       const sessionId = path.split("/").at(-1)!;
-      return fulfill([
-        {
-          agent_run_id: `agent-${sessionId}`,
-          session_id: sessionId,
-          turn_id: `turn-${sessionId}`,
-          state: currentState(sessionId),
-          created_at: timestamp,
-          updated_at: timestamp,
-        },
-      ]);
+      return fulfill(conversation(sessionId).runs);
     }
     if (path.includes("/workflow-management/") && path.endsWith("/context"))
       return fulfill(null);
@@ -256,21 +307,25 @@ export async function mockWorkflowConversations(
     requests,
     releaseDraftWrite: () => releaseDraftWrite(),
     state: currentState,
+    acknowledgement,
+    publishUserMessage: (
+      sessionId: string,
+      prompt: string,
+      runId: string,
+      status: `${AgentRunStatus}` = "running",
+    ) => {
+      const turns = userTurns.get(sessionId) ?? [];
+      const index = turns.findIndex((turn) => turn.runId === runId);
+      const turn = { runId, prompt, status };
+      if (index === -1) turns.push(turn);
+      else turns[index] = turn;
+      userTurns.set(sessionId, turns);
+      publishConversation(sessionId);
+      return acknowledgement(sessionId, runId, status);
+    },
     setRunStatus: (sessionId: string, status: `${AgentRunStatus}`) => {
       runStatuses.set(sessionId, status);
-      revision += 1;
-      for (const socket of runSockets.get(sessionId) ?? []) {
-        socket.send(
-          JSON.stringify({
-            type: "changes",
-            data: {
-              ...conversation(sessionId),
-              tombstones: [],
-              reset_required: false,
-            },
-          }),
-        );
-      }
+      publishConversation(sessionId);
     },
   };
 }

@@ -7,13 +7,17 @@ import type {
 } from 'shared/types';
 import {
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from '@vibe/ui/components/Dropdown';
+
+export const RUN_SETTINGS_SUBMENU_CLASS_NAME =
+  'min-w-0 max-w-[calc(100vw_-_1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto ' +
+  'data-[side=right]:[translate:min(0px,calc(var(--radix-dropdown-menu-content-available-width)_-_100%))_0] ' +
+  'data-[side=left]:[translate:max(0px,calc(100%_-_var(--radix-dropdown-menu-content-available-width)))_0]';
 
 function OptionMenu({
   label,
@@ -32,22 +36,38 @@ function OptionMenu({
     value == null
       ? 'inherit'
       : String(options.findIndex((option) => option.id === value));
+  const currentLabel =
+    value == null
+      ? t('modelSelector.inheritSettings')
+      : (options.find((option) => option.id === value)?.label ??
+        (value === '' ? '""' : value));
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>{label}</DropdownMenuSubTrigger>
-      <DropdownMenuSubContent>
+      <DropdownMenuSubTrigger className="min-h-9 min-w-0 gap-half">
+        <span className="min-w-0 flex-1">{label}</span>
+        <span className="max-w-[55%] truncate text-low" title={currentLabel}>
+          {currentLabel}
+        </span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent
+        className={`${RUN_SETTINGS_SUBMENU_CLASS_NAME} w-72`}
+      >
         <DropdownMenuRadioGroup
           value={selected}
           onValueChange={(id) =>
             onChange(id === 'inherit' ? null : options[Number(id)].id)
           }
         >
-          <DropdownMenuRadioItem value="inherit">
+          <DropdownMenuRadioItem value="inherit" className="min-h-9">
             {t('modelSelector.inheritSettings')}
           </DropdownMenuRadioItem>
           {value != null && selected === '-1' && (
-            <DropdownMenuRadioItem value="-1" disabled>
-              {value}
+            <DropdownMenuRadioItem
+              value="-1"
+              disabled
+              className="min-h-9 break-all"
+            >
+              {value === '' ? '""' : value}
             </DropdownMenuRadioItem>
           )}
           {options.map((option, index) => (
@@ -55,6 +75,7 @@ function OptionMenu({
               key={option.id}
               value={String(index)}
               disabled={option.disabled}
+              className="min-h-9 whitespace-normal"
             >
               {option.label}
             </DropdownMenuRadioItem>
@@ -91,11 +112,9 @@ export function ProviderRunOptionsMenu({
 
   return (
     <>
-      <DropdownMenuSeparator />
-      <DropdownMenuLabel>{t('modelSelector.nextAttempt')}</DropdownMenuLabel>
-      <p className="max-w-72 px-base pb-half text-sm text-low">
-        {t('modelSelector.attemptScope')}
-      </p>
+      <DropdownMenuLabel className="pt-base">
+        {t('modelSelector.providerOptions')}
+      </DropdownMenuLabel>
       {agent === 'CODEX' &&
         (() => {
           const current =
@@ -204,9 +223,6 @@ export function ProviderRunOptionsMenu({
                   })
                 }
               />
-              <p className="max-w-72 px-base py-half text-sm text-low">
-                {t('modelSelector.nativeValidation')}
-              </p>
             </>
           );
         })()}

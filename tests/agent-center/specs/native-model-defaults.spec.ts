@@ -34,6 +34,10 @@ test('native Codex model and Max replace discovery defaults without writing over
     .getByRole('button', { name: 'Run settings', exact: true })
     .click();
   await page
+    .getByRole('menuitem', { name: 'Diagnostics', exact: true })
+    .focus();
+  await page.keyboard.press('ArrowRight');
+  await page
     .getByRole('menuitem', { name: 'Refresh native capabilities', exact: true })
     .click();
   await expect(

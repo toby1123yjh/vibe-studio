@@ -88,6 +88,11 @@ import {
   isSessionDraftSubmissionCurrent,
   snapshotSessionDraft,
 } from '@/features/agent-workbench/model/sessionDraft';
+import {
+  consumeFailedConversationDraft,
+  markConversationDraftEdited,
+  usePendingConversationSend,
+} from '../model/pendingConversationSends';
 
 const EMPTY_DIFF_PATHS = new Set<string>();
 
@@ -449,6 +454,20 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     cancelDebouncedSave,
     handleMessageChange,
   } = useSessionMessageEditor({ scratchId });
+  const conversationSendScope = useMemo(
+    () => ({
+      hostId,
+      workspaceId,
+      sessionId: isNewSessionMode ? undefined : sessionId,
+    }),
+    [hostId, workspaceId, sessionId, isNewSessionMode]
+  );
+  const pendingSendSnapshot = usePendingConversationSend(conversationSendScope);
+  const clearedSendDraftRef = useRef<{
+    id: string;
+    scope: string;
+    revision: number;
+  } | null>(null);
 
   // Ref to access current message value for attachment handler
   const localMessageRef = useRef(localMessage);
@@ -483,9 +502,11 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         ? `${currentMessage}\n\n${markdown}`
         : markdown;
       draftIdentityRef.current.revision += 1;
+      markConversationDraftEdited(conversationSendScope);
+      localMessageRef.current = newMessage;
       setLocalMessage(newMessage);
     },
-    [setLocalMessage]
+    [setLocalMessage, conversationSendScope]
   );
 
   // Auto-paste component context from inspect mode
@@ -553,6 +574,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     hiddenAgents: config?.hidden_agents,
     onPersist: (cfg) => {
       draftIdentityRef.current.revision += 1;
+      markConversationDraftEdited(conversationSendScope);
       void saveToScratch(localMessageRef.current, cfg);
     },
   });
@@ -633,60 +655,82 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     executorConfig,
   });
 
+  useEffect(() => {
+    const failed = pendingSendSnapshot.failedDraft;
+    if (!failed || isScratchLoading || !hasInitialValue) return;
+    const cleared = clearedSendDraftRef.current;
+    const expectedRevision =
+      cleared?.id === failed.id && cleared.scope === draftScope
+        ? cleared.revision
+        : 0;
+    if (
+      draftIdentityRef.current.sessionId === draftScope &&
+      draftIdentityRef.current.revision === expectedRevision &&
+      localMessageRef.current === ''
+    ) {
+      draftIdentityRef.current.revision += 1;
+      localMessageRef.current = failed.text;
+      setLocalMessage(failed.text);
+      const config =
+        failed.executorConfig ?? liveExecutorConfigRef.current.config;
+      if (config) void saveToScratch(failed.text, config);
+    }
+    consumeFailedConversationDraft(conversationSendScope);
+  }, [
+    pendingSendSnapshot.failedDraft,
+    isScratchLoading,
+    hasInitialValue,
+    draftScope,
+    conversationSendScope,
+    saveToScratch,
+    setLocalMessage,
+  ]);
+
   const handleSend = useCallback(async () => {
     if (!executorConfig) return;
     const owner = draftOwnerRef.current;
-    const submittedMessage = localMessage;
-    const submission = snapshotSessionDraft({
-      sessionId: draftScope,
-      text: submittedMessage,
-      revision: draftIdentityRef.current.revision,
-    });
+    const submittedMessage = localMessageRef.current;
     const { prompt, isSlashCommand } = buildAgentPrompt(submittedMessage, [
       reviewMarkdown,
     ]);
-
-    onScrollToBottom('auto');
+    let clearRevision: number | null = null;
 
     const success = await send(prompt, isSlashCommand ? [] : selectedSkills, {
       resumeSessionId: stagedResumeSession?.agent_session_id,
       resumeScopePath: resumeScopePath,
-    });
-    if (success) {
-      if (!owner.active || draftOwnerRef.current !== owner) return;
-      if (draftIdentityRef.current.sessionId !== submission.sessionId) return;
-      cancelDebouncedSave();
-      const currentMessage = localMessageRef.current;
-      if (
-        isSessionDraftSubmissionCurrent(
-          draftIdentityRef.current.sessionId,
-          currentMessage,
-          draftIdentityRef.current.revision,
-          submission
-        )
-      ) {
-        draftIdentityRef.current.revision += 1;
+      displayMessage: submittedMessage,
+      onSubmitted: (handle) => {
+        cancelDebouncedSave();
+        clearRevision = ++draftIdentityRef.current.revision;
+        clearedSendDraftRef.current = {
+          id: handle.id,
+          scope: draftScope,
+          revision: clearRevision,
+        };
         localMessageRef.current = '';
         setLocalMessage('');
-        // The server has accepted the message. A slow config refresh or scratch
-        // DELETE must not leave the submitted text in the live composer.
+        // Serialize this removal before any newer draft writes, including a
+        // rapid close/reopen while the network request is still in flight.
         void clearDraft().catch((error) => {
           console.error('Failed to clear submitted follow-up draft', error);
         });
+        onScrollToBottom('auto');
+      },
+    });
+    if (success) {
+      if (!owner.active || draftOwnerRef.current !== owner) return;
+      if (draftIdentityRef.current.sessionId !== draftScope) return;
+      if (
+        clearRevision !== null &&
+        draftIdentityRef.current.revision === clearRevision &&
+        localMessageRef.current === ''
+      ) {
         setSelectedSkills([]);
         setStagedResumeSession(null);
         clearUploadedAttachments();
         if (!isSlashCommand) {
           reviewContext?.clearComments();
         }
-      } else if (
-        liveExecutorConfigRef.current.config &&
-        draftIdentityRef.current.sessionId === submission.sessionId
-      ) {
-        void saveToScratch(
-          currentMessage,
-          liveExecutorConfigRef.current.config
-        );
       }
       if (sessionId) void refetchConfig();
       requestAnimationFrame(() => {
@@ -698,7 +742,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   }, [
     onScrollToBottom,
     send,
-    localMessage,
     draftScope,
     reviewMarkdown,
     selectedSkills,
@@ -707,7 +750,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     cancelDebouncedSave,
     setLocalMessage,
     executorConfig,
-    saveToScratch,
     clearUploadedAttachments,
     clearDraft,
     reviewContext,
@@ -796,6 +838,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       // advance the revision so the accepted submission can still clear it.
       if (value === localMessageRef.current) return;
       draftIdentityRef.current.revision += 1;
+      markConversationDraftEdited(conversationSendScope);
       localMessageRef.current = value;
       if (isQueued) cancelQueue();
       const draftConfig =
@@ -816,6 +859,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       handleMessageChange,
       executorConfig,
       draftScope,
+      conversationSendScope,
       sendError,
       clearError,
       setLocalMessage,

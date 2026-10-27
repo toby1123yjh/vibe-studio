@@ -5,7 +5,11 @@ const repoRoot = process.cwd();
 
 export default defineConfig({
   testDir: "./specs",
-  testIgnore: ["workflow-visual.spec.ts", "workflow-conversation-tools.spec.ts"],
+  testIgnore: [
+    "workflow-visual.spec.ts",
+    "workflow-conversation-tools.spec.ts",
+    "workflow-instant-send.spec.ts",
+  ],
   outputDir: `${repoRoot}/test-results/workflow`,
   timeout: 30_000,
   expect: {

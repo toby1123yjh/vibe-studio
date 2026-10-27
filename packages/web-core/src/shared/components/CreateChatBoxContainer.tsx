@@ -3,6 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { useDropzone } from 'react-dropzone';
 import { useSessionProjectTarget } from '@/shared/hooks/useSessionProjectTarget';
 import { useCreateMode } from '@/features/create-mode/model/useCreateMode';
+import {
+  acceptConversationSend,
+  beginConversationSend,
+} from '@/features/workspace-chat/model/pendingConversationSends';
 import { AgentIcon, getAgentName } from '@/shared/components/AgentIcon';
 import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
@@ -390,6 +394,17 @@ export function CreateChatBoxContainer({
         return;
 
       if (result.workspace) {
+        // The first history fetch can lag behind workspace creation. Carry the
+        // accepted input into the same local echo used by conversation sends.
+        const firstMessage = beginConversationSend({
+          hostId,
+          workspaceId: result.workspace.id,
+          sessionId: result.agentRun.state.session_id,
+          text: message,
+          executorConfig,
+        });
+        if (firstMessage)
+          acceptConversationSend(firstMessage, result.agentRun.agent_run_id);
         onWorkspaceCreated(result.workspace.id);
       }
 
@@ -404,6 +419,7 @@ export function CreateChatBoxContainer({
     canSubmit,
     project.projectId,
     executorConfig,
+    hostId,
     message,
     selectedSkills,
     stagedResumeSession?.agent_session_id,

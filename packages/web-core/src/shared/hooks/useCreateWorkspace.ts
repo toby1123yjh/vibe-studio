@@ -22,7 +22,8 @@ export function useCreateWorkspace() {
 
   const createWorkspace = useMutation({
     mutationFn: async ({ data, linkToTask }: CreateWorkspaceParams) => {
-      const { workspace } = await workspacesApi.createAndStart(data);
+      const { workspace, agent_run: agentRun } =
+        await workspacesApi.createAndStart(data);
 
       // Start persists the first session too. Publish it before optional Issue
       // linking, whose failure must not hide an already-created session.
@@ -38,7 +39,7 @@ export function useCreateWorkspace() {
         void invalidateSessionDiscovery(queryClient);
       }
 
-      return { workspace };
+      return { workspace, agentRun };
     },
     onSuccess: (_result, { data, linkToTask }) => {
       // Invalidate workspace summaries so they refresh with the new workspace included

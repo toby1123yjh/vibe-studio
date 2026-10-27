@@ -20,6 +20,11 @@ import { deriveConversationEntries } from '../model/deriveConversationEntries';
 import { deriveConversationTimeline } from '../model/deriveConversationTimeline';
 import { useConversationVirtualizer } from '../model/useConversationVirtualizer';
 import { useScrollCommandExecutor } from '../model/useScrollCommandExecutor';
+import {
+  projectPendingConversationSend,
+  settleConversationSend,
+  usePendingConversationSend,
+} from '../model/pendingConversationSends';
 
 import DisplayConversationEntry from './DisplayConversationEntry';
 import {
@@ -49,10 +54,13 @@ import { useSetTokenUsageInfo } from '../model/contexts/EntriesContext';
 import type { WorkspaceWithSession } from '@/shared/types/attempt';
 import type { RepoWithTargetBranch } from 'shared/types';
 import { ChatEmptyState } from '@vibe/ui/components/ChatEmptyState';
+import { ChatUserMessage } from '@vibe/ui/components/ChatUserMessage';
+import { AppChatMarkdown } from './AppChatMarkdown';
 import { useWorkflowNotifications } from '@/shared/hooks/useWorkflowManagement';
 import { workflowNotificationEntries } from '@/features/workflow/model/workflowNotifications';
 import { Button } from '@vibe/ui/components/Button';
 import type { WorkspaceConversationViewState } from '../model/conversationViewState';
+import { useHostId } from '@/shared/providers/HostIdProvider';
 
 interface ConversationListProps {
   attempt: WorkspaceWithSession;
@@ -167,6 +175,24 @@ function renderRowContent(
   }
 
   if (entry.type === 'NORMALIZED_ENTRY') {
+    if (
+      entry.patchKey.startsWith('pending-send:') &&
+      entry.content.entry_type.type === 'user_message'
+    ) {
+      return (
+        <ChatUserMessage
+          content={entry.content.content}
+          workspaceId={attempt.id}
+          renderMarkdown={({ content, workspaceId }) => (
+            <AppChatMarkdown
+              content={content}
+              workspaceId={workspaceId}
+              sessionId={attempt.session?.id}
+            />
+          )}
+        />
+      );
+    }
     if (entry.conversationBlockId) {
       return (
         <ConversationBlockEntry
@@ -212,7 +238,31 @@ export const ConversationList = forwardRef<
   ref
 ) {
   const { t } = useTranslation('common');
+  const hostId = useHostId();
   const sessionConversation = useAgentRunSession();
+  const conversationSendScope = useMemo(
+    () => ({
+      hostId,
+      workspaceId: attempt.id,
+      sessionId: sessionScopeId ?? attempt.session?.id,
+    }),
+    [hostId, attempt.id, sessionScopeId, attempt.session?.id]
+  );
+  const pendingSends = usePendingConversationSend(conversationSendScope);
+  const pendingSendsRef = useRef(pendingSends);
+  pendingSendsRef.current = pendingSends;
+  const sessionConversationRef = useRef(sessionConversation);
+  sessionConversationRef.current = sessionConversation;
+  useEffect(() => {
+    settleConversationSend(
+      conversationSendScope,
+      sessionConversation.conversation.entries
+    );
+  }, [
+    conversationSendScope,
+    sessionConversation.conversation.entries,
+    pendingSends.sends,
+  ]);
   const savedViewRef = useRef(initialViewState);
   const reportViewRef = useRef(onViewStateChange);
   reportViewRef.current = onViewStateChange;
@@ -265,7 +315,7 @@ export const ConversationList = forwardRef<
   );
   const repos = reposProp;
   const resetAction = useResetProcess(attempt.id, attempt.session?.id);
-  const conversationScopeKey = `${attempt.id}:${sessionScopeId ?? attempt.session?.id ?? 'new'}`;
+  const conversationScopeKey = `${hostId ?? 'local'}:${attempt.id}:${sessionScopeId ?? attempt.session?.id ?? 'new'}`;
   const [dataVersion, setDataVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [hasRunningProcess, setHasRunningProcess] = useState(false);
@@ -299,7 +349,7 @@ export const ConversationList = forwardRef<
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const pendingInteractionAnchorDeadlineRef = useRef(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
@@ -307,6 +357,8 @@ export const ConversationList = forwardRef<
     pendingUpdateRef.current = null;
     lastTimelineSourceRef.current = null;
     scriptOutputCacheRef.current.clear();
+    prevEntriesRef.current = [];
+    prevRowsRef.current = [];
     if (planRevealSpacerRef.current) {
       planRevealSpacerRef.current.style.height = '0px';
     }
@@ -469,9 +521,13 @@ export const ConversationList = forwardRef<
 
     setHasRunningProcess(derivedEntries.hasRunningProcess);
     setTokenUsageInfo(derivedEntries.latestTokenUsageInfo);
+    const presentedEntries = projectPendingConversationSend(
+      derivedEntries.entries,
+      pendingSendsRef.current
+    );
 
     const derivedTimeline = deriveConversationTimeline(
-      derivedEntries.entries,
+      presentedEntries,
       pending.source,
       prevEntriesRef.current,
       prevRowsRef.current,
@@ -494,7 +550,7 @@ export const ConversationList = forwardRef<
     }
 
     setDataVersion((current) => current + 1);
-    setEntries(derivedEntries.entries);
+    setEntries(presentedEntries);
 
     scrollOnEntriesChangedRef.current?.(pending.addType, pending.isInitialLoad);
 
@@ -503,6 +559,34 @@ export const ConversationList = forwardRef<
     }
   };
   flushTimelineRef.current = flushPendingUpdate;
+
+  useLayoutEffect(() => {
+    // A local submission should paint with the editor clear, even when no
+    // canonical history source has loaded yet. It never changes that source.
+    const source: ConversationTimelineSource = {
+      executionProcessState:
+        lastTimelineSourceRef.current?.executionProcessState ?? {},
+      liveExecutionProcesses:
+        lastTimelineSourceRef.current?.liveExecutionProcesses ?? [],
+      canonical:
+        sessionConversationRef.current.store?.getSnapshot().conversation ??
+        sessionConversationRef.current.conversation,
+    };
+    const queued = pendingUpdateRef.current;
+    pendingUpdateRef.current = {
+      source,
+      addType: queued?.addType ?? 'running',
+      loading: source.canonical.isLoading,
+      isInitialLoad: queued?.isInitialLoad ?? false,
+    };
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    flushTimelineRef.current?.();
+    // Canonical source updates retain the existing history hook's frame batch.
+    // This synchronous path is only for a scoped local presentation change.
+  }, [pendingSends, conversationScopeKey]);
 
   useEffect(() => {
     const source = lastTimelineSourceRef.current;

@@ -10,6 +10,11 @@ import type {
   ExecutorConfig,
   SelectedSkill,
 } from 'shared/types';
+import {
+  acceptConversationSend,
+  bindConversationSend,
+  type ConversationSendHandle,
+} from '../pendingConversationSends';
 
 interface CreateSessionParams {
   workspaceId: string;
@@ -18,6 +23,7 @@ interface CreateSessionParams {
   executorConfig: ExecutorConfig;
   resumeSessionId?: string | null;
   resumeScopePath?: string | null;
+  pendingSend?: ConversationSendHandle;
 }
 
 interface UseCreateSessionOptions {
@@ -41,10 +47,20 @@ export function useCreateSession(options: UseCreateSessionOptions = {}) {
       executorConfig,
       resumeSessionId,
       resumeScopePath,
+      pendingSend,
     }: CreateSessionParams): Promise<Session> => {
-      const session = await sessionsApi.create({
-        workspace_id: workspaceId,
-      });
+      const session = await sessionsApi.create(
+        { workspace_id: workspaceId },
+        hostId
+      );
+
+      if (pendingSend) {
+        bindConversationSend(pendingSend, {
+          hostId,
+          workspaceId,
+          sessionId: session.id,
+        });
+      }
 
       // Publish the session as soon as the durable create succeeds. The first
       // follow-up can fail independently; that must not make a real session
@@ -73,7 +89,8 @@ export function useCreateSession(options: UseCreateSessionOptions = {}) {
         resume_scope_path: resumeScopePath || undefined,
       };
       try {
-        await sessionsApi.followUp(session.id, body);
+        const run = await sessionsApi.followUp(session.id, body, hostId);
+        if (pendingSend) acceptConversationSend(pendingSend, run.agent_run_id);
       } finally {
         // The selected session can have loaded null before its initial run was
         // persisted. A failed launch may also leave a durable run or binding.

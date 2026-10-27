@@ -400,12 +400,15 @@ export const sessionsApi = {
     return handleApiResponse<Session>(response);
   },
 
-  create: async (data: {
-    workspace_id: string;
-    executor?: string;
-    name?: string;
-  }): Promise<Session> => {
-    const response = await makeRequest('/api/sessions', {
+  create: async (
+    data: {
+      workspace_id: string;
+      executor?: string;
+      name?: string;
+    },
+    hostId?: string | null
+  ): Promise<Session> => {
+    const response = await makeHostAwareRequest('/api/sessions', hostId, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -414,12 +417,17 @@ export const sessionsApi = {
 
   followUp: async (
     sessionId: string,
-    data: CreateFollowUpAttempt
+    data: CreateFollowUpAttempt,
+    hostId?: string | null
   ): Promise<AgentRunPortSnapshot> => {
-    const response = await makeRequest(`/api/sessions/${sessionId}/follow-up`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    const response = await makeHostAwareRequest(
+      `/api/sessions/${sessionId}/follow-up`,
+      hostId,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
     return handleApiResponse<AgentRunPortSnapshot>(response);
   },
 

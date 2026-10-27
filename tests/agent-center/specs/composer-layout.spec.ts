@@ -247,6 +247,48 @@ test("run settings retain native agent and permission controls without crowding 
   );
   await expect(settings).toBeFocused();
   await expectContainedActions(page);
+
+  for (const viewport of [
+    { width: 375, height: 700 },
+    { width: 740, height: 375 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const label of ["Service tier", "Diagnostics"]) {
+      await settings.click();
+      const menu = page.getByRole("menu", {
+        name: "Run settings",
+        exact: true,
+      });
+      const trigger = menu.getByRole("menuitem", {
+        name: new RegExp(`^${label}`),
+      });
+      await trigger.focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(page.getByRole("menu").last()).toContainText(
+        label === "Diagnostics" ? "Refresh native capabilities" : "Standard",
+      );
+      await expect
+        .poll(() =>
+          page.getByRole("menu").evaluateAll((elements) =>
+            elements.every((element) => {
+              const bounds = element.getBoundingClientRect();
+              return (
+                bounds.left >= -1 &&
+                bounds.top >= -1 &&
+                bounds.right <= window.innerWidth + 1 &&
+                bounds.bottom <= window.innerHeight + 1 &&
+                element.scrollWidth <= element.clientWidth + 1
+              );
+            }),
+          ),
+        )
+        .toBe(true);
+      await page.keyboard.press("ArrowLeft");
+      await expect(trigger).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeFocused();
+    }
+  }
 });
 
 test("create mode displays project and task context apart from the send actions", async ({

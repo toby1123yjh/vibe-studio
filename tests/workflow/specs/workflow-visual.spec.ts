@@ -738,7 +738,12 @@ test("Enter sends preserve editor focus and model controls through slow acknowle
     async (route) => {
       submissions.push(route.request().postDataJSON().prompt);
       await accepted;
-      await route.fulfill({ json: { success: true, data: null } });
+      await route.fulfill({
+        json: {
+          success: true,
+          data: api.acknowledgement("analysis-session", "submitted-analysis"),
+        },
+      });
     },
   );
   let refreshStarted = false;
@@ -850,7 +855,7 @@ test("Enter sends preserve editor focus and model controls through slow acknowle
 test("a failed send retains the draft and an old send cannot clear another conversation", async ({
   page,
 }) => {
-  await mockWorkflowConversations(page);
+  const api = await mockWorkflowConversations(page);
   await page.goto("/visual.html?mode=file-run");
   await page.getByTestId("workflow-run-node-build").click();
   const panel = page.getByTestId("workflow-conversation-panel");
@@ -877,7 +882,12 @@ test("a failed send retains the draft and an old send cannot clear another conve
     "**/api/sessions/analysis-session/follow-up",
     async (route) => {
       await accepted;
-      await route.fulfill({ json: { success: true, data: null } });
+      await route.fulfill({
+        json: {
+          success: true,
+          data: api.acknowledgement("analysis-session", "submitted-analysis"),
+        },
+      });
     },
   );
   await editor.fill("An earlier pending submission");
@@ -990,7 +1000,12 @@ test("a send acknowledged after close and reopen preserves the replacement sessi
       await new Promise<void>((resolve) => {
         releaseSend = resolve;
       });
-      await route.fulfill({ json: { success: true, data: null } });
+      await route.fulfill({
+        json: {
+          success: true,
+          data: api.acknowledgement("analysis-session", "submitted-analysis"),
+        },
+      });
     },
   );
   await page.goto("/visual.html?mode=file-run");
@@ -1017,6 +1032,9 @@ test("a send acknowledged after close and reopen preserves the replacement sessi
     .toMatchObject({
       payload: { data: { message: replacement } },
     });
+  const deletesBeforeAcknowledgement = api.requests.filter((request) =>
+    request.startsWith("DELETE "),
+  );
   const response = page.waitForResponse((candidate) =>
     candidate.url().endsWith("/sessions/analysis-session/follow-up"),
   );
@@ -1038,7 +1056,7 @@ test("a send acknowledged after close and reopen preserves the replacement sessi
   await expect(editor).toHaveText(replacement);
   expect(
     api.requests.filter((request) => request.startsWith("DELETE ")),
-  ).toEqual([]);
+  ).toEqual(deletesBeforeAcknowledgement);
 });
 
 test("a waiting conversation stays inset, does not start work and remains open on canvas interaction", async ({
@@ -1240,7 +1258,8 @@ test("inline file preview keeps the original editor mounted and Escape returns b
     .poll(() =>
       panel.evaluate((element) => {
         // Fill the positioned parent, including when the fixture has scrollbars.
-        const parent = element.offsetParent;
+        const parent =
+          element instanceof HTMLElement ? element.offsetParent : null;
         const available =
           parent instanceof HTMLElement
             ? parent.clientWidth

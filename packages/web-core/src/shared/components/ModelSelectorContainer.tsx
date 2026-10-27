@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  ArrowClockwiseIcon,
   CheckIcon,
   FastForwardIcon,
   GearIcon,
   HandIcon,
+  InfoIcon,
   ListBulletsIcon,
   SlidersHorizontalIcon,
   type Icon,
@@ -17,7 +19,10 @@ import type {
 } from 'shared/types';
 import { PermissionPolicy } from 'shared/types';
 import { useOptionalAgentRunSession } from '@/features/agent-runtime/model/AgentRunSessionContext';
-import { ProviderRunOptionsMenu } from './ProviderRunOptionsMenu';
+import {
+  ProviderRunOptionsMenu,
+  RUN_SETTINGS_SUBMENU_CLASS_NAME,
+} from './ProviderRunOptionsMenu';
 import { toPrettyCase } from '@/shared/lib/string';
 import {
   getModelKey,
@@ -631,63 +636,82 @@ export function ModelSelectorContainer({
         aria-label={t('modelSelector.runSettings')}
         title={t('modelSelector.runSettings')}
       />
-      <DropdownMenuContent align="start">
-        <DropdownMenuLabel>{t('modelSelector.preset')}</DropdownMenuLabel>
-        {presets.length > 0 ? (
-          presets.map((preset) => (
-            <DropdownMenuItem
-              key={preset}
-              icon={preset === resolvedPreset ? CheckIcon : undefined}
-              onClick={() => onPresetSelect?.(preset)}
-            >
-              {toPrettyCase(preset)}
-            </DropdownMenuItem>
-          ))
-        ) : (
-          <DropdownMenuItem disabled>{presetLabel}</DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>{t('modelSelector.requested')}</DropdownMenuLabel>
-        <p className="max-w-72 break-words px-base pb-half text-sm text-normal">
-          {modelLabel}
-        </p>
+      <DropdownMenuContent
+        align="start"
+        className="w-[22.5rem] min-w-0 max-w-[calc(100vw_-_1rem)]"
+        aria-label={t('modelSelector.runSettings')}
+      >
+        <div className="space-y-half px-base py-half">
+          <p className="text-base font-medium text-high">
+            {t('modelSelector.nextAttempt')}
+          </p>
+          <p className="text-sm leading-relaxed text-low">
+            {t('modelSelector.attemptScope')}
+          </p>
+          <p className="break-words text-base text-normal [overflow-wrap:anywhere]">
+            {modelLabel}
+          </p>
+        </div>
         {capabilityWarning && (
           <p
             role="status"
-            className="max-w-72 px-base pb-half text-sm text-error"
+            className="px-base py-half text-sm leading-relaxed text-error"
           >
             {t('modelSelector.reasoningUnverified', {
               value: configuredReasoningId,
             })}
           </p>
         )}
-        {configuredReasoningId != null && (
-          <DropdownMenuItem onClick={() => handleReasoningSelect(null)}>
-            {t('modelSelector.clearReasoning')}
-          </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {presets.length > 1 && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9 min-w-0 gap-half">
+              <span className="min-w-0 flex-1">
+                {t('modelSelector.preset')}
+              </span>
+              <span
+                className="max-w-[55%] truncate text-low"
+                title={presetLabel}
+              >
+                {presetLabel}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent
+              className={`${RUN_SETTINGS_SUBMENU_CLASS_NAME} w-64`}
+            >
+              {presets.map((preset) => (
+                <DropdownMenuItem
+                  key={preset}
+                  className="min-h-9"
+                  icon={preset === resolvedPreset ? CheckIcon : undefined}
+                  onClick={() => onPresetSelect?.(preset)}
+                >
+                  {toPrettyCase(preset)}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         )}
-        {observationDetails}
-        <ProviderRunOptionsMenu
-          agent={agent}
-          options={providerOptions}
-          model={discoveredSelectedModel}
-          onChange={onOverrideChange}
-        />
         {permissionPolicy && config.permissions.length > 0 && (
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
+            <DropdownMenuSubTrigger className="min-h-9 min-w-0 gap-half">
               <PermissionIcon />
-              {t('modelSelector.permissions')}
-              <span className="text-low">
+              <span className="min-w-0 flex-1">
+                {t('modelSelector.permissions')}
+              </span>
+              <span className="max-w-[55%] truncate text-low">
                 {permissionMetaByPolicy[permissionPolicy]?.label}
               </span>
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
+            <DropdownMenuSubContent
+              className={`${RUN_SETTINGS_SUBMENU_CLASS_NAME} w-48`}
+            >
               {config.permissions.map((policy) => {
                 const meta = permissionMetaByPolicy[policy];
                 return (
                   <DropdownMenuItem
                     key={policy}
+                    className="min-h-9"
                     icon={
                       policy === permissionPolicy
                         ? CheckIcon
@@ -704,12 +728,20 @@ export function ModelSelectorContainer({
         )}
         {config.agents.length > 0 && (
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              {t('modelSelector.agent')}
-              <span className="text-low">{agentLabel}</span>
+            <DropdownMenuSubTrigger className="min-h-9 min-w-0 gap-half">
+              <span className="min-w-0 flex-1">{t('modelSelector.agent')}</span>
+              <span
+                className="max-w-[55%] truncate text-low"
+                title={agentLabel}
+              >
+                {agentLabel}
+              </span>
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
+            <DropdownMenuSubContent
+              className={`${RUN_SETTINGS_SUBMENU_CLASS_NAME} w-64`}
+            >
               <DropdownMenuItem
+                className="min-h-9"
                 icon={selectedAgentId === null ? CheckIcon : undefined}
                 onClick={() => handleAgentSelect(null)}
               >
@@ -719,6 +751,7 @@ export function ModelSelectorContainer({
               {config.agents.map((agentOption) => (
                 <DropdownMenuItem
                   key={agentOption.id}
+                  className="min-h-9"
                   icon={
                     agentOption.id === selectedAgentId ? CheckIcon : undefined
                   }
@@ -730,20 +763,61 @@ export function ModelSelectorContainer({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )}
+        <ProviderRunOptionsMenu
+          agent={agent}
+          options={providerOptions}
+          model={discoveredSelectedModel}
+          onChange={onOverrideChange}
+        />
+        {configuredReasoningId != null && (
+          <DropdownMenuItem
+            className="min-h-9"
+            onClick={() => handleReasoningSelect(null)}
+          >
+            {t('modelSelector.clearReasoning')}
+          </DropdownMenuItem>
+        )}
         {agent === 'GEMINI' && (
-          <p className="max-w-72 px-base py-half text-sm text-low">
+          <p className="px-base py-half text-sm leading-relaxed text-low">
             {t('modelSelector.geminiNativeThinking')}
           </p>
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={refresh} disabled={loadingModels}>
-          {t('modelSelector.refreshDiscovery')}
-        </DropdownMenuItem>
-        <p className="max-w-72 px-base pb-half text-sm text-low">
-          {t('modelSelector.refreshScope')}
-        </p>
-        <DropdownMenuItem icon={GearIcon} onClick={onAdvancedSettings}>
-          {t('modelSelector.custom')}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="min-h-9">
+            <InfoIcon />
+            {t('modelSelector.diagnostics')}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent
+            className={`${RUN_SETTINGS_SUBMENU_CLASS_NAME} w-[22.5rem]`}
+          >
+            {observationDetails}
+            {agent === 'CLAUDE_CODE' && (
+              <p className="px-base py-half text-sm leading-relaxed text-low">
+                {t('modelSelector.nativeValidation')}
+              </p>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="min-h-9"
+              icon={ArrowClockwiseIcon}
+              onClick={refresh}
+              disabled={loadingModels}
+            >
+              {t('modelSelector.refreshDiscovery')}
+            </DropdownMenuItem>
+            <p className="px-base py-half text-sm leading-relaxed text-low">
+              {t('modelSelector.refreshScope')}
+            </p>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="min-h-9"
+          icon={GearIcon}
+          onClick={onAdvancedSettings}
+        >
+          {t('modelSelector.globalSettings')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
