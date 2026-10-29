@@ -5,6 +5,7 @@ import { workspaceSessionKeys } from '@/shared/hooks/workspaceSessionKeys';
 import { invalidateSessionDiscovery } from '@/shared/lib/sessionDiscoveryCache';
 import { sessionExecutorConfigKey } from '@/shared/hooks/sessionExecutorConfigKeys';
 import type {
+  AgentRunPortSnapshot,
   Session,
   CreateFollowUpAttempt,
   ExecutorConfig,
@@ -29,6 +30,8 @@ interface CreateSessionParams {
 interface UseCreateSessionOptions {
   /** Called once the durable session row exists, before the first follow-up. */
   onSessionCreated?: (session: Session) => void;
+  /** Import the returned Run before the local send leaves its pending state. */
+  onRunSnapshot?: (sessionId: string, snapshot: AgentRunPortSnapshot) => void;
 }
 
 /**
@@ -90,6 +93,7 @@ export function useCreateSession(options: UseCreateSessionOptions = {}) {
       };
       try {
         const run = await sessionsApi.followUp(session.id, body, hostId);
+        options.onRunSnapshot?.(session.id, run);
         if (pendingSend) acceptConversationSend(pendingSend, run.agent_run_id);
       } finally {
         // The selected session can have loaded null before its initial run was

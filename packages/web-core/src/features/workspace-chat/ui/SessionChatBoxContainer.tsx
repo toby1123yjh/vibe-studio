@@ -29,7 +29,9 @@ import { useWorkspaceExecution } from '@/shared/hooks/useWorkspaceExecution';
 import { useWorkspaceRepo } from '@/shared/hooks/useWorkspaceRepo';
 import { useWorkspaceRecord } from '@/shared/hooks/useWorkspaceRecord';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
-import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
+import WYSIWYGEditor, {
+  type WYSIWYGEditorRef,
+} from '@/shared/components/WYSIWYGEditor';
 import { useApprovalFeedbackOptional } from '../model/contexts/ApprovalFeedbackContext';
 import { useMessageEditContext } from '../model/contexts/MessageEditContext';
 import {
@@ -179,6 +181,7 @@ type SessionChatBoxContainerProps =
 
 export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   const { t } = useTranslation('tasks');
+  const composerEditorRef = useRef<WYSIWYGEditorRef>(null);
   const { openAgentCenter } = useSettingsNavigation();
   const {
     mode,
@@ -686,76 +689,80 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     setLocalMessage,
   ]);
 
-  const handleSend = useCallback(async () => {
-    if (!executorConfig) return;
-    const owner = draftOwnerRef.current;
-    const submittedMessage = localMessageRef.current;
-    const { prompt, isSlashCommand } = buildAgentPrompt(submittedMessage, [
-      reviewMarkdown,
-    ]);
-    let clearRevision: number | null = null;
+  const handleSend = useCallback(
+    async (markdown?: string) => {
+      if (!executorConfig) return;
+      const owner = draftOwnerRef.current;
+      const submittedMessage =
+        markdown ??
+        composerEditorRef.current?.getMarkdown() ??
+        localMessageRef.current;
+      const { prompt, isSlashCommand } = buildAgentPrompt(submittedMessage, [
+        reviewMarkdown,
+      ]);
+      let clearRevision: number | null = null;
 
-    const success = await send(prompt, isSlashCommand ? [] : selectedSkills, {
-      resumeSessionId: stagedResumeSession?.agent_session_id,
-      resumeScopePath: resumeScopePath,
-      displayMessage: submittedMessage,
-      onSubmitted: (handle) => {
-        cancelDebouncedSave();
-        clearRevision = ++draftIdentityRef.current.revision;
-        clearedSendDraftRef.current = {
-          id: handle.id,
-          scope: draftScope,
-          revision: clearRevision,
-        };
-        localMessageRef.current = '';
-        setLocalMessage('');
-        // Serialize this removal before any newer draft writes, including a
-        // rapid close/reopen while the network request is still in flight.
-        void clearDraft().catch((error) => {
-          console.error('Failed to clear submitted follow-up draft', error);
-        });
-        onScrollToBottom('auto');
-      },
-    });
-    if (success) {
-      if (!owner.active || draftOwnerRef.current !== owner) return;
-      if (draftIdentityRef.current.sessionId !== draftScope) return;
-      if (
-        clearRevision !== null &&
-        draftIdentityRef.current.revision === clearRevision &&
-        localMessageRef.current === ''
-      ) {
-        setSelectedSkills([]);
-        setStagedResumeSession(null);
-        clearUploadedAttachments();
-        if (!isSlashCommand) {
-          reviewContext?.clearComments();
-        }
-      }
-      if (sessionId) void refetchConfig();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+      const success = await send(prompt, isSlashCommand ? [] : selectedSkills, {
+        resumeSessionId: stagedResumeSession?.agent_session_id,
+        resumeScopePath: resumeScopePath,
+        displayMessage: submittedMessage,
+        onSubmitted: (handle) => {
+          cancelDebouncedSave();
+          clearRevision = ++draftIdentityRef.current.revision;
+          clearedSendDraftRef.current = {
+            id: handle.id,
+            scope: draftScope,
+            revision: clearRevision,
+          };
+          localMessageRef.current = '';
+          setLocalMessage('');
+          // The Enter command can still contain the final dirty character. Clear
+          // its active update as well so its listener cannot restore sent text.
+          composerEditorRef.current?.clear();
+          // Serialize this removal before any newer draft writes, including a
+          // rapid close/reopen while the network request is still in flight.
+          void clearDraft().catch((error) => {
+            console.error('Failed to clear submitted follow-up draft', error);
+          });
           onScrollToBottom('auto');
-        });
+        },
       });
-    }
-  }, [
-    onScrollToBottom,
-    send,
-    draftScope,
-    reviewMarkdown,
-    selectedSkills,
-    stagedResumeSession?.agent_session_id,
-    resumeScopePath,
-    cancelDebouncedSave,
-    setLocalMessage,
-    executorConfig,
-    clearUploadedAttachments,
-    clearDraft,
-    reviewContext,
-    sessionId,
-    refetchConfig,
-  ]);
+      if (success) {
+        if (!owner.active || draftOwnerRef.current !== owner) return;
+        if (draftIdentityRef.current.sessionId !== draftScope) return;
+        if (
+          clearRevision !== null &&
+          draftIdentityRef.current.revision === clearRevision &&
+          localMessageRef.current === ''
+        ) {
+          setSelectedSkills([]);
+          setStagedResumeSession(null);
+          clearUploadedAttachments();
+          if (!isSlashCommand) {
+            reviewContext?.clearComments();
+          }
+        }
+        if (sessionId) void refetchConfig();
+      }
+    },
+    [
+      onScrollToBottom,
+      send,
+      draftScope,
+      reviewMarkdown,
+      selectedSkills,
+      stagedResumeSession?.agent_session_id,
+      resumeScopePath,
+      cancelDebouncedSave,
+      setLocalMessage,
+      executorConfig,
+      clearUploadedAttachments,
+      clearDraft,
+      reviewContext,
+      sessionId,
+      refetchConfig,
+    ]
+  );
 
   // Track canonical run discovery for queue refresh.
   const agentRunCount = canonicalTimeline?.runs.length ?? 0;
@@ -779,57 +786,70 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   }, [agentRunCount, isAgentRunActive, workspaceId, refreshQueueStatus]);
 
   // Queue message handler
-  const handleQueueMessage = useCallback(async () => {
-    // Allow queueing if there's a message OR review comments, and we have a config
-    if ((!localMessage.trim() && !reviewMarkdown) || !executorConfig) return;
-    const owner = draftOwnerRef.current;
+  const handleQueueMessage = useCallback(
+    async (markdown?: string) => {
+      const submittedMessage =
+        markdown ??
+        composerEditorRef.current?.getMarkdown() ??
+        localMessageRef.current;
+      // Allow queueing if there's a message OR review comments, and we have a config
+      if ((!submittedMessage.trim() && !reviewMarkdown) || !executorConfig)
+        return;
+      const owner = draftOwnerRef.current;
 
-    const submittedMessage = localMessage;
-    const submission = snapshotSessionDraft({
-      sessionId: draftScope,
-      text: submittedMessage,
-      revision: draftIdentityRef.current.revision,
-    });
-    const { prompt } = buildAgentPrompt(submittedMessage, [reviewMarkdown]);
+      const submission = snapshotSessionDraft({
+        sessionId: draftScope,
+        text: submittedMessage,
+        revision: draftIdentityRef.current.revision,
+      });
+      const { prompt } = buildAgentPrompt(submittedMessage, [reviewMarkdown]);
 
-    cancelDebouncedSave();
-    await saveToScratch(submittedMessage, executorConfig);
-    await queueMessage(prompt, executorConfig, selectedSkills);
+      cancelDebouncedSave();
+      await saveToScratch(submittedMessage, executorConfig);
+      await queueMessage(prompt, executorConfig, selectedSkills);
 
-    if (!owner.active || draftOwnerRef.current !== owner) return;
-    if (draftIdentityRef.current.sessionId !== submission.sessionId) return;
-    const currentMessage = localMessageRef.current;
-    if (
-      isSessionDraftSubmissionCurrent(
-        draftIdentityRef.current.sessionId,
-        currentMessage,
-        draftIdentityRef.current.revision,
-        submission
-      )
-    ) {
-      draftIdentityRef.current.revision += 1;
-      setLocalMessage('');
-      await clearDraft();
-    } else if (liveExecutorConfigRef.current.config) {
-      await saveToScratch(currentMessage, liveExecutorConfigRef.current.config);
-    }
-    setSelectedSkills([]);
-    clearUploadedAttachments();
-    reviewContext?.clearComments();
-  }, [
-    localMessage,
-    draftScope,
-    reviewMarkdown,
-    executorConfig,
-    selectedSkills,
-    queueMessage,
-    cancelDebouncedSave,
-    saveToScratch,
-    clearDraft,
-    setLocalMessage,
-    clearUploadedAttachments,
-    reviewContext,
-  ]);
+      if (!owner.active || draftOwnerRef.current !== owner) return;
+      if (draftIdentityRef.current.sessionId !== submission.sessionId) return;
+      const currentMessage = localMessageRef.current;
+      if (
+        isSessionDraftSubmissionCurrent(
+          draftIdentityRef.current.sessionId,
+          currentMessage,
+          draftIdentityRef.current.revision,
+          submission
+        )
+      ) {
+        draftIdentityRef.current.revision += 1;
+        localMessageRef.current = '';
+        setLocalMessage('');
+        composerEditorRef.current?.clear();
+        setSelectedSkills([]);
+        clearUploadedAttachments();
+        reviewContext?.clearComments();
+        void clearDraft().catch((error) => {
+          console.error('Failed to clear queued follow-up draft', error);
+        });
+      } else if (liveExecutorConfigRef.current.config) {
+        await saveToScratch(
+          currentMessage,
+          liveExecutorConfigRef.current.config
+        );
+      }
+    },
+    [
+      draftScope,
+      reviewMarkdown,
+      executorConfig,
+      selectedSkills,
+      queueMessage,
+      cancelDebouncedSave,
+      saveToScratch,
+      clearDraft,
+      setLocalMessage,
+      clearUploadedAttachments,
+      reviewContext,
+    ]
+  );
 
   // Editor change handler
   const handleEditorChange = useCallback(
@@ -867,23 +887,24 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   );
 
   // Handle feedback submission
-  const handleSubmitFeedback = useCallback(async () => {
-    if (!feedbackContext || !localMessage.trim()) return;
-    try {
-      await feedbackContext.submitFeedback(localMessage);
-      cancelDebouncedSave();
-      setLocalMessage('');
-      await clearDraft();
-    } catch {
-      // Error is handled in context
-    }
-  }, [
-    feedbackContext,
-    localMessage,
-    cancelDebouncedSave,
-    setLocalMessage,
-    clearDraft,
-  ]);
+  const handleSubmitFeedback = useCallback(
+    async (markdown?: string) => {
+      const submittedMessage =
+        markdown ??
+        composerEditorRef.current?.getMarkdown() ??
+        localMessageRef.current;
+      if (!feedbackContext || !submittedMessage.trim()) return;
+      try {
+        await feedbackContext.submitFeedback(submittedMessage);
+        cancelDebouncedSave();
+        setLocalMessage('');
+        await clearDraft();
+      } catch {
+        // Error is handled in context
+      }
+    },
+    [feedbackContext, cancelDebouncedSave, setLocalMessage, clearDraft]
+  );
 
   // Handle cancel feedback mode
   const handleCancelFeedback = useCallback(() => {
@@ -931,24 +952,34 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   });
 
   // Handle edit submission
-  const handleSubmitEdit = useCallback(async () => {
-    if (!editContext.activeEdit || !localMessage.trim() || !executorConfig)
-      return;
-    editRetryMutation.mutate({
-      message: localMessage,
+  const handleSubmitEdit = useCallback(
+    async (markdown?: string) => {
+      const submittedMessage =
+        markdown ??
+        composerEditorRef.current?.getMarkdown() ??
+        localMessageRef.current;
+      if (
+        !editContext.activeEdit ||
+        !submittedMessage.trim() ||
+        !executorConfig
+      )
+        return;
+      editRetryMutation.mutate({
+        message: submittedMessage,
+        executorConfig,
+        executionProcessId: editContext.activeEdit.processId,
+        branchStatus,
+        processes,
+      });
+    },
+    [
+      editContext.activeEdit,
       executorConfig,
-      executionProcessId: editContext.activeEdit.processId,
       branchStatus,
       processes,
-    });
-  }, [
-    editContext.activeEdit,
-    localMessage,
-    executorConfig,
-    branchStatus,
-    processes,
-    editRetryMutation,
-  ]);
+      editRetryMutation,
+    ]
+  );
 
   // Handle cancel edit mode
   const handleCancelEdit = useCallback(() => {
@@ -1066,33 +1097,32 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
 
   const hasMessageContent =
     localMessage.trim().length > 0 || reviewMarkdown.length > 0;
-  const runtimeActionPolicy = useMemo(
-    () =>
-      deriveRuntimeActionPolicy({
-        hasContent: hasMessageContent,
-        hasWorkspace: !!workspaceId,
-        hasSession: !!sessionId,
-        hasExecutor: !!executorConfig,
-        isNewSessionMode,
-        hasPriorAgentRun: (canonicalTimeline?.runs.length ?? 0) > 0,
-        isAgentRunActive,
-        isAgentRunCancelling,
-        isLatestAgentRunTerminal: canonicalTimeline?.isTerminal ?? false,
-        isStandaloneScriptActive,
-        canCancelAgentRun: canonicalAgentActionPolicy.cancel.allowed,
-        canResolveApproval: canonicalAgentActionPolicy.resolve_approval.allowed,
-        canSubmitInput: canonicalAgentActionPolicy.submit_input.allowed,
-        isSending,
-        isStopping,
-        isQueueLoading,
-        isQueued,
-        hasPendingApproval: false,
-        hasPendingQuestion: false,
-        isApprovalTimedOut: false,
-        isApprovalSubmitting: false,
-        isQuestionSubmitting: false,
-        providerPolicy,
-      }),
+  const runtimeActionInput = useMemo(
+    () => ({
+      hasContent: hasMessageContent,
+      hasWorkspace: !!workspaceId,
+      hasSession: !!sessionId,
+      hasExecutor: !!executorConfig,
+      isNewSessionMode,
+      hasPriorAgentRun: (canonicalTimeline?.runs.length ?? 0) > 0,
+      isAgentRunActive,
+      isAgentRunCancelling,
+      isLatestAgentRunTerminal: canonicalTimeline?.isTerminal ?? false,
+      isStandaloneScriptActive,
+      canCancelAgentRun: canonicalAgentActionPolicy.cancel.allowed,
+      canResolveApproval: canonicalAgentActionPolicy.resolve_approval.allowed,
+      canSubmitInput: canonicalAgentActionPolicy.submit_input.allowed,
+      isSending,
+      isStopping,
+      isQueueLoading,
+      isQueued,
+      hasPendingApproval: false,
+      hasPendingQuestion: false,
+      isApprovalTimedOut: false,
+      isApprovalSubmitting: false,
+      isQuestionSubmitting: false,
+      providerPolicy,
+    }),
     [
       hasMessageContent,
       workspaceId,
@@ -1113,6 +1143,18 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       isQueued,
       providerPolicy,
     ]
+  );
+  const runtimeActionPolicy = useMemo(
+    () => deriveRuntimeActionPolicy(runtimeActionInput),
+    [runtimeActionInput]
+  );
+  const getActionPolicy = useCallback(
+    (markdown: string) =>
+      deriveRuntimeActionPolicy({
+        ...runtimeActionInput,
+        hasContent: markdown.trim().length > 0 || reviewMarkdown.length > 0,
+      }),
+    [runtimeActionInput, reviewMarkdown]
   );
 
   const status = computeExecutionStatus({
@@ -1146,6 +1188,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     }: SessionChatBoxEditorRenderProps<BaseCodingAgent>) => (
       <WYSIWYGEditor
         key={focusKey}
+        ref={composerEditorRef}
         placeholder={placeholder}
         value={value}
         onChange={onChange}
@@ -1322,6 +1365,8 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       editor={{
         value: editorValue,
         onChange: handleEditorChange,
+        getValue: () =>
+          composerEditorRef.current?.getMarkdown() ?? localMessageRef.current,
       }}
       actions={{
         onSend: handleSend,
@@ -1331,6 +1376,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         onPasteFiles: attachmentGuard.uploadFiles,
       }}
       actionPolicy={runtimeActionPolicy}
+      getActionPolicy={getActionPolicy}
       isConfigLoading={isConfigLoading}
       session={{
         sessions,

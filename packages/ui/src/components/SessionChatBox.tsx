@@ -6,7 +6,7 @@ import {
   ClockIcon,
   XIcon,
   PlusIcon,
-  SpinnerIcon,
+  SquareIcon,
   ChatCircleIcon,
   DotsThreeIcon,
   TrashIcon,
@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from './Dropdown';
 import { PrimaryButton } from './PrimaryButton';
+import { ChatComposerActivity } from './ChatComposerActivity';
 import type { LocalAttachmentMetadata } from './WorkspaceContext';
 import { ToolbarDropdown, ToolbarIconButton } from './Toolbar';
 import { ContextUsageGauge, type ContextUsageInfo } from './ContextUsageGauge';
@@ -145,8 +146,8 @@ const INLINE_BLOCKED_HINT_EXCLUDED_REASONS = new Set([
 ]);
 
 interface ActionsProps {
-  onSend: () => void;
-  onQueue: () => void;
+  onSend: (markdown: string) => void;
+  onQueue: (markdown: string) => void;
   onCancelQueue: () => void;
   onStop: () => void;
   onPasteFiles: (files: File[]) => void;
@@ -198,7 +199,7 @@ interface StatsProps {
 
 interface FeedbackModeProps {
   isActive: boolean;
-  onSubmitFeedback: () => void;
+  onSubmitFeedback: (markdown: string) => void;
   onCancel: () => void;
   isSubmitting: boolean;
   error?: string | null;
@@ -207,7 +208,7 @@ interface FeedbackModeProps {
 
 interface EditModeProps {
   isActive: boolean;
-  onSubmitEdit: () => void;
+  onSubmitEdit: (markdown: string) => void;
   onCancel: () => void;
   isSubmitting: boolean;
 }
@@ -215,7 +216,7 @@ interface EditModeProps {
 interface ApprovalModeProps {
   isActive: boolean;
   onApprove: () => void;
-  onRequestChanges: () => void;
+  onRequestChanges: (markdown: string) => void;
   /** One-tap deny (reason optional). Used by the mobile approval footer. */
   onDeny: () => void;
   isSubmitting: boolean;
@@ -248,7 +249,7 @@ export interface SessionChatBoxEditorRenderProps<
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
-  onCmdEnter: () => void;
+  onCmdEnter: (markdown: string) => void;
   disabled: boolean;
   repoIds?: string[];
   executor: TExecutor | null;
@@ -264,6 +265,8 @@ interface SessionChatBoxProps<TExecutor extends string = string> {
   ) => ReactNode;
   actions: ActionsProps;
   actionPolicy?: SessionRuntimeActionPolicy;
+  /** Re-evaluate policy against the editor snapshot before a content action. */
+  getActionPolicy?: (markdown: string) => SessionRuntimeActionPolicy;
   isConfigLoading?: boolean;
   session: SessionProps<TExecutor>;
   stats?: StatsProps;
@@ -349,6 +352,7 @@ export function SessionChatBox<TExecutor extends string = string>({
   renderEditor,
   actions,
   actionPolicy,
+  getActionPolicy,
   isConfigLoading = false,
   session,
   stats,
@@ -437,10 +441,7 @@ export function SessionChatBox<TExecutor extends string = string>({
     fallbackDecision('cancel_queue', status === 'queued');
   const stopDecision =
     actionPolicy?.stop ??
-    fallbackDecision(
-      'stop',
-      status === 'running' || status === 'queued' || status === 'sending'
-    );
+    fallbackDecision('stop', status === 'running' || status === 'queued');
   const approveDecision =
     actionPolicy?.approve ??
     fallbackDecision(
@@ -475,6 +476,14 @@ export function SessionChatBox<TExecutor extends string = string>({
       : sendFollowUpDecision;
   const isQueued = status === 'queued';
   const isRunning = status === 'running' || status === 'queued';
+  const activityState =
+    isInFeedbackMode || isInEditMode || isInApprovalMode || isInAskQuestionMode
+      ? null
+      : status === 'sending' || status === 'stopping'
+        ? status
+        : isRunning
+          ? 'running'
+          : null;
   const areContentInsertActionsDisabled = isDisabled || isQueued;
   const sendActionLabel = t('conversation.actions.send');
   const queueActionLabel = t('conversation.actions.queue');
@@ -507,30 +516,51 @@ export function SessionChatBox<TExecutor extends string = string>({
             : t('conversation.composer.messagePlaceholder');
 
   // Cmd+Enter handler
-  const handleCmdEnter = () => {
+  const handleCmdEnter = (markdown: string) => {
+    const snapshotHasContent =
+      markdown.trim().length > 0 || (reviewComments?.count ?? 0) > 0;
+    const snapshotPolicy = getActionPolicy?.(markdown);
+    const canSubmitSnapshot =
+      snapshotHasContent && !isDisabled && status !== 'queue-loading';
+    const sendDecision = snapshotPolicy
+      ? isInitialSendMode ||
+        (snapshotPolicy.send_initial.allowed &&
+          !snapshotPolicy.send_follow_up.allowed)
+        ? snapshotPolicy.send_initial
+        : snapshotPolicy.send_follow_up
+      : normalSendDecision;
+    const queueDecision =
+      snapshotPolicy?.queue_follow_up ?? queueFollowUpDecision;
     // AskUserQuestion mode: Enter submits custom text as answer
-    if (isInAskQuestionMode && hasContent && answerQuestionDecision.allowed) {
-      askQuestionBannerRef.current?.submitCustomAnswer(editor.value);
+    if (
+      isInAskQuestionMode &&
+      snapshotHasContent &&
+      answerQuestionDecision.allowed
+    ) {
+      askQuestionBannerRef.current?.submitCustomAnswer(markdown);
       editor.onChange('');
       return;
     }
     // Approval mode: Cmd+Enter triggers approve or request changes based on input
     if (isInApprovalMode && !approvalMode?.isTimedOut) {
-      if (hasContent && requestChangesDecision.allowed) {
-        approvalMode?.onRequestChanges();
+      if (
+        snapshotHasContent &&
+        (snapshotPolicy?.request_changes ?? requestChangesDecision).allowed
+      ) {
+        approvalMode?.onRequestChanges(markdown);
       } else if (approveDecision.allowed) {
         approvalMode?.onApprove();
       }
       return;
     }
-    if (isInFeedbackMode && fallbackCanAct && !feedbackMode?.isTimedOut) {
-      feedbackMode?.onSubmitFeedback();
-    } else if (isInEditMode && fallbackCanAct) {
-      editMode?.onSubmitEdit();
-    } else if (status === 'running' && queueFollowUpDecision.allowed) {
-      actions.onQueue();
-    } else if (status === 'idle' && normalSendDecision.allowed) {
-      actions.onSend();
+    if (isInFeedbackMode && canSubmitSnapshot && !feedbackMode?.isTimedOut) {
+      feedbackMode?.onSubmitFeedback(markdown);
+    } else if (isInEditMode && canSubmitSnapshot) {
+      editMode?.onSubmitEdit(markdown);
+    } else if (status === 'running' && queueDecision.allowed) {
+      actions.onQueue(markdown);
+    } else if (status === 'idle' && sendDecision.allowed) {
+      actions.onSend(markdown);
     }
   };
 
@@ -590,7 +620,7 @@ export function SessionChatBox<TExecutor extends string = string>({
             value={t('conversation.actions.cancel')}
           />
           <PrimaryButton
-            onClick={feedbackMode?.onSubmitFeedback}
+            onClick={() => handleCmdEnter(editor.getValue?.() ?? editor.value)}
             disabled={!fallbackCanAct || feedbackMode?.isSubmitting}
             actionIcon={feedbackMode?.isSubmitting ? 'spinner' : undefined}
             value={t('conversation.actions.submitFeedback')}
@@ -609,7 +639,7 @@ export function SessionChatBox<TExecutor extends string = string>({
             value={t('conversation.actions.cancel')}
           />
           <PrimaryButton
-            onClick={editMode?.onSubmitEdit}
+            onClick={() => handleCmdEnter(editor.getValue?.() ?? editor.value)}
             disabled={!fallbackCanAct || editMode?.isSubmitting}
             actionIcon={editMode?.isSubmitting ? 'spinner' : undefined}
             value={t('conversation.retry')}
@@ -681,7 +711,9 @@ export function SessionChatBox<TExecutor extends string = string>({
           />
           {hasMessage ? (
             <PrimaryButton
-              onClick={approvalMode?.onRequestChanges}
+              onClick={() =>
+                handleCmdEnter(editor.getValue?.() ?? editor.value)
+              }
               disabled={!requestChangesDecision.allowed}
               actionIcon={approvalMode?.isSubmitting ? 'spinner' : undefined}
               value={requestChangesActionLabel}
@@ -731,7 +763,9 @@ export function SessionChatBox<TExecutor extends string = string>({
           {hasMessage && (
             <PrimaryButton
               onClick={() => {
-                askQuestionBannerRef.current?.submitCustomAnswer(editor.value);
+                askQuestionBannerRef.current?.submitCustomAnswer(
+                  editor.getValue?.() ?? editor.value
+                );
                 editor.onChange('');
               }}
               disabled={!answerQuestionDecision.allowed}
@@ -751,7 +785,7 @@ export function SessionChatBox<TExecutor extends string = string>({
       case 'idle':
         return (
           <PrimaryButton
-            onClick={actions.onSend}
+            onClick={() => handleCmdEnter(editor.getValue?.() ?? editor.value)}
             disabled={!normalSendDecision.allowed}
             value={sendActionLabel}
             {...getActionButtonA11yProps(sendActionLabel, normalSendDecision)}
@@ -761,12 +795,16 @@ export function SessionChatBox<TExecutor extends string = string>({
       case 'sending':
         return (
           <PrimaryButton
-            onClick={actions.onStop}
+            onClick={stopDecision.allowed ? actions.onStop : undefined}
             disabled={!stopDecision.allowed}
             className="disabled:bg-brand disabled:text-on-brand"
-            actionIcon="spinner"
-            value={t('conversation.actions.sending')}
-            {...getActionButtonA11yProps(stopActionLabel, stopDecision)}
+            actionIcon={stopDecision.allowed ? SquareIcon : undefined}
+            value={stopDecision.allowed ? stopActionLabel : sendActionLabel}
+            aria-label={
+              stopDecision.allowed
+                ? stopActionLabel
+                : t('conversation.actions.sending')
+            }
           />
         );
 
@@ -774,7 +812,9 @@ export function SessionChatBox<TExecutor extends string = string>({
         return (
           <>
             <PrimaryButton
-              onClick={actions.onQueue}
+              onClick={() =>
+                handleCmdEnter(editor.getValue?.() ?? editor.value)
+              }
               disabled={!queueFollowUpDecision.allowed}
               value={queueActionLabel}
               {...getActionButtonA11yProps(
@@ -787,7 +827,7 @@ export function SessionChatBox<TExecutor extends string = string>({
               disabled={!stopDecision.allowed}
               variant="secondary"
               value={stopActionLabel}
-              actionIcon="spinner"
+              actionIcon={SquareIcon}
               {...getActionButtonA11yProps(stopActionLabel, stopDecision)}
             />
           </>
@@ -811,7 +851,7 @@ export function SessionChatBox<TExecutor extends string = string>({
               disabled={!stopDecision.allowed}
               variant="secondary"
               value={stopActionLabel}
-              actionIcon="spinner"
+              actionIcon={SquareIcon}
               {...getActionButtonA11yProps(stopActionLabel, stopDecision)}
             />
           </>
@@ -821,9 +861,10 @@ export function SessionChatBox<TExecutor extends string = string>({
         return (
           <PrimaryButton
             disabled
-            value={t('conversation.actions.stopping')}
-            actionIcon="spinner"
+            value={stopActionLabel}
+            actionIcon={SquareIcon}
             {...getActionButtonA11yProps(stopActionLabel, stopDecision)}
+            aria-label={t('conversation.actions.stopping')}
           />
         );
       case 'queue-loading':
@@ -989,18 +1030,23 @@ export function SessionChatBox<TExecutor extends string = string>({
           )}
         </>
       }
-      headerRight={resumeSelector}
       status={
         <>
+          {activityState && (
+            <ChatComposerActivity
+              state={activityState}
+              label={
+                activityState === 'running'
+                  ? t('conversation.inProgress')
+                  : t(`conversation.actions.${activityState}`)
+              }
+              detail={isRunning ? inProgressTodo?.content : undefined}
+            />
+          )}
           {/* Existing session mode: show in-progress todo when running, otherwise file stats */}
           {!isInitialSendMode && (
             <>
-              {isRunning && inProgressTodo ? (
-                <span className="text-sm flex items-center gap-1 min-w-0">
-                  <SpinnerIcon className="size-icon-sm animate-spin flex-shrink-0" />
-                  <span className="truncate">{inProgressTodo.content}</span>
-                </span>
-              ) : (
+              {!(isRunning && inProgressTodo) && (
                 <>
                   {stats?.hasConflicts && (
                     <button
@@ -1103,6 +1149,11 @@ export function SessionChatBox<TExecutor extends string = string>({
             className="hidden"
             onChange={handleFileInputChange}
           />
+        </>
+      }
+      headerRight={
+        <>
+          {resumeSelector}
           {/* Navigation and session management stay away from model controls. */}
           {!isInitialSendMode && (
             <>
@@ -1286,7 +1337,11 @@ export function SessionChatBox<TExecutor extends string = string>({
           </span>
         )
       }
-      footerRight={renderActionButtons()}
+      footerRight={
+        <div className="flex min-h-8 w-[10.5rem] max-w-full flex-wrap items-center justify-end gap-half [&_button]:min-w-20 [&_button]:justify-center">
+          {renderActionButtons()}
+        </div>
+      }
     />
   );
 }

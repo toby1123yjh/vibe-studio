@@ -21,19 +21,24 @@ export function useCreateAttachments(
   const [attachments, setAttachments] = useState<DraftWorkspaceAttachment[]>(
     initialAttachments ?? []
   );
+  const attachmentsRef = useRef(attachments);
   const hasInitialized = useRef(false);
+  const publishAttachments = useCallback(
+    (next: DraftWorkspaceAttachment[]) => {
+      hasInitialized.current = true;
+      attachmentsRef.current = next;
+      setAttachments(next);
+      onAttachmentsChange?.(next);
+    },
+    [onAttachmentsChange]
+  );
 
   useEffect(() => {
     if (hasInitialized.current) return;
     if (initialAttachments && initialAttachments.length > 0) {
-      hasInitialized.current = true;
-      setAttachments(initialAttachments);
+      publishAttachments(initialAttachments);
     }
-  }, [initialAttachments]);
-
-  useEffect(() => {
-    onAttachmentsChange?.(attachments);
-  }, [attachments, onAttachmentsChange]);
+  }, [initialAttachments, publishAttachments]);
 
   const uploadFiles = useCallback(
     async (selectedFiles: File[]) => {
@@ -55,22 +60,33 @@ export function useCreateAttachments(
       }
 
       if (uploadResults.length > 0) {
-        setAttachments((prev) => [...prev, ...uploadResults]);
+        publishAttachments([...attachmentsRef.current, ...uploadResults]);
         const allMarkdown = uploadResults
           .map(buildWorkspaceAttachmentMarkdown)
           .join('\n\n');
         onInsertMarkdown(allMarkdown);
       }
     },
-    [onInsertMarkdown]
+    [onInsertMarkdown, publishAttachments]
   );
 
   const getAttachmentIds = useCallback(() => {
-    const ids = attachments.map((attachment) => attachment.id);
+    const ids = attachmentsRef.current.map((attachment) => attachment.id);
     return ids.length > 0 ? ids : null;
-  }, [attachments]);
+  }, []);
 
-  const clearAttachments = useCallback(() => setAttachments([]), []);
+  const clearAttachments = useCallback(
+    (submittedIds?: readonly string[]) => {
+      publishAttachments(
+        submittedIds
+          ? attachmentsRef.current.filter(
+              (attachment) => !submittedIds.includes(attachment.id)
+            )
+          : []
+      );
+    },
+    [publishAttachments]
+  );
 
   const localAttachments: LocalAttachmentMetadata[] = attachments.map(
     (attachment) =>

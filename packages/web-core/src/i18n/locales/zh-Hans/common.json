@@ -512,6 +512,13 @@
     }
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "参数",
+      "rawParameters": "原始参数",
+      "result": "结果",
+      "callId": "工具调用",
+      "locations": "文件与位置"
+    },
     "bodyWindow": "正在显示完整输出的一部分。",
     "showBeginning": "查看开头",
     "loadingContent": "正在加载内容…",
@@ -1716,6 +1723,24 @@
     "noCommands": "此智能体没有可用的命令。"
   },
   "kanban": {
+    "executionCount_other": "{{count}} 个执行",
+    "moreExecutions_other": "+{{count}} 个执行",
+    "executionActivityLabel": "执行活动",
+    "executionActivity": {
+      "running": "{{count}} 个运行中",
+      "waiting": "{{count}} 个等待处理",
+      "pending": "{{count}} 个排队中",
+      "failed": "{{count}} 个失败"
+    },
+    "executionStatus": {
+      "draft": "未开始",
+      "pending": "排队中",
+      "running": "运行中",
+      "waiting": "等待处理",
+      "succeeded": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
     "noVisibleStatuses": "所有状态已隐藏。请使用显示设置或切换到其他标签页查看任务。",
     "noProjectFound": "未找到项目",
     "unassigned": "未分配",

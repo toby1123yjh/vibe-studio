@@ -10,6 +10,8 @@ export default defineConfig({
     "workflow-visual.spec.ts",
     "workflow-conversation-tools.spec.ts",
     "workflow-instant-send.spec.ts",
+    "workflow-conversation-presentation.spec.ts",
+    "workspace-creation-handoff.spec.ts",
   ],
   testIgnore: [],
   outputDir: `${process.cwd()}/test-results/workflow-visual`,

@@ -9,13 +9,17 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CaretDownIcon, ListMagnifyingGlassIcon } from '@phosphor-icons/react';
-import type { ConversationBlock } from 'shared/types';
 import {
-  ToolStatusDot,
-  type ToolStatusLike,
-} from '@vibe/ui/components/ToolStatusDot';
-import { ActivityText } from '@vibe/ui/components/ActivityText';
+  FileTextIcon,
+  InfoIcon,
+  ListMagnifyingGlassIcon,
+} from '@phosphor-icons/react';
+import type { ConversationBlock } from 'shared/types';
+import type { ToolStatusLike } from '@vibe/ui/components/ToolStatusDot';
+import {
+  ChatDisclosure,
+  ChatDisclosureBody,
+} from '@vibe/ui/components/ChatDisclosure';
 import { ChatAssistantMessage } from '@vibe/ui/components/ChatAssistantMessage';
 import { ChatUserMessage } from '@vibe/ui/components/ChatUserMessage';
 import { ChatThinkingMessage } from '@vibe/ui/components/ChatThinkingMessage';
@@ -29,6 +33,7 @@ import { agentConversationApi } from '@/shared/lib/agentConversationApi';
 import {
   useAgentConversationStore,
   useConversationBlock,
+  type AgentRunSessionContextValue,
 } from '@/features/agent-runtime/model/AgentRunSessionContext';
 import { isCanonicalRunActive } from '@/features/agent-runtime/model/canonicalAgentSessionTimeline';
 import { segmentStreamingMarkdown } from '@/features/agent-runtime/model/streamingMarkdown';
@@ -276,7 +281,7 @@ function BlockBody({
           sessionId={store?.sessionId}
         />
       ) : content ? (
-        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-secondary p-base font-ibm-plex-mono text-sm">
+        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-[var(--vk-radius-sm)] bg-secondary p-base font-ibm-plex-mono text-base leading-relaxed">
           {content}
         </pre>
       ) : null}
@@ -341,26 +346,74 @@ function displayToolStatus(
   }
 }
 
+/** Block animation and approvals belong to the current canonical attempt.
+ * A terminal Run can leave unfinished blocks, which remain inspectable without
+ * continuing their activity animation or inventing a successful result.
+ */
+function isBlockActive(
+  block: ConversationBlock,
+  snapshot:
+    | Pick<AgentRunSessionContextValue, 'timeline' | 'pendingInteractions'>
+    | undefined
+): boolean {
+  const run = snapshot?.timeline?.runs.find(
+    (item) => item.summary.agent_run_id === block.agent_run_id
+  )?.summary.state;
+  if (
+    block.finished ||
+    !isCanonicalRunActive(run) ||
+    (run?.last_run_attempt_id &&
+      run.last_run_attempt_id !== block.run_attempt_id)
+  ) {
+    return false;
+  }
+  if (block.kind !== 'tool') return true;
+  if (block.fields.status === 'waiting_approval') {
+    return Boolean(
+      run?.status === 'awaiting_approval' &&
+        snapshot?.pendingInteractions.some(
+          (request) =>
+            request.run_attempt_id === block.run_attempt_id &&
+            request.fields.interaction?.tool_call_id != null &&
+            request.fields.interaction.tool_call_id ===
+              block.fields.tool_call_id &&
+            ['pending', 'delivering', 'delivered', 'delivery_unknown'].includes(
+              request.fields.interaction.status
+            )
+        )
+    );
+  }
+  return (
+    block.fields.status == null ||
+    ['created', 'running'].includes(block.fields.status)
+  );
+}
+
 export const ConversationBlockEntry = memo(function ConversationBlockEntry({
   blockId,
   workspaceId,
+  nested = false,
 }: {
   blockId: string;
   workspaceId?: string;
+  nested?: boolean;
 }) {
   const { t } = useTranslation('common');
   const block = useConversationBlock(blockId);
   const store = useAgentConversationStore();
   const scope = `${store?.hostId ?? 'local'}:${store?.sessionId ?? ''}:${blockId}`;
   const [expanded, toggle] = usePersistedExpanded(`entry:${scope}`, false);
-  const [hovered, setHovered] = useState(false);
+  const contentId = useId();
+  const subscribe = useCallback(
+    (listener: () => void) => store?.subscribe(listener) ?? (() => {}),
+    [store]
+  );
+  const getActive = useCallback(
+    () => Boolean(block && isBlockActive(block, store?.getSnapshot())),
+    [block, store]
+  );
+  const active = useSyncExternalStore(subscribe, getActive, getActive);
   if (!block) return null;
-  const run = store
-    ?.getSnapshot()
-    .timeline?.runs.find(
-      (item) => item.summary.agent_run_id === block.agent_run_id
-    );
-  const active = !block.finished && isCanonicalRunActive(run?.summary.state);
   const body = (
     <BlockBody
       key={`${blockId}:text`}
@@ -394,31 +447,21 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
       break;
     case 'reasoning':
       content = (
-        <div>
-          <button
-            type="button"
-            onClick={() => toggle()}
-            aria-expanded={expanded}
-            className="flex w-full items-center gap-2 rounded py-1 text-left text-sm text-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-          >
-            <span className="min-w-0 flex-1">
-              {fields.reasoning_source === 'summary'
-                ? t('conversation.reasoningSummary', {
-                    defaultValue: 'Thinking summary',
-                  })
-                : t('conversation.thinking')}
-            </span>
-            <span aria-hidden>{expanded ? '−' : '+'}</span>
-          </button>
-          {expanded && (
-            <ChatThinkingMessage
-              content={fields.text ?? ''}
-              active={active}
-              workspaceId={workspaceId}
-              renderMarkdown={() => body}
-            />
-          )}
-        </div>
+        <ChatThinkingMessage
+          content={fields.text ?? ''}
+          label={
+            fields.reasoning_source === 'summary'
+              ? t('conversation.reasoningSummary', {
+                  defaultValue: 'Thinking summary',
+                })
+              : t('conversation.thinking')
+          }
+          active={active}
+          expanded={expanded}
+          onToggle={() => toggle()}
+          workspaceId={workspaceId}
+          renderMarkdown={() => body}
+        />
       );
       break;
     case 'tool': {
@@ -438,17 +481,19 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
         <div>
           <ChatToolSummary
             summary={name}
+            detail={
+              fields.locations?.[0]?.path
+                ? formatPathForDisplay(fields.locations[0].path)
+                : undefined
+            }
             toolName={name}
             actionType={fields.tool_kind ?? undefined}
             status={displayToolStatus(block, active)}
             active={active}
             expanded={expanded}
-            isTruncated
-            onToggle={() => toggle()}
-          />
-          {(unconfirmed || status === 'cancelled' || status === 'approved') && (
-            <p className="ml-6 text-xs text-low">
-              {unconfirmed
+            controlsId={contentId}
+            statusLabel={
+              unconfirmed
                 ? t('conversation.toolResultUnconfirmed', {
                     defaultValue: 'Result not confirmed',
                   })
@@ -456,36 +501,74 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
                   ? t('conversation.toolAllowed', {
                       defaultValue: 'Allowed to run',
                     })
-                  : t('agentWorkbench.timeline.cancelled', {
-                      defaultValue: 'Cancelled',
-                    })}
-            </p>
-          )}
+                  : status === 'cancelled'
+                    ? t('agentWorkbench.timeline.cancelled', {
+                        defaultValue: 'Cancelled',
+                      })
+                    : status === 'waiting_approval' && active
+                      ? t('conversation.permissionRequest')
+                      : ['failed', 'denied', 'timed_out'].includes(status ?? '')
+                        ? t('conversation.toolGroupFailed', {
+                            defaultValue: 'Tool error',
+                          })
+                        : undefined
+            }
+            isTruncated
+            onToggle={() => toggle()}
+          />
           {expanded && (
-            <div className="ml-6 mt-2 space-y-3 border-l border-border pl-3">
+            <ChatDisclosureBody id={contentId}>
               {fields.tool_call_id && (
-                <p className="break-all font-ibm-plex-mono text-xs text-low">
-                  {fields.tool_call_id}
-                </p>
+                <div>
+                  <p className="mb-half text-sm font-medium text-normal">
+                    {t('conversation.toolDetails.callId', {
+                      defaultValue: 'Tool call',
+                    })}
+                  </p>
+                  <p className="break-all font-ibm-plex-mono text-sm text-low">
+                    {fields.tool_call_id}
+                  </p>
+                </div>
               )}
-              {fields.locations?.map((location) => (
-                <p
-                  key={`${location.path}:${location.line ?? ''}`}
-                  className="break-all font-ibm-plex-mono text-sm text-low"
-                >
-                  {formatPathForDisplay(location.path)}
-                  {location.line ? `:${location.line}` : ''}
-                </p>
-              ))}
+              {!!fields.locations?.length && (
+                <div>
+                  <p className="mb-half text-sm font-medium text-normal">
+                    {t('conversation.toolDetails.locations', {
+                      defaultValue: 'Files and locations',
+                    })}
+                  </p>
+                  {fields.locations.map((location) => (
+                    <p
+                      key={`${location.path}:${location.line ?? ''}`}
+                      className="break-all font-ibm-plex-mono text-base text-low"
+                    >
+                      {formatPathForDisplay(location.path)}
+                      {location.line ? `:${location.line}` : ''}
+                    </p>
+                  ))}
+                </div>
+              )}
               {(fields.arguments != null ||
                 block.bodies.some((item) => item.field === 'arguments')) && (
-                <BlockBody block={block} field="arguments" />
+                <div>
+                  <p className="mb-half text-sm font-medium text-normal">
+                    {t('conversation.toolDetails.parameters', {
+                      defaultValue: 'Parameters',
+                    })}
+                  </p>
+                  <BlockBody block={block} field="arguments" />
+                </div>
               )}
               {(fields.raw_arguments ||
                 block.bodies.some(
                   (item) => item.field === 'raw_arguments'
                 )) && (
                 <div>
+                  <p className="mb-half text-sm font-medium text-normal">
+                    {t('conversation.toolDetails.rawParameters', {
+                      defaultValue: 'Original parameters',
+                    })}
+                  </p>
                   {active && fields.arguments == null && (
                     <p className="mb-1 text-xs text-low">
                       {t('conversation.receivingArguments', {
@@ -498,11 +581,27 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
               )}
               {(fields.result != null ||
                 block.bodies.some((item) => item.field === 'result')) && (
-                <BlockBody block={block} field="result" />
+                <div>
+                  <p className="mb-half text-sm font-medium text-normal">
+                    {t('conversation.toolDetails.result', {
+                      defaultValue: 'Result',
+                    })}
+                  </p>
+                  <BlockBody block={block} field="result" />
+                </div>
               )}
               {(fields.output_text ||
                 block.bodies.some((item) => item.field === 'output_text')) && (
-                <BlockBody block={block} field="output_text" active={active} />
+                <div>
+                  <p className="mb-half text-sm font-medium text-normal">
+                    {t('conversation.output', { defaultValue: 'Output' })}
+                  </p>
+                  <BlockBody
+                    block={block}
+                    field="output_text"
+                    active={active}
+                  />
+                </div>
               )}
               {fields.text && <BlockBody block={block} field="text" />}
               {block.parent_block_id && (
@@ -513,7 +612,7 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
                   })}
                 </p>
               )}
-            </div>
+            </ChatDisclosureBody>
           )}
         </div>
       );
@@ -588,19 +687,15 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
         (summary !== fields.text ||
           block.bodies.some((reference) => reference.field === 'text'));
       content = collapsible ? (
-        <div>
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() => toggle()}
-            title={summary}
-            className="flex w-full items-center gap-2 rounded py-1 text-left text-sm text-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-          >
-            <span className="min-w-0 flex-1 truncate">{summary}</span>
-            <span aria-hidden>{expanded ? '−' : '+'}</span>
-          </button>
+        <ChatDisclosure
+          icon={<InfoIcon className="size-icon-base" />}
+          label={summary}
+          ariaLabel={summary}
+          expanded={expanded}
+          onToggle={() => toggle()}
+        >
           {expanded && body}
-        </div>
+        </ChatDisclosure>
       ) : (
         <div
           className={
@@ -615,44 +710,39 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
     case 'resource':
     case 'extension':
       content = (
-        <div>
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-            onClick={() => toggle()}
-            className="flex w-full items-center gap-2 rounded py-1 text-left text-sm text-low focus-visible:ring-2 focus-visible:ring-brand"
-          >
-            <span className="min-w-0 flex-1 truncate">
-              {fields.text ||
-                t(
-                  block.kind === 'resource'
-                    ? 'conversation.resourceDetails'
-                    : 'conversation.providerDetails',
-                  {
-                    defaultValue:
-                      block.kind === 'resource'
-                        ? 'Resource details'
-                        : 'Agent event details',
-                  }
-                )}
-            </span>
-            <span aria-hidden>{expanded ? '−' : hovered ? '+' : '·'}</span>
-          </button>
-          {expanded && (
-            <BlockBody
-              block={block}
-              field={block.kind === 'resource' ? 'resource' : 'extension'}
-            />
+        <ChatDisclosure
+          icon={<FileTextIcon className="size-icon-base" />}
+          label={t(
+            block.kind === 'resource'
+              ? 'conversation.resourceDetails'
+              : 'conversation.providerDetails',
+            {
+              defaultValue:
+                block.kind === 'resource'
+                  ? 'Resource details'
+                  : 'Agent event details',
+            }
           )}
-        </div>
+          summary={fields.text?.split(/\r?\n/, 1)[0]}
+          expanded={expanded}
+          onToggle={() => toggle()}
+        >
+          {expanded && (
+            <>
+              {fields.text && body}
+              <BlockBody
+                block={block}
+                field={block.kind === 'resource' ? 'resource' : 'extension'}
+              />
+            </>
+          )}
+        </ChatDisclosure>
       );
       break;
   }
   return (
     <div
-      className="min-w-0 px-double py-2"
+      className={nested ? 'min-w-0 py-half' : 'min-w-0 px-double py-2'}
       data-conversation-block={blockId}
       data-block-revision={block.revision}
     >
@@ -670,7 +760,6 @@ export function ConversationBlockGroup({
 }) {
   const { t } = useTranslation('common');
   const store = useAgentConversationStore();
-  const contentId = useId();
   const subscribe = useCallback(
     (listener: () => void) => {
       const unsubscribers = [
@@ -686,48 +775,12 @@ export function ConversationBlockGroup({
     const tools = ids.flatMap((id) => {
       const block = store?.getBlock(id);
       if (!block) return [];
-      const run = snapshot?.timeline?.runs.find(
-        (item) => item.summary.agent_run_id === block.agent_run_id
-      )?.summary.state;
-      const pending =
-        block.fields.status == null ||
-        ['created', 'running', 'waiting_approval'].includes(
-          block.fields.status
-        );
-      const currentAttempt =
-        !run?.last_run_attempt_id ||
-        run.last_run_attempt_id === block.run_attempt_id;
-      const pendingInCurrentRun =
-        pending &&
-        !block.finished &&
-        currentAttempt &&
-        isCanonicalRunActive(run);
-      const awaitingApproval =
-        pendingInCurrentRun &&
-        block.fields.status === 'waiting_approval' &&
-        run?.status === 'awaiting_approval' &&
-        snapshot?.pendingInteractions.some(
-          (request) =>
-            request.run_attempt_id === block.run_attempt_id &&
-            request.fields.interaction?.tool_call_id != null &&
-            request.fields.interaction.tool_call_id ===
-              block.fields.tool_call_id &&
-            ['pending', 'delivering', 'delivered', 'delivery_unknown'].includes(
-              request.fields.interaction.status
-            )
-        );
-      const active = Boolean(
-        pendingInCurrentRun &&
-          (block.fields.status !== 'waiting_approval' || awaitingApproval)
-      );
+      const active = isBlockActive(block, snapshot);
       return [
         {
           block,
           active,
-          status:
-            block.fields.status === 'waiting_approval' && !awaitingApproval
-              ? 'unconfirmed'
-              : displayToolStatus(block, active).status,
+          status: displayToolStatus(block, active).status,
         },
       ];
     });
@@ -740,8 +793,8 @@ export function ConversationBlockGroup({
     const selected = approval ?? running ?? failed ?? latest[0];
     const status =
       approval?.status ??
-      failed?.status ??
       running?.status ??
+      failed?.status ??
       selected?.status ??
       'success';
     // Only display metadata participates in this scalar snapshot. Streamed
@@ -753,6 +806,7 @@ export function ConversationBlockGroup({
       selected?.block.fields.locations?.[0]?.path ?? '',
       status,
       Boolean(running),
+      Boolean(failed),
     ]);
   }, [store, ids]);
   const summarySnapshot = useSyncExternalStore(
@@ -760,19 +814,16 @@ export function ConversationBlockGroup({
     getSummary,
     getSummary
   );
-  const [name, location, status, active] = JSON.parse(summarySnapshot) as [
-    string,
-    string,
-    string,
-    boolean,
-  ];
+  const [name, location, status, active, hasFailure] = JSON.parse(
+    summarySnapshot
+  ) as [string, string, string, boolean, boolean];
   const summary = [name, location && formatPathForDisplay(location)]
     .filter(Boolean)
     .join(' · ');
   const statusLabel =
     status === 'pending_approval'
       ? t('conversation.permissionRequest')
-      : ['failed', 'denied', 'timed_out'].includes(status)
+      : hasFailure
         ? t('conversation.toolGroupFailed', { defaultValue: 'Tool error' })
         : status === 'cancelled'
           ? t('agentWorkbench.timeline.cancelled', {
@@ -787,55 +838,42 @@ export function ConversationBlockGroup({
   );
   return (
     <div className="min-w-0 px-double py-1">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        aria-controls={contentId}
-        onClick={() => toggle()}
-        className="flex w-full min-w-0 items-center gap-2 rounded py-1 text-left text-sm text-low transition-colors hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transition-none"
-      >
-        <span className="relative inline-flex size-icon-base shrink-0 items-center justify-center">
-          <ListMagnifyingGlassIcon className="size-icon-base" />
-          {status !== 'success' && (
-            <span className="pointer-events-none absolute -bottom-0.5 -left-0.5 inline-flex">
-              <ToolStatusDot status={{ status }} active={active} />
+      <ChatDisclosure
+        icon={<ListMagnifyingGlassIcon className="size-icon-base" />}
+        label={t('conversation.toolGroupLabel', {
+          defaultValue: 'Tool activity',
+        })}
+        summary={summary}
+        active={active}
+        status={{ status }}
+        statusLabel={
+          statusLabel ? (
+            <span className={hasFailure ? 'text-error' : undefined}>
+              {statusLabel}
             </span>
-          )}
-        </span>
-        <span className="shrink-0">
-          {t('conversation.toolGroupLabel', {
-            defaultValue: 'Tool activity',
-          })}
-        </span>
-        <ActivityText
-          active={active}
-          title={summary}
-          className="min-w-0 flex-1 truncate"
-        >
-          {summary}
-        </ActivityText>
-        {statusLabel && <span className="shrink-0 text-xs">{statusLabel}</span>}
-        {active && (
-          <span className="sr-only">
-            {t('conversation.toolGroupRunning', { defaultValue: 'Running' })}
-          </span>
-        )}
-        <CaretDownIcon
-          aria-hidden
-          className={`size-icon-sm shrink-0 transition-transform duration-150 motion-reduce:transition-none${expanded ? '' : ' -rotate-90'}`}
-        />
-      </button>
-      {expanded && (
-        <div id={contentId} className="mt-1 border-l border-border">
-          {ids.map((id) => (
+          ) : undefined
+        }
+        expanded={expanded}
+        onToggle={() => toggle()}
+        bodyClassName="space-y-half"
+        trailing={
+          active && (
+            <span className="sr-only">
+              {t('conversation.toolGroupRunning', { defaultValue: 'Running' })}
+            </span>
+          )
+        }
+      >
+        {expanded &&
+          ids.map((id) => (
             <ConversationBlockEntry
               key={id}
               blockId={id}
               workspaceId={workspaceId}
+              nested
             />
           ))}
-        </div>
-      )}
+      </ChatDisclosure>
     </div>
   );
 }

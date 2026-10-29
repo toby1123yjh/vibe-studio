@@ -329,6 +329,13 @@
     }
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "參數",
+      "rawParameters": "原始參數",
+      "result": "結果",
+      "callId": "工具呼叫",
+      "locations": "檔案與位置"
+    },
     "bodyWindow": "正在顯示完整輸出的一部分。",
     "showBeginning": "查看開頭",
     "loadingContent": "正在載入內容…",

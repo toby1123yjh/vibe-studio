@@ -1,6 +1,12 @@
-import React, { useSyncExternalStore } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useSyncExternalStore,
+} from 'react';
 import type { ComponentProps } from 'react';
 import type { CreateChatBox as RealCreateChatBox } from '@vibe/ui/components/CreateChatBox';
+import type { Scratch, UpdateScratch } from 'shared/types';
 
 const params = new URLSearchParams(location.search);
 const repo = {
@@ -27,6 +33,7 @@ export function useFixture() {
 type ChatProps = ComponentProps<typeof RealCreateChatBox>;
 type Submission = { data: Record<string, unknown>; linkToTask?: unknown };
 interface FixtureState {
+  composerVisible: boolean;
   repos: (typeof repo)[];
   targetBranches: Record<string, string>;
   directFolderPath: string;
@@ -45,6 +52,7 @@ export const fixture = {
   targetDeferred: false,
   resolveTarget: () => {},
   state: {
+    composerVisible: true,
     repos: params.has('repo') ? [repo] : [],
     targetBranches: { 'repo-1': 'main' } as Record<string, string>,
     directFolderPath: params.get('path') ?? '',
@@ -73,11 +81,61 @@ export const fixture = {
     notify();
   },
   sendTwice() {
-    void this.chat?.onSend();
-    void this.chat?.onSend();
+    void this.chat?.onSend(this.state.message);
+    void this.chat?.onSend(this.state.message);
   },
 };
 Object.assign(window, { managedFixture: fixture });
+
+const drafts = new Map<string, Scratch>();
+export const draftTransport = {
+  writes: [] as { scope: string; method: 'PUT' | 'DELETE'; message?: string }[],
+  pending: [] as (() => void)[],
+  release() {
+    this.pending.shift()?.();
+  },
+};
+Object.assign(window, { draftTransport });
+export function useScratch(_type: unknown, id: string) {
+  useFixture();
+  const scope = `${fixture.state.hostId}:${id}`;
+  const updateScratch = useCallback(
+    async (update: UpdateScratch) => {
+      draftTransport.writes.push({
+        scope,
+        method: 'PUT',
+        message:
+          update.payload.type === 'DRAFT_WORKSPACE'
+            ? update.payload.data.message
+            : undefined,
+      });
+      await new Promise<void>((resolve) => {
+        draftTransport.pending.push(resolve);
+      });
+      drafts.set(scope, { payload: update.payload } as Scratch);
+      notify();
+    },
+    [scope]
+  );
+  const deleteScratch = useCallback(async () => {
+    draftTransport.writes.push({ scope, method: 'DELETE' });
+    drafts.delete(scope);
+    notify();
+  }, [scope]);
+  return {
+    scratch: drafts.get(scope) ?? null,
+    isLoading: false,
+    updateScratch,
+    deleteScratch,
+  };
+}
+const emptyRepos: never[] = [];
+export const useWorkspaceCreateDefaults = () => ({
+  preferredRepos: emptyRepos,
+  preferredExecutorConfig: null,
+  hasResolvedPreferredRepos: true,
+});
+export const useShape = () => ({ data: emptyRepos });
 const actions = {
   addRepo(value: typeof repo) {
     fixture.state.repos = [...fixture.state.repos, value];
@@ -145,7 +203,13 @@ const mutation = {
       throw fixture.error;
     }
     notify();
-    return { workspace: { id: `workspace-${fixture.submissions.length}` } };
+    return {
+      workspace: { id: `workspace-${fixture.submissions.length}` },
+      agentRun: {
+        agent_run_id: `run-${fixture.submissions.length}`,
+        state: { session_id: `session-${fixture.submissions.length}` },
+      },
+    };
   },
 };
 export function useCreateWorkspace() {
@@ -183,6 +247,7 @@ export const saveProjectWorkspaceDefault = async (...args: unknown[]) => {
   fixture.savedDefaults.push(args);
   savedWorkspace = args[1];
 };
+export const getValidProjectWorkspaceDefault = async () => null;
 let savedWorkspace: unknown = undefined;
 export const getProjectWorkspaceDefaultOrThrow = async () => {
   if (fixture.targetDeferred)
@@ -234,9 +299,21 @@ export const getAgentName = (agent: string) => agent;
 export const ModelSelectorContainer = () => null;
 export const AgentSessionResumePicker = () => null;
 export const AgentSessionResumeChip = () => null;
-export default function Editor() {
-  return null;
-}
+const Editor = forwardRef(function Editor(
+  { value, disabled }: { value: string; disabled?: boolean },
+  ref
+) {
+  useImperativeHandle(
+    ref,
+    () => ({
+      getMarkdown: () => value,
+      clear() {},
+    }),
+    [value]
+  );
+  return disabled ? <span>{value}</span> : null;
+});
+export default Editor;
 // Deliberately thin view: real production container owns all target selection,
 // initial-default hydration, request construction and asynchronous guards.
 export function CreateChatBox(props: ChatProps) {
@@ -250,7 +327,7 @@ export function CreateChatBox(props: ChatProps) {
       />
       <button
         disabled={props.disabled || props.isSending || props.sendDisabled}
-        onClick={() => void props.onSend()}
+        onClick={() => void props.onSend(props.editor.value)}
       >
         Send
       </button>

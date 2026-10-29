@@ -4,6 +4,12 @@ const preview = (page: Page) => page.getByTestId("session-composer-preview");
 const message = (page: Page) =>
   preview(page).getByRole("textbox", { name: "Message", exact: true });
 
+test.beforeEach(({ page }) => {
+  page.on("pageerror", (error) => {
+    throw error;
+  });
+});
+
 async function openComposer(page: Page, query = "") {
   await page.goto(
     `/?signedOut=true&selectors=true&composerPreview=true&sessionComposer=true${query}`,
@@ -64,7 +70,7 @@ async function expectContainedActions(page: Page) {
   expect(measurements.scrollButtonGap).toBeGreaterThanOrEqual(7.5);
 }
 
-test("composer separates settings, text and actions and keeps the same draft across widths", async ({
+test("composer puts text before its compact controls and keeps the same draft across widths", async ({
   page,
 }) => {
   await openComposer(page);
@@ -98,7 +104,7 @@ test("composer separates settings, text and actions and keeps the same draft acr
     const input = element
       .querySelector('[data-composer-message="true"]')!
       .getBoundingClientRect();
-    return config.bottom <= input.top;
+    return input.bottom <= config.top;
   });
   expect(order).toBe(true);
   await expect(
@@ -149,8 +155,15 @@ test("sending, running, queued and approval controls remain reachable without re
   await page
     .getByRole("spinbutton", { name: "Composer width", exact: true })
     .fill("480");
+  await page
+    .getByRole("combobox", { name: "Runtime state", exact: true })
+    .selectOption("sending");
+  await expectContainedActions(page);
+  await expect(
+    preview(page).getByRole("button", { name: "Sending", exact: true }),
+  ).toBeDisabled();
+  await expect(message(page)).toBeEditable();
   for (const [state, action, result] of [
-    ["sending", "Stop", "stop"],
     ["running", "Queue", "queue"],
     ["queued", "Cancel Queue", "cancel-queue"],
   ] as const) {
@@ -178,6 +191,271 @@ test("sending, running, queued and approval controls remain reachable without re
   await expect(page.getByTestId("composer-action")).toHaveText(
     "request-changes",
   );
+});
+
+test("send feedback stays visible through request, run and stop without replacing the editor", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await openComposer(page, "&clearOnSend=true&pendingSend=true");
+  await message(page).fill("Show immediate feedback");
+  const editor = await message(page).elementHandle();
+  await message(page).press("Enter");
+  const activity = preview(page).locator("[data-composer-activity]");
+  await expect(activity).toBeVisible();
+  await expect(activity).toHaveText("Sending");
+  await expect(
+    preview(page).getByRole("button", { name: "Sending", exact: true }),
+  ).toBeDisabled();
+  await expect(message(page)).toBeEmpty();
+  await expect(message(page)).toBeFocused();
+  await message(page).fill("Prepare the next message");
+
+  const state = page.getByRole("combobox", {
+    name: "Runtime state",
+    exact: true,
+  });
+  for (const width of [480, 900]) {
+    await page
+      .getByRole("spinbutton", { name: "Composer width", exact: true })
+      .fill(String(width));
+    for (const mode of ["sending", "running", "queued"]) {
+      await state.selectOption(mode);
+      await expect(activity).toHaveCount(1);
+      await expect(activity).toBeVisible();
+      await expect(activity).toHaveAttribute(
+        "data-composer-activity",
+        mode === "sending" ? "sending" : "running",
+      );
+      await expect(activity).toHaveText(
+        mode === "sending" ? "Sending" : "in progress",
+      );
+      await expectContainedActions(page);
+      const indicator = activity.locator("svg");
+      await expect
+        .poll(() =>
+          indicator.evaluate((element) =>
+            element.getAnimations().some((animation) => {
+              const timing = animation.effect!.getTiming();
+              return (
+                animation.playState === "running" &&
+                timing.iterations === Infinity
+              );
+            }),
+          ),
+        )
+        .toBe(true);
+      const startedAt = await indicator.evaluate(
+        (element) => element.getAnimations()[0].currentTime as number,
+      );
+      await expect
+        .poll(() =>
+          indicator.evaluate(
+            (element) => element.getAnimations()[0].currentTime as number,
+          ),
+        )
+        .toBeGreaterThan(startedAt);
+      expect(
+        await message(page).evaluate(
+          (element, original) => element === original,
+          editor,
+        ),
+      ).toBe(true);
+      await expect(message(page)).toHaveText("Prepare the next message");
+      await expect(
+        preview(page).locator(
+          "[data-composer-primary-actions] [role='status']",
+        ),
+      ).toHaveCount(0);
+      if (mode === "sending" || mode === "running") {
+        await preview(page).screenshot({
+          path: testInfo.outputPath(`composer-${mode}-${width}.png`),
+          animations: "disabled",
+        });
+      }
+    }
+  }
+  await preview(page)
+    .getByRole("button", { name: "Stop", exact: true })
+    .click();
+  await expect(page.getByTestId("composer-action")).toHaveText("stop");
+  await state.selectOption("stopping");
+  await expect(activity).toHaveAttribute("data-composer-activity", "stopping");
+  await expect(activity).toHaveText("Stopping");
+  await expect(
+    preview(page).getByRole("button", { name: "Stopping", exact: true }),
+  ).toBeDisabled();
+  for (const mode of ["approval", "idle"]) {
+    await state.selectOption(mode);
+    await expect(activity).toHaveCount(0);
+  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const mode of ["sending", "running"]) {
+    await state.selectOption(mode);
+    await expect(activity).toBeVisible();
+    await expect(
+      preview(page).getByRole("button", {
+        name: mode === "sending" ? "Sending" : "Stop",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      await activity
+        .locator("svg")
+        .evaluateAll((elements) =>
+          elements.every(
+            (element) => getComputedStyle(element).animationName === "none",
+          ),
+        ),
+    ).toBe(true);
+  }
+});
+
+test("new session creation uses the same ongoing send feedback", async ({
+  page,
+}) => {
+  await page.goto("/?signedOut=true&selectors=true&composerPreview=true");
+  const box = page.getByTestId("composer-preview");
+  await box
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Start a session");
+  await box.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(box.locator("[data-composer-activity='sending']")).toHaveText(
+    "Sending",
+  );
+  await expect(
+    box.getByRole("button", { name: "Creating...", exact: true }),
+  ).toBeDisabled();
+});
+
+test("Enter and click send the latest editor snapshot without waiting for React draft state", async ({
+  page,
+}) => {
+  await openComposer(page);
+  await message(page).fill("Last character");
+  await message(page).evaluate((element) => {
+    element.focus();
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(element);
+    selection.collapseToEnd();
+    document.execCommand("insertText", false, "!");
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyCode: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect(page.getByTestId("composer-submitted")).toHaveText(
+    "Last character!",
+  );
+  await expect(page.getByTestId("composer-submit-count")).toHaveText("1");
+
+  await message(page).evaluate((element) => {
+    element.focus();
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(element);
+    selection.collapseToEnd();
+    document.execCommand("insertText", false, "?");
+    element
+      .closest('[data-chatbox-container="true"]')!
+      .querySelector<HTMLButtonElement>('button[aria-label="Send"]')!
+      .click();
+  });
+  await expect(page.getByTestId("composer-submitted")).toHaveText(
+    "Last character!?",
+  );
+  await expect(page.getByTestId("composer-submit-count")).toHaveText("2");
+});
+
+test("IME candidate confirmation, Shift Enter and repeated Enter do not submit", async ({
+  page,
+}) => {
+  await openComposer(page);
+  await message(page).fill("你好");
+  await message(page).evaluate((element) => {
+    element.focus();
+    element.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyCode: 229,
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    element.dispatchEvent(
+      new CompositionEvent("compositionend", { bubbles: true, data: "好" }),
+    );
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyCode: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect(page.getByTestId("composer-submit-count")).toHaveText("0");
+  // Allow the candidate-confirming Enter guard to expire before a new key press.
+  await page.waitForTimeout(20);
+  await message(page).press("Shift+Enter");
+  await expect(page.getByTestId("composer-submit-count")).toHaveText("0");
+  await message(page).evaluate((element) => {
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyCode: 13,
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect(page.getByTestId("composer-submit-count")).toHaveText("0");
+  await message(page).press("Enter");
+  await expect(page.getByTestId("composer-submit-count")).toHaveText("1");
+  await expect(page.getByTestId("composer-submitted")).toContainText("你好");
+});
+
+test("submitting the final editor update clears the draft without replacing its editor", async ({
+  page,
+}) => {
+  await openComposer(page, "&clearOnSend=true");
+  await message(page).fill("Send this");
+  const editor = await message(page).elementHandle();
+  await message(page).evaluate((element) => {
+    element.focus();
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(element);
+    selection.collapseToEnd();
+    document.execCommand("insertText", false, " now");
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyCode: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect(page.getByTestId("composer-submitted")).toHaveText(
+    "Send this now",
+  );
+  await expect(page.getByTestId("composer-draft")).toBeEmpty();
+  await expect(message(page)).toBeEmpty();
+  expect(
+    await message(page).evaluate(
+      (element, original) => element === original,
+      editor,
+    ),
+  ).toBe(true);
+  await expect(message(page)).toBeFocused();
 });
 
 test("secondary session actions are discoverable in the more menu", async ({

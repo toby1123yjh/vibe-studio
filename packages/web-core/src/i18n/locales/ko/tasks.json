@@ -372,6 +372,8 @@
     }
   },
   "conversation": {
+    "sendingMessage": "전송 중…",
+    "acceptedMessage": "전송됨",
     "you": "나",
     "thinking": "생각 중",
     "todo": "할 일",

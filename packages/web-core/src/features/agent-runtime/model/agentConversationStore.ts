@@ -1,4 +1,5 @@
 import type {
+  AgentRunPortSnapshot,
   AgentRunSummary,
   ConversationBlock,
   ConversationChangesPage,
@@ -12,6 +13,7 @@ import type {
   PatchTypeWithKey,
 } from '@/shared/hooks/useConversationHistory/types';
 import type { agentConversationApi } from '@/shared/lib/agentConversationApi';
+import { newestRunState } from './canonicalAgentTimeline';
 import {
   buildCanonicalAgentSessionTimeline,
   isCanonicalRunActive,
@@ -169,6 +171,7 @@ export class AgentConversationStore {
   private ids: string[] = [];
   private entries: PatchTypeWithKey[] = [];
   private runs: AgentRunSummary[] = [];
+  private readonly acknowledgedRuns = new Map<string, AgentRunSummary>();
   private runsKey = '';
   private pending: ConversationBlock[] = [];
   private pendingKey = '';
@@ -218,6 +221,32 @@ export class AgentConversationStore {
   getSnapshot = () => this.snapshot;
   getBlock = (id: string) => this.blocks.get(id);
   getCursor = () => this.cursor;
+
+  applyRunSnapshot = ({ agent_run_id, state }: AgentRunPortSnapshot) => {
+    if (
+      state.session_id !== this.sessionId ||
+      state.agent_run_id !== agent_run_id
+    )
+      return;
+    const current = this.runs.find((run) => run.agent_run_id === agent_run_id);
+    // The stream may already have delivered a newer or terminal state while
+    // the follow-up response was in flight. Existing state wins exact ties.
+    if (current && newestRunState(state, current.state) === current.state)
+      return;
+    this.acknowledgedRuns.set(agent_run_id, {
+      agent_run_id,
+      session_id: state.session_id,
+      turn_id: state.turn_id,
+      // Follow-up returns RunState without creation metadata. Use its server
+      // timestamp only until conversation discovery supplies the real summary.
+      created_at: current?.created_at ?? state.updated_at,
+      updated_at: state.updated_at,
+      state,
+    });
+    this.reconcile(this.runs, this.pending);
+    this.publish();
+  };
+
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
     return () => {
@@ -345,6 +374,10 @@ export class AgentConversationStore {
     // Backward pages can observe newer run/request metadata without covering
     // live changes. Keep that metadata's version independent of the recovery
     // cursor so the subsequent catch-up pages cannot make controls regress.
+    const acceptsMetadata =
+      revision !== undefined &&
+      (!this.metadataRevision ||
+        compareRevision(revision, this.metadataRevision) >= 0);
     if (
       revision &&
       this.metadataRevision &&
@@ -355,11 +388,35 @@ export class AgentConversationStore {
     } else if (revision) {
       this.metadataRevision = revision;
     }
+    if (this.acknowledgedRuns.size) {
+      const discovered = new Set<string>();
+      runs = runs.map((run) => {
+        const acknowledged = this.acknowledgedRuns.get(run.agent_run_id);
+        if (!acknowledged) return run;
+        discovered.add(run.agent_run_id);
+        const state =
+          newestRunState(acknowledged.state, run.state) ?? run.state;
+        if (state === run.state) {
+          // Only actual discovery can finish the handoff. Reconciliation with
+          // our own cache (or a stale page) is not evidence that it caught up.
+          if (acceptsMetadata) this.acknowledgedRuns.delete(run.agent_run_id);
+          return run;
+        }
+        const merged = { ...run, state, updated_at: state.updated_at };
+        this.acknowledgedRuns.set(run.agent_run_id, merged);
+        return merged;
+      });
+      for (const [id, run] of this.acknowledgedRuns) {
+        if (!discovered.has(id)) runs.push(run);
+      }
+    }
     const key = runSignature(runs);
+    const previousRuns = this.runs;
+    // Keep version facts current even when token-only updates intentionally
+    // preserve the public timeline reference and composer subscription.
+    this.runs = runs;
     if (key !== this.runsKey) {
-      const previousRuns = this.runs;
       this.runsKey = key;
-      this.runs = runs;
       this.timeline = buildCanonicalAgentSessionTimeline(this.sessionId, runs);
       for (const [id, block] of this.blocks) {
         const before = previousRuns.find(

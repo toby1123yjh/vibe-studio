@@ -74,6 +74,7 @@ function ComposerPreview({
   children: ReactNode;
 }) {
   const [text, setText] = useState('');
+  const [isSending, setIsSending] = useState(false);
   if (new URLSearchParams(window.location.search).has('sessionComposer')) {
     return (
       <SessionComposerPreview executor={executor} modelSelector={children} />
@@ -104,8 +105,8 @@ function ComposerPreview({
           onChange: onExecutorChange,
         }}
         modelSelector={children}
-        onSend={() => undefined}
-        isSending={false}
+        onSend={() => setIsSending(true)}
+        isSending={isSending}
         projectSelector={
           <label className="inline-flex min-w-0 max-w-[240px] items-center gap-half text-sm text-low">
             <span className="shrink-0">Project</span>

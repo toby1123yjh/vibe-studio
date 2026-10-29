@@ -26,9 +26,9 @@ export const ReviewCommentRenderer = memo(function ReviewCommentRenderer({
     setIsEditing(true);
   };
 
-  const handleSave = () => {
-    if (editText.trim()) {
-      updateComment(comment.id, editText.trim());
+  const handleSave = (markdown = editText) => {
+    if (markdown.trim()) {
+      updateComment(comment.id, markdown.trim());
     }
     setIsEditing(false);
   };
@@ -46,7 +46,7 @@ export const ReviewCommentRenderer = memo(function ReviewCommentRenderer({
           <>
             <PrimaryButton
               variant="default"
-              onClick={handleSave}
+              onClick={() => handleSave()}
               disabled={!editText.trim()}
             >
               {t('actions.saveChanges')}

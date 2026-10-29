@@ -39,11 +39,11 @@ import { Button } from '@vibe/ui/components/Button';
 import { DegradedState, LoadingState } from '@vibe/ui/components/StateSurface';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowRight,
+  Check,
   Circle,
   CircleAlert,
-  CircleCheck,
   CircleDashed,
+  CirclePause,
   Clock3,
   GripVertical,
   LoaderCircle,
@@ -188,8 +188,8 @@ const STATUS_ICON: Record<ExecutionStatus, typeof Circle> = {
   draft: CircleDashed,
   pending: Clock3,
   running: LoaderCircle,
-  waiting: Clock3,
-  succeeded: CircleCheck,
+  waiting: CirclePause,
+  succeeded: Check,
   failed: CircleAlert,
   cancelled: XCircle,
 };
@@ -200,7 +200,7 @@ function ExecutionStatusIcon({ status }: { status: ExecutionStatus }) {
     <Icon
       className={status === 'running' ? 'vk-task-status-icon--running' : ''}
       data-status={status}
-      aria-label={executionStatusLabel(status)}
+      aria-hidden="true"
       size={14}
     />
   );
@@ -219,11 +219,22 @@ function TaskExecutionPreview({
   unavailableReason: string | null;
   preview?: boolean;
 }) {
+  const { t } = useTranslation('common');
+  const statusLabel = t(`kanban.executionStatus.${execution.status}`, {
+    defaultValue: executionStatusLabel(execution.status),
+  });
   const content = (
     <>
-      <ExecutionStatusIcon status={execution.status} />
-      <span>{execution.title}</span>
-      <ArrowRight aria-hidden="true" size={13} />
+      <span
+        className="vk-kanban-task-preview__status"
+        data-status={execution.status}
+        role="img"
+        aria-label={statusLabel}
+        title={statusLabel}
+      >
+        <ExecutionStatusIcon status={execution.status} />
+      </span>
+      <span className="vk-kanban-task-preview__title">{execution.title}</span>
     </>
   );
   if (preview)
@@ -249,7 +260,7 @@ function TaskExecutionPreview({
         className="vk-kanban-task-preview"
         data-no-drag
         aria-disabled={unavailableReason ? true : undefined}
-        title={unavailableReason ?? undefined}
+        title={unavailableReason ?? execution.title}
         onClick={(event) => {
           event.stopPropagation();
           if (!unavailableReason) onOpen();
@@ -283,6 +294,17 @@ function TaskCardContent({
   onOpenExecution?: (execution: ExecutionSummary) => void;
   getExecutionUnavailableReason: (execution: ExecutionSummary) => string | null;
 }) {
+  const { t } = useTranslation('common');
+  const activityCounts = task.executions.reduce<
+    Partial<Record<ExecutionStatus, number>>
+  >((counts, execution) => {
+    counts[execution.status] = (counts[execution.status] ?? 0) + 1;
+    return counts;
+  }, {});
+  const activityStatuses = (
+    ['running', 'waiting', 'pending', 'failed'] as const
+  ).filter((status) => activityCounts[status]);
+
   return (
     <>
       <header className="vk-kanban-issue-card__meta">
@@ -308,7 +330,46 @@ function TaskCardContent({
       </div>
       {task.executions.length > 0 ? (
         <div className="vk-kanban-issue-card__tasks" data-no-drag>
-          <small>{task.executions.length} executions</small>
+          <div className="vk-kanban-issue-card__execution-header">
+            <small>
+              {t('kanban.executionCount', {
+                count: task.executions.length,
+                defaultValue: `${task.executions.length} executions`,
+              })}
+            </small>
+            {activityStatuses.length > 0 ? (
+              <div
+                className="vk-kanban-issue-card__activity"
+                role="group"
+                aria-label={t('kanban.executionActivityLabel', {
+                  defaultValue: 'Execution activity',
+                })}
+              >
+                {activityStatuses.map((status) => {
+                  const activityLabel = t(
+                    `kanban.executionActivity.${status}`,
+                    {
+                      count: activityCounts[status],
+                      defaultValue: `${activityCounts[status]} ${executionStatusLabel(status).toLowerCase()}`,
+                    }
+                  );
+                  return (
+                    <span
+                      key={status}
+                      className="vk-kanban-execution-activity"
+                      data-status={status}
+                      role="img"
+                      aria-label={activityLabel}
+                      title={activityLabel}
+                    >
+                      <ExecutionStatusIcon status={status} />
+                      <span aria-hidden="true">{activityCounts[status]}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
           {task.executions.slice(0, 2).map((execution) => (
             <TaskExecutionPreview
               key={execution.id}
@@ -323,7 +384,10 @@ function TaskCardContent({
           {task.executions.length > 2 ? (
             preview ? (
               <span className="vk-kanban-more-tasks">
-                +{task.executions.length - 2} executions
+                {t('kanban.moreExecutions', {
+                  count: task.executions.length - 2,
+                  defaultValue: `+${task.executions.length - 2} executions`,
+                })}
               </span>
             ) : (
               <button
@@ -335,7 +399,10 @@ function TaskCardContent({
                   onOpenMore?.(event.currentTarget);
                 }}
               >
-                +{task.executions.length - 2} executions
+                {t('kanban.moreExecutions', {
+                  count: task.executions.length - 2,
+                  defaultValue: `+${task.executions.length - 2} executions`,
+                })}
               </button>
             )
           ) : null}

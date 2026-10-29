@@ -8,9 +8,11 @@ export interface ConversationSendScope {
   hostId: string | null;
   workspaceId: string | undefined;
   sessionId: string | undefined;
+  /** Presentation-only scope while the first workspace is being created. */
+  draftId?: string;
 }
 
-interface PendingConversationSend {
+export interface PendingConversationSend {
   readonly id: string;
   readonly entry: PatchTypeWithKey;
   readonly text: string;
@@ -21,7 +23,7 @@ interface PendingConversationSend {
   readonly restoreDraft: boolean;
 }
 
-interface PendingConversationSendSnapshot {
+export interface PendingConversationSendSnapshot {
   readonly sends: readonly PendingConversationSend[];
   readonly error: string | null;
   readonly failedDraft: {
@@ -53,6 +55,7 @@ function scopeKey(scope: ConversationSendScope) {
     scope.hostId,
     scope.workspaceId ?? null,
     scope.sessionId ?? null,
+    ...(!scope.workspaceId && scope.draftId ? [scope.draftId] : []),
   ]);
 }
 
@@ -76,7 +79,7 @@ export function beginConversationSend({
   const key = scopeKey(scope);
   const current = snapshots.get(key) ?? EMPTY;
   if (
-    !scope.workspaceId ||
+    (!scope.workspaceId && !scope.draftId) ||
     current.sends.some((send) => send.phase === 'sending')
   )
     return null;
@@ -112,7 +115,8 @@ export function beginConversationSend({
 /** Bind before selecting the durable session, so remounts see the same send. */
 export function bindConversationSend(
   handle: ConversationSendHandle,
-  scope: ConversationSendScope
+  scope: ConversationSendScope,
+  { retainSource = false }: { retainSource?: boolean } = {}
 ) {
   const snapshot = snapshots.get(handle.scopeKey);
   const send = snapshot?.sends.find((send) => send.id === handle.id);
@@ -128,10 +132,18 @@ export function bindConversationSend(
     error: null,
     failedDraft: null,
   });
-  publish(previousKey, {
-    ...snapshot,
-    sends: snapshot.sends.filter((item) => item.id !== handle.id),
-  });
+  const releaseSource = () => {
+    const source = snapshots.get(previousKey);
+    if (!source?.sends.some((item) => item.id === handle.id)) return;
+    publish(previousKey, {
+      ...source,
+      sends: source.sends.filter((item) => item.id !== handle.id),
+    });
+  };
+  // A router may keep the outgoing creation composer mounted after updating
+  // the URL. Its echo/busy feedback must survive until that view is removed.
+  if (!retainSource) releaseSource();
+  return releaseSource;
 }
 
 export function acceptConversationSend(

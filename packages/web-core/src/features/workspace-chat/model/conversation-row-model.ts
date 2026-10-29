@@ -85,6 +85,9 @@ export interface ConversationRow {
    */
   readonly isUserMessage: boolean;
 
+  /** Local submission feedback; never a canonical AgentRun state. */
+  readonly submissionStatus?: 'sending' | 'accepted';
+
   /**
    * The original `DisplayEntry` this row wraps. Passed through to the
    * row renderer unchanged.

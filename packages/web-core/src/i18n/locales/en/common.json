@@ -528,6 +528,13 @@
     }
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "Parameters",
+      "rawParameters": "Original parameters",
+      "result": "Result",
+      "callId": "Tool call",
+      "locations": "Files and locations"
+    },
     "bodyWindow": "Showing a section of the full output.",
     "showBeginning": "Show beginning",
     "loadingContent": "Loading content…",
@@ -1741,6 +1748,26 @@
     "noCommands": "No commands available for this agent."
   },
   "kanban": {
+    "executionCount_one": "{{count}} execution",
+    "executionCount_other": "{{count}} executions",
+    "moreExecutions_one": "+{{count}} execution",
+    "moreExecutions_other": "+{{count}} executions",
+    "executionActivityLabel": "Execution activity",
+    "executionActivity": {
+      "running": "{{count}} running",
+      "waiting": "{{count}} waiting",
+      "pending": "{{count}} queued",
+      "failed": "{{count}} failed"
+    },
+    "executionStatus": {
+      "draft": "Draft",
+      "pending": "Queued",
+      "running": "Running",
+      "waiting": "Waiting",
+      "succeeded": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
     "noVisibleStatuses": "All statuses are hidden. Use display settings or switch to another tab to view tasks.",
     "noProjectFound": "No project found",
     "unassigned": "Unassigned",

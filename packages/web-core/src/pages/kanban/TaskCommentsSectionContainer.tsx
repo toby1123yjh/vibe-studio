@@ -316,53 +316,60 @@ function TaskCommentsSectionContent() {
     return result;
   }, [commentsData, taskContext, currentUserId, membersWithProfilesById, t]);
 
-  const handleSubmitComment = useCallback(async () => {
-    if (!commentInput.trim()) return;
-    const message = commentInput.trim();
-    const { persisted } = taskContext.insertComment({
-      task_id: taskContext.taskId,
-      message,
-      parent_id: null,
-    });
-    cancelDebouncedPersistCommentDraft();
-    setCommentInput('');
-    try {
-      await deleteCommentDraft();
-    } catch (e) {
-      console.error('[IssueCommentsSection] Failed to clear draft:', e);
-    }
+  const handleSubmitComment = useCallback(
+    async (markdown = commentInput) => {
+      if (!markdown.trim()) return;
+      const message = markdown.trim();
+      const { persisted } = taskContext.insertComment({
+        task_id: taskContext.taskId,
+        message,
+        parent_id: null,
+      });
+      cancelDebouncedPersistCommentDraft();
+      setCommentInput('');
+      try {
+        await deleteCommentDraft();
+      } catch (e) {
+        console.error('[IssueCommentsSection] Failed to clear draft:', e);
+      }
 
-    const allUploadedIds = getAttachmentIds();
-    if (allUploadedIds.length > 0) {
-      const referencedIds = extractAttachmentIds(message);
-      const idsToCommit = allUploadedIds.filter((id) => referencedIds.has(id));
-      const idsToDelete = allUploadedIds.filter((id) => !referencedIds.has(id));
+      const allUploadedIds = getAttachmentIds();
+      if (allUploadedIds.length > 0) {
+        const referencedIds = extractAttachmentIds(message);
+        const idsToCommit = allUploadedIds.filter((id) =>
+          referencedIds.has(id)
+        );
+        const idsToDelete = allUploadedIds.filter(
+          (id) => !referencedIds.has(id)
+        );
 
-      if (idsToCommit.length > 0) {
-        try {
-          const confirmedComment = await persisted;
-          await commitCommentAttachments(confirmedComment.id, {
-            attachment_ids: idsToCommit,
-          });
-        } catch (err) {
-          console.error('Failed to commit comment attachments:', err);
+        if (idsToCommit.length > 0) {
+          try {
+            const confirmedComment = await persisted;
+            await commitCommentAttachments(confirmedComment.id, {
+              attachment_ids: idsToCommit,
+            });
+          } catch (err) {
+            console.error('Failed to commit comment attachments:', err);
+          }
+        }
+        for (const id of idsToDelete) {
+          deleteAttachment(id).catch((err) =>
+            console.error('Failed to delete abandoned attachment:', err)
+          );
         }
       }
-      for (const id of idsToDelete) {
-        deleteAttachment(id).catch((err) =>
-          console.error('Failed to delete abandoned attachment:', err)
-        );
-      }
-    }
-    clearAttachments();
-  }, [
-    commentInput,
-    taskContext,
-    getAttachmentIds,
-    clearAttachments,
-    cancelDebouncedPersistCommentDraft,
-    deleteCommentDraft,
-  ]);
+      clearAttachments();
+    },
+    [
+      commentInput,
+      taskContext,
+      getAttachmentIds,
+      clearAttachments,
+      cancelDebouncedPersistCommentDraft,
+      deleteCommentDraft,
+    ]
+  );
 
   const handleStartEdit = useCallback(
     (commentId: string) => {
@@ -375,14 +382,17 @@ function TaskCommentsSectionContent() {
     [commentsData]
   );
 
-  const handleSaveEdit = useCallback(() => {
-    if (!editingCommentId || !editingValue.trim()) return;
-    taskContext.updateComment(editingCommentId, {
-      message: editingValue.trim(),
-    });
-    setEditingCommentId(null);
-    setEditingValue('');
-  }, [editingCommentId, editingValue, taskContext]);
+  const handleSaveEdit = useCallback(
+    (markdown = editingValue) => {
+      if (!editingCommentId || !markdown.trim()) return;
+      taskContext.updateComment(editingCommentId, {
+        message: markdown.trim(),
+      });
+      setEditingCommentId(null);
+      setEditingValue('');
+    },
+    [editingCommentId, editingValue, taskContext]
+  );
 
   const handleCancelEdit = useCallback(() => {
     setEditingCommentId(null);

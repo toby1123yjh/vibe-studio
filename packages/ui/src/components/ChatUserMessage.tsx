@@ -4,6 +4,8 @@ import {
   PencilSimpleIcon,
   ArrowUUpLeftIcon,
   CaretDownIcon,
+  CheckIcon,
+  ClockIcon,
 } from '@phosphor-icons/react';
 import { cn } from '../lib/cn';
 import { Tooltip } from './Tooltip';
@@ -22,6 +24,7 @@ interface ChatUserMessageProps {
   onEdit?: () => void;
   onReset?: () => void;
   isGreyed?: boolean;
+  submissionStatus?: 'sending' | 'accepted';
   renderMarkdown: (props: ChatUserMessageRenderProps) => ReactNode;
 }
 
@@ -34,6 +37,7 @@ export function ChatUserMessage({
   onEdit,
   onReset,
   isGreyed,
+  submissionStatus,
   renderMarkdown,
 }: ChatUserMessageProps) {
   const { t } = useTranslation('tasks');
@@ -41,7 +45,7 @@ export function ChatUserMessage({
   const actionClassName =
     'flex size-8 items-center justify-center rounded-[var(--vk-radius-sm)] text-low hover:bg-secondary hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand transition-colors duration-[var(--vk-duration-fast)] motion-reduce:transition-none [@media(pointer:coarse)]:size-11';
   const bubbleClassName =
-    'min-w-0 rounded-[var(--vk-radius-lg)] bg-secondary px-plusfifty py-base text-normal [overflow-wrap:anywhere] [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:[overflow-wrap:normal] [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto';
+    'min-w-0 rounded-[var(--vk-radius-lg)] bg-secondary px-plusfifty py-base text-normal leading-relaxed [overflow-wrap:anywhere] [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:[overflow-wrap:normal] [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto';
   const actions =
     !isGreyed && (onEdit || onReset || (expanded && onToggle)) ? (
       <div className="flex items-center justify-end gap-half pt-half transition-opacity duration-[var(--vk-duration-fast)] motion-reduce:transition-none [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100">
@@ -93,6 +97,7 @@ export function ChatUserMessage({
     <div
       role="group"
       aria-label={t('conversation.you')}
+      data-chat-message="user"
       className={cn(
         'group/user-message relative ml-auto w-fit min-w-0 max-w-[min(90%,72ch)]',
         isGreyed && 'pointer-events-none opacity-50',
@@ -123,6 +128,30 @@ export function ChatUserMessage({
         </button>
       ) : null}
       {actions}
+      {submissionStatus && (
+        <span
+          role="status"
+          className="pointer-events-none absolute -left-double bottom-base inline-flex size-icon-base items-center justify-center text-low"
+          title={t(
+            submissionStatus === 'sending'
+              ? 'conversation.sendingMessage'
+              : 'conversation.acceptedMessage'
+          )}
+        >
+          {submissionStatus === 'sending' ? (
+            <ClockIcon className="size-icon-sm" aria-hidden />
+          ) : (
+            <CheckIcon className="size-icon-sm" aria-hidden />
+          )}
+          <span className="sr-only">
+            {t(
+              submissionStatus === 'sending'
+                ? 'conversation.sendingMessage'
+                : 'conversation.acceptedMessage'
+            )}
+          </span>
+        </span>
+      )}
     </div>
   );
 }

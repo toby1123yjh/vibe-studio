@@ -382,6 +382,96 @@ html {
 }
 
 @layer components {
+  [data-chat-composer='true'] {
+    transition: border-color var(--vk-duration-fast) var(--vk-ease-standard);
+  }
+
+  [data-chat-composer='true'] [data-composer-primary-actions] button {
+    transition:
+      color var(--vk-duration-fast) var(--vk-ease-standard),
+      background-color var(--vk-duration-fast) var(--vk-ease-standard),
+      border-color var(--vk-duration-fast) var(--vk-ease-standard),
+      transform var(--vk-duration-fast) var(--vk-ease-standard);
+  }
+
+  .vk-chat-activity {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--vk-space-2);
+    min-width: 0;
+    max-width: 100%;
+    min-height: 20px;
+    color: var(--vk-text-normal);
+    font-size: var(--vk-font-size-2xs);
+    line-height: 20px;
+  }
+
+  .vk-chat-activity__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 20px;
+    height: 20px;
+    border-radius: var(--vk-radius-full);
+    color: var(--vk-status-running-text);
+    background: var(--vk-status-running-subtle);
+  }
+
+  .vk-chat-activity[data-composer-activity='stopping'] .vk-chat-activity__icon {
+    color: var(--vk-status-cancelled-text);
+    background: var(--vk-status-cancelled-subtle);
+  }
+
+  .vk-chat-activity__label {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .vk-chat-activity__detail {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--vk-text-low);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    [data-chat-composer='true']
+      [data-composer-primary-actions]
+      button:enabled:active {
+      transform: scale(0.97);
+    }
+
+    [data-chat-composer='true']
+      [data-composer-primary-actions]
+      [data-button-icon] {
+      animation: vk-composer-action-enter var(--vk-duration-fast)
+        var(--vk-ease-standard);
+    }
+
+    .vk-chat-activity__icon > svg {
+      animation: vk-composer-activity 1.2s linear infinite;
+    }
+  }
+
+  @keyframes vk-composer-activity {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes vk-composer-action-enter {
+    from {
+      opacity: 0.45;
+      transform: scale(0.9);
+    }
+
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
   .create-issue-attention {
     @apply relative;
   }

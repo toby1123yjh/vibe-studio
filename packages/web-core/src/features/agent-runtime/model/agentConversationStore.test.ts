@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { buildSync } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import type {
+  AgentRunPortSnapshot,
   AgentRunSummary,
   ConversationBlock,
   ConversationChangesPage,
@@ -49,6 +50,7 @@ const run = (status = 'running'): AgentRunSummary =>
       projection_status: 'current',
       last_run_attempt_id: 'attempt-a',
       last_run_attempt_number: 1,
+      last_event_sequence: 1n,
       updated_at: '2026-10-20T00:00:00Z',
     },
   }) as AgentRunSummary;
@@ -100,6 +102,112 @@ const changes = (
   ...page(blocks, revision),
   tombstones: [],
   reset_required: false,
+});
+
+test('a returned Run remains active across stale history until canonical discovery catches up', () => {
+  const store = new AgentConversationStore('session', null);
+  const empty = page([]);
+  empty.runs = [];
+  store.applyPage(empty, true);
+  const cursor = store.getCursor();
+  const accepted = run();
+  accepted.state.last_event_sequence = 3n;
+  accepted.state.updated_at = '2026-10-20T00:00:02Z';
+  store.applyRunSnapshot({
+    agent_run_id: accepted.agent_run_id,
+    state: accepted.state,
+  });
+  expect(store.getSnapshot().conversation.isRunning).toBe(true);
+  expect([...store.getSnapshot().conversation.activeAgentRunIds]).toEqual([
+    'run-a',
+  ]);
+  expect(store.getCursor()).toBe(cursor);
+  expect(store.getSnapshot().conversation.entries).toHaveLength(0);
+
+  // A page that began before follow-up can arrive after its acknowledgement.
+  store.applyPage(empty);
+  const missing = changes([], '2');
+  missing.runs = [];
+  store.applyChanges(missing);
+  expect(store.getSnapshot().conversation.isRunning).toBe(true);
+  const stale = changes([], '3');
+  stale.runs = [run('pending')];
+  store.applyChanges(stale);
+  expect(store.getSnapshot().timeline?.activeRun?.summary.state.status).toBe(
+    'running'
+  );
+  // Discovery supplies the real creation metadata even before state catches up.
+  expect(store.getSnapshot().timeline?.activeRun?.summary.created_at).toBe(
+    accepted.created_at
+  );
+
+  const settled = changes([], '4');
+  settled.runs = [run('succeeded')];
+  settled.runs[0].state.last_event_sequence = 4n;
+  store.applyChanges(settled);
+  expect(store.getSnapshot().conversation.isRunning).toBe(false);
+  expect(store.getSnapshot().conversation.latestStatus).toBe('succeeded');
+  store.applyRunSnapshot({
+    agent_run_id: accepted.agent_run_id,
+    state: accepted.state,
+  });
+  expect(store.getSnapshot().conversation.latestStatus).toBe('succeeded');
+});
+
+test('late acknowledgements preserve newer token-only versions and terminal stream state', () => {
+  const store = new AgentConversationStore('session', null);
+  store.applyPage(page([]), true);
+  const initial = store.getSnapshot();
+  const newer = changes([], '2');
+  newer.runs[0].state.last_event_sequence = 5n;
+  store.applyChanges(newer);
+  expect(store.getSnapshot()).toBe(initial);
+  const stale = run('pending');
+  stale.state.last_event_sequence = 3n;
+  store.applyRunSnapshot({
+    agent_run_id: stale.agent_run_id,
+    state: stale.state,
+  });
+  expect(store.getSnapshot()).toBe(initial);
+
+  const settled = changes([], '3');
+  settled.runs = [run('succeeded')];
+  settled.runs[0].state.last_event_sequence = 6n;
+  store.applyChanges(settled);
+  const terminal = store.getSnapshot();
+  // Existing discovery wins an exact version tie as well as older responses.
+  const late = { ...settled.runs[0].state, status: run().state.status };
+  store.applyRunSnapshot({ agent_run_id: 'run-a', state: late });
+  expect(store.getSnapshot()).toBe(terminal);
+  store.applyRunSnapshot({ agent_run_id: 'run-a', state: stale.state });
+  expect(store.getSnapshot()).toBe(terminal);
+});
+
+test('Run acknowledgements before history stay scoped to their exact session and Host', () => {
+  const transport = {} as AgentConversationTransport;
+  const store = getAgentConversationStore('session', 'ack-host-a', transport);
+  const otherHost = getAgentConversationStore(
+    'session',
+    'ack-host-b',
+    transport
+  );
+  const initial = store.getSnapshot();
+  const snapshot: AgentRunPortSnapshot = {
+    agent_run_id: 'run-a',
+    state: run().state,
+  };
+  store.applyRunSnapshot({
+    ...snapshot,
+    state: { ...snapshot.state, session_id: 'another-session' },
+  });
+  store.applyRunSnapshot({ ...snapshot, agent_run_id: 'different-run' });
+  expect(store.getSnapshot()).toBe(initial);
+  store.applyRunSnapshot(snapshot);
+  const empty = page([]);
+  empty.runs = [];
+  store.applyPage(empty, true);
+  expect(store.getSnapshot().conversation.isRunning).toBe(true);
+  expect(otherHost.getSnapshot().timeline).toBeNull();
 });
 
 test('token updates notify only the block and preserve structural/history/run references', () => {

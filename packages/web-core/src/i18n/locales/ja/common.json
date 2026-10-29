@@ -58,6 +58,13 @@
     "selectOption": "オプションを選択..."
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "パラメーター",
+      "rawParameters": "元のパラメーター",
+      "result": "結果",
+      "callId": "ツール呼び出し",
+      "locations": "ファイルと場所"
+    },
     "deniedByUser": "{{toolName}} がユーザーによって拒否されました",
     "output": "出力",
     "plan": "計画",

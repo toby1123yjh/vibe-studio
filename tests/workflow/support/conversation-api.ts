@@ -19,7 +19,7 @@ const sessions = ["research", "review", "analysis", "main"].map((work) => ({
 function runState(
   sessionId: string,
   withToolOutput = false,
-  status: `${AgentRunStatus}` = "succeeded",
+  status: `${AgentRunStatus}` = "succeeded"
 ) {
   return {
     state_schema_version: 1,
@@ -47,14 +47,18 @@ export async function mockWorkflowConversations(
   {
     holdFirstDraftWrite = false,
     withToolOutput = false,
+    withPresentationBlocks = false,
     initialRunStatus = "succeeded",
     initialHistory = true,
+    initialHistorySize = 1,
   }: {
     holdFirstDraftWrite?: boolean;
     withToolOutput?: boolean;
+    withPresentationBlocks?: boolean;
     initialRunStatus?: `${AgentRunStatus}`;
     initialHistory?: boolean;
-  } = {},
+    initialHistorySize?: number;
+  } = {}
 ) {
   const writes: string[] = [];
   const drafts = new Map<string, unknown>();
@@ -71,12 +75,12 @@ export async function mockWorkflowConversations(
     runState(
       sessionId,
       withToolOutput,
-      runStatuses.get(sessionId) ?? initialRunStatus,
+      runStatuses.get(sessionId) ?? initialRunStatus
     );
   const acknowledgement = (
     sessionId: string,
     runId = `agent-${sessionId}`,
-    status: `${AgentRunStatus}` = "running",
+    status: `${AgentRunStatus}` = "running"
   ) => ({
     agent_run_id: runId,
     state: {
@@ -91,7 +95,7 @@ export async function mockWorkflowConversations(
   const conversation = (sessionId: string) => {
     const block = (
       kind: ConversationBlock["kind"],
-      fields: ConversationBlock["fields"],
+      fields: ConversationBlock["fields"]
     ) => ({
       block_id: `${kind}-${sessionId}`,
       agent_run_id: `agent-${sessionId}`,
@@ -110,6 +114,83 @@ export async function mockWorkflowConversations(
       created_at: timestamp,
       updated_at: timestamp,
     });
+    const presentationBlocks = withPresentationBlocks
+      ? [
+          {
+            ...block("text", { text: "Please review this workspace." }),
+            block_id: `prompt-${sessionId}`,
+            role: "user",
+            position: "0",
+          },
+          {
+            ...block("reasoning", {
+              text: "**Inspect project context**\n\nI am checking the available files before deciding what to change.",
+            }),
+            position: "2:00",
+            finished: false,
+            finish_reason: null,
+          },
+          {
+            ...block("tool", {
+              tool_call_id: `read-call-${sessionId}`,
+              tool_name: "Read workspace notes",
+              tool_kind: "file_read",
+              status: AgentRuntimeToolStatus.succeeded,
+              locations: [{ path: "C:/fixture/notes.md" }],
+              arguments: { path: "C:/fixture/notes.md" },
+              result: { available: true },
+              output_text: "Workspace notes are retained in this tool result.",
+            }),
+            block_id: `read-${sessionId}`,
+            position: "2:01",
+          },
+          {
+            ...block("tool", {
+              tool_call_id: `search-call-${sessionId}`,
+              tool_name: "Search current directory",
+              tool_kind: "search",
+              status: AgentRuntimeToolStatus.running,
+              locations: [{ path: "C:/fixture/src" }],
+              arguments: { query: "workspace configuration" },
+              output_text:
+                "The directory search has produced a partial result.",
+            }),
+            block_id: `search-${sessionId}`,
+            position: "2:02",
+            finished: false,
+            finish_reason: null,
+          },
+          {
+            ...block("tool", {
+              tool_call_id: `failed-call-${sessionId}`,
+              tool_name: "Inspect optional file",
+              tool_kind: "file_read",
+              status: AgentRuntimeToolStatus.failed,
+              arguments: { path: "optional.md" },
+              output_text:
+                "The optional file does not exist; the agent can continue.",
+            }),
+            block_id: `failed-${sessionId}`,
+            position: "2:03",
+          },
+          {
+            ...block("notice", {
+              text: "An optional integration is unavailable.\n\nThe full diagnostic is available when needed.",
+            }),
+            position: "2:04",
+          },
+          {
+            ...block("extension", {
+              text: "Native provider metadata",
+              extension: {
+                provider: "codex",
+                diagnostic: "Retained native metadata",
+              },
+            }),
+            position: "2:05",
+          },
+        ]
+      : [];
     return {
       session_id: sessionId,
       cursor: { epoch: `epoch-${sessionId}`, revision: String(revision) },
@@ -117,6 +198,19 @@ export async function mockWorkflowConversations(
         ...(initialHistory
           ? [block("text", { text: `Original reply for ${sessionId}` })]
           : []),
+        ...(initialHistory
+          ? Array.from(
+              { length: Math.max(0, initialHistorySize - 1) },
+              (_, index) => ({
+                ...block("text", {
+                  text: `History message ${index + 2}. The agent reviewed the current workspace, checked the project context and recorded the next useful step for this conversation.`,
+                }),
+                block_id: `history-${sessionId}-${index + 2}`,
+                position: `1:${String(index + 1).padStart(4, "0")}`,
+              })
+            )
+          : []),
+        ...(initialHistory ? presentationBlocks : []),
         ...(initialHistory && withToolOutput
           ? [
               block("tool", {
@@ -176,7 +270,7 @@ export async function mockWorkflowConversations(
             tombstones: [],
             reset_required: false,
           },
-        }),
+        })
       );
     }
   };
@@ -244,7 +338,7 @@ export async function mockWorkflowConversations(
         socket.send(
           JSON.stringify({
             JsonPatch: [{ op: "replace", path: "/scratch", value: scratch }],
-          }),
+          })
         );
       }
       return fulfill(scratch);
@@ -256,7 +350,7 @@ export async function mockWorkflowConversations(
         socket.send(
           JSON.stringify({
             JsonPatch: [{ op: "replace", path: "/scratch", value: null }],
-          }),
+          })
         );
       }
       return fulfill(null);
@@ -281,7 +375,7 @@ export async function mockWorkflowConversations(
               value: drafts.get(sessionId) ?? null,
             },
           ],
-        }),
+        })
       );
       socket.send(JSON.stringify({ Ready: true }));
     } else if (url.pathname.includes("/conversation/stream/ws")) {
@@ -294,7 +388,7 @@ export async function mockWorkflowConversations(
         JSON.stringify({
           type: "ready",
           data: conversation(sessionId).cursor,
-        }),
+        })
       );
     } else {
       // Empty process/diff/discovery streams do not create an Agent process.
@@ -308,11 +402,13 @@ export async function mockWorkflowConversations(
     releaseDraftWrite: () => releaseDraftWrite(),
     state: currentState,
     acknowledgement,
+    hasConversationConnection: (sessionId: string) =>
+      (runSockets.get(sessionId)?.size ?? 0) > 0,
     publishUserMessage: (
       sessionId: string,
       prompt: string,
       runId: string,
-      status: `${AgentRunStatus}` = "running",
+      status: `${AgentRunStatus}` = "running"
     ) => {
       const turns = userTurns.get(sessionId) ?? [];
       const index = turns.findIndex((turn) => turn.runId === runId);
@@ -335,7 +431,7 @@ export async function mockWorkflowFileContext(page: Page) {
     "**/api/workflow-runs/visual-run/file-context**",
     async (route) => {
       const nodeExecutionId = new URL(route.request().url()).searchParams.get(
-        "node_execution_id",
+        "node_execution_id"
       );
       await route.fulfill({
         json: {
@@ -402,6 +498,6 @@ export async function mockWorkflowFileContext(page: Page) {
           },
         },
       });
-    },
+    }
   );
 }

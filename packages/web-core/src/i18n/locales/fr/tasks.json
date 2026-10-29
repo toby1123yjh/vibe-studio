@@ -115,6 +115,8 @@
     "noTasks": "Aucune tâche"
   },
   "conversation": {
+    "sendingMessage": "Envoi…",
+    "acceptedMessage": "Envoyé",
     "executors": "Exécuteurs",
     "saveAsDefault": "Enregistrer par défaut",
     "composer": {

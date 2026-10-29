@@ -6,11 +6,18 @@ import { useCreateMode } from '@/features/create-mode/model/useCreateMode';
 import {
   acceptConversationSend,
   beginConversationSend,
+  bindConversationSend,
+  consumeFailedConversationDraft,
+  failConversationSend,
+  markConversationDraftEdited,
+  usePendingConversationSend,
 } from '@/features/workspace-chat/model/pendingConversationSends';
 import { AgentIcon, getAgentName } from '@/shared/components/AgentIcon';
 import { getAgentBrandAttributes } from '@/shared/lib/agentProviders';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
-import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
+import WYSIWYGEditor, {
+  type WYSIWYGEditorRef,
+} from '@/shared/components/WYSIWYGEditor';
 import { useCreateWorkspace } from '@/shared/hooks/useCreateWorkspace';
 import { useCreateAttachments } from '@/shared/hooks/useCreateAttachments';
 import { useExecutorConfig } from '@/shared/hooks/useExecutorConfig';
@@ -27,6 +34,7 @@ import type {
   SelectedSkill,
 } from 'shared/types';
 import { CreateChatBox } from '@vibe/ui/components/CreateChatBox';
+import { ChatUserMessage } from '@vibe/ui/components/ChatUserMessage';
 import type { LinkedTask } from '@/shared/types/createMode';
 import { useSettingsNavigation } from '@/shared/hooks/useSettingsNavigation';
 import { WorkspaceTargetDialog } from '@/shared/dialogs/shared/WorkspaceTargetDialog';
@@ -50,10 +58,10 @@ export function CreateChatBoxContainer({
   const { openAgentCenter } = useSettingsNavigation();
   const { profiles, config } = useUserSystem();
   const {
+    draftId,
     initialProjectId,
     message,
     setMessage,
-    clearDraft,
     hasInitialValue,
     linkedTask: draftLinkedTask,
     clearLinkedTask,
@@ -84,12 +92,60 @@ export function CreateChatBoxContainer({
     destinationProjectId ?? initialProjectId,
     linkedTask?.remoteProjectId
   );
-  const scopeIdentity = `${hostId ?? 'local'}:${project.projectId}:${linkedTask?.taskId ?? 'standalone'}`;
+  const scopeIdentity = `${hostId ?? 'local'}:${project.projectId}:${linkedTask?.taskId ?? 'standalone'}:${draftId ?? 'default'}`;
+  const composerEditorRef = useRef<WYSIWYGEditorRef>(null);
+  const creationScope = useMemo(
+    () => ({
+      hostId,
+      workspaceId: undefined,
+      sessionId: undefined,
+      draftId: `create:${scopeIdentity}`,
+    }),
+    [hostId, scopeIdentity]
+  );
+  const pendingCreation = usePendingConversationSend(creationScope);
+  const isCreating =
+    createWorkspace.isPending ||
+    pendingCreation.sends.some((send) => send.phase === 'sending');
+  const [failedCreationText, setFailedCreationText] = useState<string | null>(
+    null
+  );
+  const draftIdentityRef = useRef({
+    scope: scopeIdentity,
+    revision: 0,
+    text: message,
+  });
+  if (draftIdentityRef.current.scope !== scopeIdentity) {
+    draftIdentityRef.current = {
+      scope: scopeIdentity,
+      revision: 0,
+      text: message,
+    };
+  } else if (draftIdentityRef.current.text !== message) {
+    draftIdentityRef.current.text = message;
+    draftIdentityRef.current.revision += 1;
+  }
+  const clearedCreationDraftRef = useRef<{
+    id: string;
+    revision: number;
+  } | null>(null);
+  const handleMessageChange = useCallback(
+    (value: string) => {
+      if (draftIdentityRef.current.text !== value) {
+        draftIdentityRef.current.revision += 1;
+        draftIdentityRef.current.text = value;
+        markConversationDraftEdited(creationScope);
+      }
+      setMessage(value);
+    },
+    [creationScope, setMessage]
+  );
   const scopeRef = useRef({
     identity: scopeIdentity,
     generation: 0,
     mounted: true,
   });
+  const releaseCreationFeedbackRef = useRef<(() => void) | undefined>();
   if (scopeRef.current.identity !== scopeIdentity) {
     scopeRef.current = {
       identity: scopeIdentity,
@@ -104,9 +160,17 @@ export function CreateChatBoxContainer({
       scopeRef.current.generation += 1;
     };
   }, []);
+  useEffect(
+    () => () => {
+      releaseCreationFeedbackRef.current?.();
+      releaseCreationFeedbackRef.current = undefined;
+    },
+    [scopeIdentity]
+  );
   useEffect(() => {
     setTargetError(null);
     setStagedResumeSession(null);
+    setFailedCreationText(null);
   }, [scopeIdentity]);
   const [selectedSkills, setSelectedSkills] = useState<SelectedSkill[]>([]);
   const [stagedResumeSession, setStagedResumeSession] =
@@ -121,12 +185,15 @@ export function CreateChatBoxContainer({
   // Attachment handling - insert markdown and track attachment IDs
   const handleInsertMarkdown = useCallback(
     (markdown: string) => {
-      const newMessage = message.trim()
-        ? `${message}\n\n${markdown}`
+      const currentMessage =
+        composerEditorRef.current?.getMarkdown() ??
+        draftIdentityRef.current.text;
+      const newMessage = currentMessage.trim()
+        ? `${currentMessage}\n\n${markdown}`
         : markdown;
-      setMessage(newMessage);
+      handleMessageChange(newMessage);
     },
-    [message, setMessage]
+    [handleMessageChange]
   );
 
   const { uploadFiles, getAttachmentIds, clearAttachments, localAttachments } =
@@ -157,6 +224,34 @@ export function CreateChatBoxContainer({
     hiddenAgents: config?.hidden_agents,
     onPersist: (cfg) => setDraftConfig(cfg),
   });
+  const controlsIdentity = JSON.stringify([
+    executorConfig,
+    draftAttachments,
+    selectedSkills,
+    stagedResumeSession,
+  ]);
+  const controlsIdentityRef = useRef(controlsIdentity);
+  if (controlsIdentityRef.current !== controlsIdentity) {
+    controlsIdentityRef.current = controlsIdentity;
+    draftIdentityRef.current.revision += 1;
+  }
+
+  useEffect(() => {
+    const failed = pendingCreation.failedDraft;
+    if (!failed || !hasInitialValue) return;
+    const clear = clearedCreationDraftRef.current;
+    const expectedRevision = clear?.id === failed.id ? clear.revision : 0;
+    setFailedCreationText(failed.text);
+    if (
+      draftIdentityRef.current.revision === expectedRevision &&
+      draftIdentityRef.current.text === ''
+    ) {
+      draftIdentityRef.current.revision += 1;
+      draftIdentityRef.current.text = failed.text;
+      setMessage(failed.text);
+    }
+    consumeFailedConversationDraft(creationScope);
+  }, [pendingCreation.failedDraft, hasInitialValue, creationScope, setMessage]);
   const attachmentGuard = useModelAttachmentGuard(
     JSON.stringify([
       scopeIdentity,
@@ -168,7 +263,7 @@ export function CreateChatBoxContainer({
   );
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: attachmentGuard.uploadFiles,
-    disabled: createWorkspace.isPending,
+    disabled: !hasInitialValue,
     noClick: true,
     noKeyboard: true,
   });
@@ -182,8 +277,7 @@ export function CreateChatBoxContainer({
     hasInitialValue &&
     project.ready &&
     !isConfiguring &&
-    !createWorkspace.isPending &&
-    message.trim().length > 0 &&
+    !isCreating &&
     effectiveExecutor !== null;
 
   const configureProjectWorkspace = async () => {
@@ -263,7 +357,7 @@ export function CreateChatBoxContainer({
       scopePath={resumeScopePath}
       executor={effectiveExecutor}
       selectedSessionId={stagedResumeSession?.agent_session_id}
-      disabled={createWorkspace.isPending || !resumeScopePath}
+      disabled={isCreating || !resumeScopePath}
       onSelect={setStagedResumeSession}
     />
   ) : undefined;
@@ -336,105 +430,164 @@ export function CreateChatBoxContainer({
   );
 
   // Handle submit
-  const handleSubmit = useCallback(async () => {
-    if (!canSubmit || !executorConfig || submitPendingRef.current) return;
-    submitPendingRef.current = true;
-    const generation = scopeRef.current.generation;
-    try {
-      const { title } = splitMessageToTitleDescription(message);
-      const { prompt, isSlashCommand } = buildAgentPrompt(message, []);
-      const data = {
-        project_id: project.projectId,
-        mode: workspaceMode,
-        executor_config: executorConfig,
-        name: title,
-        prompt,
-        repos:
-          workspaceMode === 'worktree' && selectedRepo && selectedTargetBranch
-            ? [
-                {
-                  repo_id: selectedRepo.id,
-                  target_branch: selectedTargetBranch,
-                },
-              ]
-            : [],
-        directory_path:
-          workspaceMode === 'direct_folder'
-            ? directFolderPath.trim()
-            : undefined,
-        linked_task: linkedTask
-          ? {
-              remote_project_id: linkedTask.remoteProjectId,
-              task_id: linkedTask.taskId,
-            }
-          : null,
-        selected_skills:
-          !isSlashCommand && selectedSkills.length > 0
-            ? selectedSkills
-            : undefined,
-        resume_session_id: stagedResumeSession?.agent_session_id,
-        resume_scope_path: resumeScopePath,
-        attachment_ids: getAttachmentIds(),
-      };
-      const linkToTask = linkedTask
-        ? {
-            remoteProjectId: linkedTask.remoteProjectId,
-            taskId: linkedTask.taskId,
-          }
-        : undefined;
-
-      const result = await createWorkspace.mutateAsync({
-        data,
-        linkToTask,
-      });
+  const handleSubmit = useCallback(
+    async (submittedMessage: string) => {
       if (
-        !scopeRef.current.mounted ||
-        scopeRef.current.generation !== generation
+        !canSubmit ||
+        !submittedMessage.trim() ||
+        !executorConfig ||
+        submitPendingRef.current
       )
         return;
+      const firstMessage = beginConversationSend({
+        ...creationScope,
+        text: submittedMessage,
+        executorConfig,
+      });
+      if (!firstMessage) return;
+      const creationHandle = { ...firstMessage };
+      submitPendingRef.current = true;
+      const generation = scopeRef.current.generation;
+      const submittedAttachmentIds = getAttachmentIds();
+      setFailedCreationText(null);
+      draftIdentityRef.current.text = '';
+      const clearRevision = ++draftIdentityRef.current.revision;
+      clearedCreationDraftRef.current = {
+        id: firstMessage.id,
+        revision: clearRevision,
+      };
+      setMessage('');
+      composerEditorRef.current?.clear();
+      try {
+        const { title } = splitMessageToTitleDescription(submittedMessage);
+        const { prompt, isSlashCommand } = buildAgentPrompt(
+          submittedMessage,
+          []
+        );
+        const data = {
+          project_id: project.projectId,
+          mode: workspaceMode,
+          executor_config: executorConfig,
+          name: title,
+          prompt,
+          repos:
+            workspaceMode === 'worktree' && selectedRepo && selectedTargetBranch
+              ? [
+                  {
+                    repo_id: selectedRepo.id,
+                    target_branch: selectedTargetBranch,
+                  },
+                ]
+              : [],
+          directory_path:
+            workspaceMode === 'direct_folder'
+              ? directFolderPath.trim()
+              : undefined,
+          linked_task: linkedTask
+            ? {
+                remote_project_id: linkedTask.remoteProjectId,
+                task_id: linkedTask.taskId,
+              }
+            : null,
+          selected_skills:
+            !isSlashCommand && selectedSkills.length > 0
+              ? selectedSkills
+              : undefined,
+          resume_session_id: stagedResumeSession?.agent_session_id,
+          resume_scope_path: resumeScopePath,
+          attachment_ids: submittedAttachmentIds,
+        };
+        const linkToTask = linkedTask
+          ? {
+              remoteProjectId: linkedTask.remoteProjectId,
+              taskId: linkedTask.taskId,
+            }
+          : undefined;
 
-      if (result.workspace) {
-        // The first history fetch can lag behind workspace creation. Carry the
-        // accepted input into the same local echo used by conversation sends.
-        const firstMessage = beginConversationSend({
-          hostId,
-          workspaceId: result.workspace.id,
-          sessionId: result.agentRun.state.session_id,
-          text: message,
-          executorConfig,
+        const result = await createWorkspace.mutateAsync({
+          data,
+          linkToTask,
         });
-        if (firstMessage)
-          acceptConversationSend(firstMessage, result.agentRun.agent_run_id);
-        onWorkspaceCreated(result.workspace.id);
-      }
+        if (!result.workspace)
+          throw new Error(t('sessionProject.createFailed'));
 
-      clearAttachments();
-      setSelectedSkills([]);
-      setStagedResumeSession(null);
-      await clearDraft();
-    } finally {
-      submitPendingRef.current = false;
-    }
-  }, [
-    canSubmit,
-    project.projectId,
-    executorConfig,
-    hostId,
-    message,
-    selectedSkills,
-    stagedResumeSession?.agent_session_id,
-    workspaceMode,
-    directFolderPath,
-    selectedRepo,
-    selectedTargetBranch,
-    resumeScopePath,
-    createWorkspace,
-    onWorkspaceCreated,
-    getAttachmentIds,
-    clearAttachments,
-    clearDraft,
-    linkedTask,
-  ]);
+        // Transfer before selecting the workspace. Its first history fetch may
+        // lag behind the create response, so the shared window keeps this echo.
+        if (result.workspace) {
+          const retainSource =
+            scopeRef.current.mounted &&
+            scopeRef.current.generation === generation;
+          const releaseSource = bindConversationSend(
+            firstMessage,
+            {
+              hostId,
+              workspaceId: result.workspace.id,
+              sessionId: result.agentRun.state.session_id,
+            },
+            { retainSource }
+          );
+          if (retainSource) releaseCreationFeedbackRef.current = releaseSource;
+          acceptConversationSend(firstMessage, result.agentRun.agent_run_id);
+        }
+        if (
+          !scopeRef.current.mounted ||
+          scopeRef.current.generation !== generation
+        )
+          return;
+
+        clearAttachments(submittedAttachmentIds ?? []);
+        if (
+          draftIdentityRef.current.revision === clearRevision &&
+          draftIdentityRef.current.text === ''
+        ) {
+          setSelectedSkills([]);
+          setStagedResumeSession(null);
+          clearLinkedTask();
+        }
+        if (result.workspace) onWorkspaceCreated(result.workspace.id);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        // Navigation can fail after binding. Restore the original draft scope
+        // as well, rather than leaving its outgoing feedback stuck as sending.
+        if (firstMessage.scopeKey !== creationHandle.scopeKey)
+          failConversationSend(creationHandle, errorMessage);
+        releaseCreationFeedbackRef.current?.();
+        releaseCreationFeedbackRef.current = undefined;
+        failConversationSend(firstMessage, errorMessage);
+        if (
+          scopeRef.current.mounted &&
+          scopeRef.current.generation === generation
+        ) {
+          setFailedCreationText(submittedMessage);
+        }
+      } finally {
+        submitPendingRef.current = false;
+      }
+    },
+    [
+      canSubmit,
+      project.projectId,
+      executorConfig,
+      hostId,
+      creationScope,
+      selectedSkills,
+      stagedResumeSession?.agent_session_id,
+      workspaceMode,
+      directFolderPath,
+      selectedRepo,
+      selectedTargetBranch,
+      resumeScopePath,
+      createWorkspace,
+      onWorkspaceCreated,
+      getAttachmentIds,
+      clearAttachments,
+      setMessage,
+      clearLinkedTask,
+      linkedTask,
+      t,
+    ]
+  );
 
   // Determine error to display
   const errorDetails =
@@ -443,10 +596,10 @@ export function CreateChatBoxContainer({
       ? createWorkspace.error instanceof Error
         ? createWorkspace.error.message
         : t('sessionProject.failed')
-      : null);
+      : pendingCreation.error);
   const displayError = targetError
     ? t('sessionProject.configureFailed')
-    : createWorkspace.error
+    : createWorkspace.error || pendingCreation.error
       ? t('sessionProject.createFailed')
       : null;
 
@@ -457,7 +610,7 @@ export function CreateChatBoxContainer({
         aria-label={t('sessionProject.label')}
         value={project.projectId}
         disabled={
-          createWorkspace.isPending ||
+          isCreating ||
           isConfiguring ||
           !!linkedTask ||
           !project.enabled ||
@@ -530,15 +683,57 @@ export function CreateChatBoxContainer({
               </div>
             )}
           <>
-            <h2 className="mb-double text-center text-4xl font-medium tracking-tight text-high">
+            <h2
+              className="mb-double text-center text-4xl font-medium tracking-tight text-high"
+              hidden={pendingCreation.sends.length > 0 || !!failedCreationText}
+            >
               {t('createMode.headings.chatStep')}
             </h2>
+
+            {(pendingCreation.sends.length > 0 || failedCreationText) && (
+              <div
+                className="flex min-w-0 flex-col gap-base px-plusfifty py-double"
+                data-creation-conversation
+              >
+                {pendingCreation.sends.map((send) => (
+                  <ChatUserMessage
+                    key={send.id}
+                    content={send.text}
+                    submissionStatus={send.phase}
+                    renderMarkdown={({ content }) => (
+                      <WYSIWYGEditor
+                        value={content}
+                        disabled
+                        hideActions
+                        localAttachments={localAttachments}
+                      />
+                    )}
+                  />
+                ))}
+                {failedCreationText && pendingCreation.sends.length === 0 && (
+                  <ChatUserMessage
+                    content={failedCreationText}
+                    renderMarkdown={({ content }) => (
+                      <WYSIWYGEditor
+                        value={content}
+                        disabled
+                        hideActions
+                        localAttachments={localAttachments}
+                      />
+                    )}
+                  />
+                )}
+              </div>
+            )}
 
             <div className="flex justify-center @container">
               <CreateChatBox
                 editor={{
                   value: message,
-                  onChange: setMessage,
+                  onChange: handleMessageChange,
+                  getValue: () =>
+                    composerEditorRef.current?.getMarkdown() ??
+                    draftIdentityRef.current.text,
                 }}
                 renderEditor={({
                   value,
@@ -552,6 +747,7 @@ export function CreateChatBoxContainer({
                   localAttachments,
                 }) => (
                   <WYSIWYGEditor
+                    ref={composerEditorRef}
                     placeholder={t('sessionProject.messagePlaceholder')}
                     value={value}
                     onChange={onChange}
@@ -579,7 +775,7 @@ export function CreateChatBoxContainer({
                   getAgentBrandAttributes(effectiveExecutor)['data-agent-brand']
                 }
                 onSend={handleSubmit}
-                isSending={createWorkspace.isPending}
+                isSending={isCreating}
                 sendDisabled={!canSubmit}
                 executor={{
                   selected: effectiveExecutor,

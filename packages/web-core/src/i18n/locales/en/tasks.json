@@ -142,6 +142,8 @@
     "noTasks": "No tasks"
   },
   "conversation": {
+    "sendingMessage": "Sending…",
+    "acceptedMessage": "Sent",
     "executors": "Executors",
     "saveAsDefault": "Save as default",
     "composer": {

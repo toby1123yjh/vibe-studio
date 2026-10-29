@@ -399,6 +399,8 @@
     }
   },
   "conversation": {
+    "sendingMessage": "发送中…",
+    "acceptedMessage": "已发送",
     "you": "你",
     "thinking": "思考中",
     "todo": "待办",

@@ -223,6 +223,181 @@ test('multiline notices show a compact summary and keep their full diagnostic av
   ).toHaveValue('Unchanged draft');
 });
 
+test('reasoning previews stay compact and manual expansion survives streaming and completion', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('reasoning', 'reasoning', {
+        text: '**Inspect current state**\n\nStill considering',
+      })
+    );
+  });
+  const reasoning = page.locator('[data-conversation-block="reasoning"]');
+  const header = reasoning.getByRole('button', { name: /Thinking/ });
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+  await expect(header).toContainText('Inspect current state');
+  await expect(header).not.toContainText('**');
+  await expect(reasoning.getByTestId('markdown')).toHaveCount(0);
+  const preview = await header.textContent();
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('reasoning', 'reasoning', {
+        text: '**Inspect current state**\n\nStill considering another option',
+      })
+    );
+  });
+  await expect(header).toHaveText(preview!);
+  await header.focus();
+  await header.press('Space');
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  const bodyId = await header.getAttribute('aria-controls');
+  expect(bodyId).toBeTruthy();
+  await expect(page.locator(`[id="${bodyId}"]`)).toContainText(
+    'Still considering another option'
+  );
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('reasoning', 'reasoning', {
+        text: '**Inspect current state**\n\nThe chosen option is now clear.',
+      })
+    );
+    fixture.state.runs[0].state.status = 'succeeded';
+    fixture.updateBlock(
+      fixture.block('finished', 'notice', { text: 'Run finished' })
+    );
+  });
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  await expect(header).not.toHaveAttribute('data-active', 'true');
+  await expect(reasoning).toContainText('The chosen option is now clear.');
+  await expect(reasoning.getByRole('button', { name: /Thinking/ })).toHaveCount(
+    1
+  );
+  await page.setViewportSize({ width: 520, height: 720 });
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  await header.press('Enter');
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+  await expect(reasoning.getByTestId('markdown')).toHaveCount(0);
+});
+
+test('individual tool disclosures preserve independent expansion and stop stale activity from run metadata', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('tool-a', 'tool', {
+        tool_name: 'Read current file',
+        status: 'running',
+        output_text: 'First tool output',
+      })
+    );
+    fixture.updateBlock(
+      fixture.block('tool-b', 'tool', {
+        tool_name: 'Search related file',
+        status: 'running',
+        output_text: 'Second tool output',
+      })
+    );
+  });
+  const group = page.getByRole('button', { name: /Tool activity/ });
+  await group.click();
+  const first = page.getByRole('button', {
+    name: 'Read current file',
+    exact: true,
+  });
+  const second = page.getByRole('button', {
+    name: 'Search related file',
+    exact: true,
+  });
+  await first.click();
+  await second.click();
+  await expect(first).toHaveAttribute('aria-expanded', 'true');
+  await expect(second).toHaveAttribute('aria-expanded', 'true');
+  const firstBodyId = await first.getAttribute('aria-controls');
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('tool-a', 'tool', {
+        tool_name: 'Read current file',
+        status: 'running',
+        output_text: 'First tool output has streamed more text',
+      })
+    );
+    fixture.state.runs[0].state.status = 'cancelled';
+    fixture.updateBlock(
+      fixture.block('cancelled', 'notice', { text: 'Run was cancelled' })
+    );
+  });
+  await expect(first).toHaveAttribute('aria-controls', firstBodyId!);
+  await expect(first).toHaveAttribute('aria-expanded', 'true');
+  await expect(second).toHaveAttribute('aria-expanded', 'true');
+  await expect(group).not.toHaveAttribute('data-active', 'true');
+  await expect(first).not.toHaveAttribute('data-active', 'true');
+  await expect(second).not.toHaveAttribute('data-active', 'true');
+  await expect(first).toHaveAccessibleDescription('Result not confirmed');
+  await expect(second).toHaveAccessibleDescription('Result not confirmed');
+  await expect(page.locator(`[id="${firstBodyId}"]`)).toContainText(
+    'First tool output has streamed more text'
+  );
+  await group.click();
+  await group.click();
+  await expect(first).toHaveAttribute('aria-expanded', 'true');
+  await expect(second).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('large reasoning bodies load only after expansion and old attempts never animate', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    const text = `**Reasoning preview**\n\n${'Retained detailed reasoning. '.repeat(3000)}`;
+    fixture.bodies.set('large-reasoning:text', text);
+    fixture.updateBlock({
+      ...fixture.block('large-reasoning', 'reasoning', {
+        text: text.slice(0, 16384),
+      }),
+      bodies: [{ field: 'text', byte_length: text.length }],
+    });
+  });
+  const reasoning = page.locator('[data-conversation-block="large-reasoning"]');
+  const header = reasoning.getByRole('button', { name: /Thinking/ });
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+  await expect(reasoning.getByTestId('markdown')).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).conversationFixture.requests.filter((request: any) =>
+          request.path.includes('/blocks/')
+        ).length
+    )
+  ).toBe(0);
+  await header.click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).conversationFixture.requests.filter((request: any) =>
+            request.path.includes('/blocks/')
+          ).length
+      )
+    )
+    .toBeGreaterThan(0);
+  await expect(reasoning).toContainText('Retained detailed reasoning.');
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.state.runs[0].state.last_run_attempt_id = 'new-attempt';
+    fixture.updateBlock(
+      fixture.block('restarted', 'notice', { text: 'Another attempt started' })
+    );
+  });
+  await expect(header).not.toHaveAttribute('data-active', 'true');
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+});
+
 test('multiple runs use one session stream and token updates preserve draft and focus', async ({
   page,
 }) => {

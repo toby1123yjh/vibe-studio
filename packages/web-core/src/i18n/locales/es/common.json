@@ -58,6 +58,13 @@
     "selectOption": "Seleccionar una opción..."
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "Parámetros",
+      "rawParameters": "Parámetros originales",
+      "result": "Resultado",
+      "callId": "Llamada de herramienta",
+      "locations": "Archivos y ubicaciones"
+    },
     "deniedByUser": "{{toolName}} denegado por el usuario",
     "output": "Salida",
     "plan": "Plan",

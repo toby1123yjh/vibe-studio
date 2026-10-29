@@ -31,7 +31,7 @@ function ConversationVirtualizationFixture() {
   const { virtualItems, totalSize, measureElement, virtualizer } =
     useConversationVirtualizer({
       rows: currentRows,
-      totalRowCount: currentRows.length,
+      pinnedTailCount: 32,
       scrollContainerRef,
     });
   const measurementCache = React.useRef(virtualizer.measurementsCache);

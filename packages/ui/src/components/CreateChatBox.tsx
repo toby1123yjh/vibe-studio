@@ -5,12 +5,14 @@ import { Checkbox } from './Checkbox';
 import { ChatBoxBase, VisualVariant, type DropzoneProps } from './ChatBoxBase';
 import { DropdownMenuItem, DropdownMenuLabel } from './Dropdown';
 import { PrimaryButton } from './PrimaryButton';
+import { ChatComposerActivity } from './ChatComposerActivity';
 import type { LocalAttachmentMetadata } from './WorkspaceContext';
 import { ToolbarDropdown, ToolbarIconButton } from './Toolbar';
 
 export interface EditorProps {
   value: string;
   onChange: (value: string) => void;
+  getValue?: () => string;
 }
 
 export interface ModelSelectorProps<TExecutorConfig = unknown> {
@@ -47,7 +49,7 @@ export interface CreateChatBoxEditorRenderProps<
 > {
   value: string;
   onChange: (value: string) => void;
-  onCmdEnter: () => void;
+  onCmdEnter: (markdown: string) => void;
   disabled: boolean;
   repoIds?: string[];
   repoId?: string;
@@ -61,7 +63,7 @@ interface CreateChatBoxProps<TExecutor extends string = string> {
   renderEditor: (props: CreateChatBoxEditorRenderProps<TExecutor>) => ReactNode;
   agentIcon?: ReactNode;
   agentBrand?: string;
-  onSend: () => void;
+  onSend: (markdown: string) => void;
   isSending: boolean;
   disabled?: boolean;
   executor: ExecutorProps<TExecutor>;
@@ -116,13 +118,16 @@ export function CreateChatBox<TExecutor extends string = string>({
 }: CreateChatBoxProps<TExecutor>) {
   const { t } = useTranslation(['common', 'tasks']);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isDisabled = disabled || isSending;
+  const isDisabled = disabled;
   const canSend =
-    editor.value.trim().length > 0 && !isDisabled && !sendDisabled;
+    editor.value.trim().length > 0 &&
+    !isDisabled &&
+    !isSending &&
+    !sendDisabled;
 
-  const handleCmdEnter = () => {
-    if (canSend) {
-      onSend();
+  const handleCmdEnter = (markdown: string) => {
+    if (markdown.trim() && !isDisabled && !isSending && !sendDisabled) {
+      onSend(markdown);
     }
   };
 
@@ -159,6 +164,14 @@ export function CreateChatBox<TExecutor extends string = string>({
       visualVariant={VisualVariant.NORMAL}
       dropzone={dropzone}
       modelSelector={modelSelector}
+      status={
+        isSending ? (
+          <ChatComposerActivity
+            state="sending"
+            label={t('tasks:conversation.actions.sending')}
+          />
+        ) : undefined
+      }
       headerLeft={
         <>
           <span
@@ -249,10 +262,11 @@ export function CreateChatBox<TExecutor extends string = string>({
       }
       footerRight={
         <PrimaryButton
-          onClick={onSend}
+          onClick={() => handleCmdEnter(editor.getValue?.() ?? editor.value)}
           disabled={!canSend}
-          actionIcon={isSending ? 'spinner' : undefined}
-          value={
+          className="min-w-20 justify-center"
+          value={t('tasks:conversation.workspace.create')}
+          aria-label={
             isSending
               ? t('tasks:conversation.workspace.creating')
               : t('tasks:conversation.workspace.create')

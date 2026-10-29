@@ -74,7 +74,7 @@ export interface TaskCommentsEditorProps {
   disabled?: boolean;
   autoFocus?: boolean;
   localAttachments?: LocalAttachmentMetadata[];
-  onCmdEnter?: () => void;
+  onCmdEnter?: (markdown: string) => void;
   onPasteFiles?: (files: File[]) => void;
   editorRef?: Ref<unknown>;
 }
@@ -83,12 +83,12 @@ interface TaskCommentsSectionProps {
   comments: TaskCommentData[];
   commentInput: string;
   onCommentInputChange: (value: string) => void;
-  onSubmitComment: () => void;
+  onSubmitComment: (markdown?: string) => void;
   editingCommentId: string | null;
   editingValue: string;
   onEditingValueChange: (value: string) => void;
   onStartEdit: (commentId: string) => void;
-  onSaveEdit: () => void;
+  onSaveEdit: (markdown?: string) => void;
   onCancelEdit: () => void;
   onDeleteComment: (id: string) => void;
   reactionsByCommentId: Map<string, ReactionGroup[]>;
@@ -221,7 +221,7 @@ export function TaskCommentsSection({
             )}
             <button
               type="button"
-              onClick={onSubmitComment}
+              onClick={() => onSubmitComment()}
               disabled={!commentInput.trim() || isUploading}
               className={cn(
                 'size-[22px] rounded-full bg-panel border border-border',
@@ -252,7 +252,7 @@ interface CommentItemProps {
   editValue: string;
   onEditValueChange: (value: string) => void;
   onStartEdit: () => void;
-  onSaveEdit: () => void;
+  onSaveEdit: (markdown?: string) => void;
   onCancelEdit: () => void;
   onDelete: () => void;
   reactions: ReactionGroup[];
@@ -338,7 +338,7 @@ function CommentItem({
             </button>
             <button
               type="button"
-              onClick={onSaveEdit}
+              onClick={() => onSaveEdit()}
               disabled={!editValue.trim()}
               className={cn(
                 'px-base py-half bg-brand text-on-brand rounded-sm',

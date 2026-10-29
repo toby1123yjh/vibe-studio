@@ -67,7 +67,8 @@ export function useSessionSend({
   executorConfig,
 }: UseSessionSendOptions): UseSessionSendResult {
   const hostId = useHostId();
-  const { store: conversationStore } = useCanonicalAgentSession();
+  const { store: conversationStore, applyRunSnapshot } =
+    useCanonicalAgentSession();
   const scope = {
     hostId,
     workspaceId,
@@ -82,6 +83,7 @@ export function useSessionSend({
   );
   const { mutateAsync: createSession } = useCreateSession({
     onSessionCreated: handleSessionCreated,
+    onRunSnapshot: applyRunSnapshot,
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -155,6 +157,7 @@ export function useSessionSend({
             },
             hostId
           );
+          applyRunSnapshot(sessionId, run);
           acceptConversationSend(handle, run.agent_run_id);
           return true;
         } catch (e: unknown) {
@@ -175,6 +178,7 @@ export function useSessionSend({
       createSession,
       executorConfig,
       conversationStore,
+      applyRunSnapshot,
     ]
   );
 

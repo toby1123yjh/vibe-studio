@@ -7,6 +7,7 @@ export default defineConfig({
     '**/agent-runtime/model/canonicalAgentConversation.test.ts',
     '**/agent-runtime/model/agentConversationStore.test.ts',
     '**/agent-runtime/model/streamingMarkdown.test.ts',
+    '**/workspace-chat/model/pendingConversationRows.test.ts',
     'shared/lib/workspaceContext.test.ts',
   ],
   fullyParallel: true,

@@ -7,8 +7,11 @@ import type {
 } from "../../../../packages/web-core/src/features/projects/model/project-kanban";
 import { ProjectKanbanView } from "../../../../packages/web-core/src/features/projects/ui/ProjectKanbanView";
 import { ProjectKanbanSkeleton } from "../../../../packages/web-core/src/features/projects/ui/ProjectKanbanSkeleton";
+import i18n from "../../../../packages/web-core/src/i18n/config";
 import "../../../../packages/ui/src/styles/tokens.css";
 import "./style.css";
+
+void i18n.changeLanguage("en");
 
 const task: ExecutionSummary = {
   id: "task-1",

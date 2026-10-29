@@ -58,6 +58,13 @@
     "selectOption": "옵션 선택..."
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "매개변수",
+      "rawParameters": "원본 매개변수",
+      "result": "결과",
+      "callId": "도구 호출",
+      "locations": "파일 및 위치"
+    },
     "deniedByUser": "{{toolName}} 사용자에 의해 거부됨",
     "output": "출력",
     "plan": "계획",

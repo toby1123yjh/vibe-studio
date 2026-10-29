@@ -14,7 +14,12 @@ import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
 import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
-import { TRANSFORMERS, type Transformer } from '@lexical/markdown';
+import {
+  $convertFromMarkdownString,
+  $convertToMarkdownString,
+  TRANSFORMERS,
+  type Transformer,
+} from '@lexical/markdown';
 import { MarkdownShortcutPlugin } from '@lexical/react/LexicalMarkdownShortcutPlugin';
 import { CodeBlockEscapePlugin } from '@vibe/ui/components/CodeBlockEscapePlugin';
 import { InlineCodeBoundaryPlugin } from '@vibe/ui/components/InlineCodeBoundaryPlugin';
@@ -68,7 +73,12 @@ import { CODE_HIGHLIGHT_CLASSES } from '@vibe/ui/lib/code-highlight-theme';
 import { LinkNode } from '@lexical/link';
 import { TableNode, TableRowNode, TableCellNode } from '@lexical/table';
 import { TablePlugin } from '@lexical/react/LexicalTablePlugin';
-import { type EditorState, type LexicalEditor } from 'lexical';
+import {
+  $getRoot,
+  $setSelection,
+  type EditorState,
+  type LexicalEditor,
+} from 'lexical';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { useDiffPaths } from '@/shared/stores/useWorkspaceDiffStore';
 import { useExecutorTooling } from '@/shared/hooks/useExecutorDiscovery';
@@ -114,8 +124,8 @@ type WysiwygProps = {
   selectedSkills?: SelectedSkill[];
   /** Called when structured Codex skill selections change. */
   onSelectedSkillsChange?: (skills: SelectedSkill[]) => void;
-  onCmdEnter?: () => void;
-  onShiftCmdEnter?: () => void;
+  onCmdEnter?: (markdown: string) => void;
+  onShiftCmdEnter?: (markdown: string) => void;
   /** Keyboard shortcut mode for sending messages */
   sendShortcut?: SendMessageShortcut;
   /** Task attempt ID for resolving .vibe-attachments paths */
@@ -154,6 +164,10 @@ type WysiwygProps = {
 export interface WYSIWYGEditorRef {
   /** Focus the editor */
   focus: () => void;
+  /** Read the current editor, including updates not yet reflected in React. */
+  getMarkdown: () => string;
+  /** Clear an accepted submission in the current Lexical update. */
+  clear: () => void;
 }
 
 const GENERIC_CLIPBOARD_IMAGE_BASE_NAMES = new Set([
@@ -313,6 +327,7 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
     // Ref to capture the Lexical editor instance for imperative methods
     const editorInstanceRef = useRef<LexicalEditor | null>(null);
     const selectedSkillsRef = useRef(selectedSkills);
+    const initialInputRef = useRef({ value, disabled });
 
     useEffect(() => {
       selectedSkillsRef.current = selectedSkills;
@@ -325,11 +340,6 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
     // current, object is not extensible".
     const safeRef =
       typeof ref === 'function' || (ref && 'current' in ref) ? ref : null;
-    useImperativeHandle(safeRef, () => ({
-      focus: () => {
-        editorInstanceRef.current?.focus();
-      },
-    }));
 
     // Copy button state
     const [copied, setCopied] = useState(false);
@@ -478,9 +488,50 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
     const { ImageNode, IMAGE_TRANSFORMER, $isImageNode } = imageNodeDefinition;
     const { AttachmentNode, ATTACHMENT_TRANSFORMER } = attachmentNodeDefinition;
 
+    const allTransformers: Transformer[] = useMemo(
+      () => [
+        TABLE_TRANSFORMER,
+        IMAGE_TRANSFORMER,
+        ATTACHMENT_TRANSFORMER,
+        PR_COMMENT_EXPORT_TRANSFORMER,
+        PR_COMMENT_TRANSFORMER,
+        COMPONENT_INFO_EXPORT_TRANSFORMER,
+        COMPONENT_INFO_TRANSFORMER,
+        ...TRANSFORMERS,
+      ],
+      [ATTACHMENT_TRANSFORMER, IMAGE_TRANSFORMER]
+    );
+
+    useImperativeHandle(
+      safeRef,
+      () => ({
+        focus: () => editorInstanceRef.current?.focus(),
+        getMarkdown: () =>
+          editorInstanceRef.current?.read(() =>
+            $convertToMarkdownString(allTransformers)
+          ) ?? value,
+        clear: () => {
+          editorInstanceRef.current?.update(() => {
+            const root = $getRoot();
+            root.clear();
+            root.selectEnd();
+          });
+        },
+      }),
+      [allTransformers, value]
+    );
+
     const initialConfig = useMemo(
       () => ({
         namespace: 'md-wysiwyg',
+        editable: !initialInputRef.current.disabled,
+        editorState: () => {
+          const initialValue = initialInputRef.current.value;
+          if (initialValue.trim()) {
+            $convertFromMarkdownString(initialValue, allTransformers);
+            $setSelection(null);
+          }
+        },
         onError: console.error,
         theme: {
           paragraph: 'mb-1 last:mb-0',
@@ -536,23 +587,7 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
           TableCellNode,
         ],
       }),
-      [AttachmentNode, ImageNode]
-    );
-
-    // Full markdown transformers for both edit and display modes.
-    // Custom element transformers come first for matching precedence.
-    const allTransformers: Transformer[] = useMemo(
-      () => [
-        TABLE_TRANSFORMER,
-        IMAGE_TRANSFORMER,
-        ATTACHMENT_TRANSFORMER,
-        PR_COMMENT_EXPORT_TRANSFORMER,
-        PR_COMMENT_TRANSFORMER,
-        COMPONENT_INFO_EXPORT_TRANSFORMER,
-        COMPONENT_INFO_TRANSFORMER,
-        ...TRANSFORMERS,
-      ],
-      [ATTACHMENT_TRANSFORMER, IMAGE_TRANSFORMER]
+      [AttachmentNode, ImageNode, allTransformers]
     );
 
     // Memoized handlers for ContentEditable to prevent re-renders
@@ -612,6 +647,7 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
                   onEditorStateChange={onEditorStateChange}
                   editable={!disabled}
                   transformers={allTransformers}
+                  initialValue={initialInputRef.current.value}
                 />
                 {!disabled && !showStaticToolbar && <ToolbarPlugin />}
 
@@ -684,7 +720,6 @@ const WYSIWYGEditor = forwardRef<WYSIWYGEditorRef, WysiwygProps>(
                       <KeyboardCommandsPlugin
                         onCmdEnter={onCmdEnter}
                         onShiftCmdEnter={onShiftCmdEnter}
-                        onChange={onChange}
                         transformers={allTransformers}
                         sendShortcut={sendShortcut}
                       />

@@ -14,6 +14,8 @@ interface LinkedTask {
 }
 
 export interface CreateModeContextValue {
+  /** UI draft identity for a task's separate creation attempts. */
+  draftId?: string;
   initialProjectId?: string;
   repos: Repo[];
   addRepo: (repo: Repo) => void;

@@ -189,6 +189,33 @@ function draftReducer(state: DraftState, action: DraftAction): DraftState {
 
 const DRAFT_WORKSPACE_ID = '00000000-0000-0000-0000-000000000001';
 
+// Keep only in-flight snapshots so a replacement composer can recover its
+// latest draft while an earlier PUT and its scratch stream are still pending.
+const pendingCreateDraftWrites = new Map<
+  string,
+  { data: DraftWorkspaceData | null; completion: Promise<void> }
+>();
+
+function writeCreateDraftInOrder(
+  scope: string,
+  data: DraftWorkspaceData | null,
+  write: () => Promise<void>
+): Promise<void> {
+  const previous = pendingCreateDraftWrites.get(scope);
+  const completion = previous
+    ? previous.completion.then(write, write)
+    : write();
+  const pending = { data, completion };
+  pendingCreateDraftWrites.set(scope, pending);
+  const release = () => {
+    if (pendingCreateDraftWrites.get(scope) === pending) {
+      pendingCreateDraftWrites.delete(scope);
+    }
+  };
+  void completion.then(release, release);
+  return completion;
+}
+
 // ============================================================================
 // Hook
 // ============================================================================
@@ -234,6 +261,7 @@ export function useCreateModeState({
 }: UseCreateModeStateParams): UseCreateModeStateResult {
   const { profiles, config, loading: systemLoading } = useUserSystem();
   const scratchId = draftId ?? DRAFT_WORKSPACE_ID;
+  const draftScope = JSON.stringify([hostId ?? null, scratchId]);
 
   const {
     scratch,
@@ -242,7 +270,24 @@ export function useCreateModeState({
     isLoading: scratchLoading,
   } = useScratch(ScratchType.DRAFT_WORKSPACE, scratchId);
 
-  const [state, dispatch] = useReducer(draftReducer, draftInitialState);
+  const [state, dispatchState] = useReducer(draftReducer, draftInitialState);
+  const currentStateRef = useRef(state);
+  const isMountedRef = useRef(true);
+  const stageStateSaveRef = useRef<(nextState: DraftState) => void>(() => {});
+  const dispatch = useCallback((action: DraftAction) => {
+    if (!isMountedRef.current) return;
+    const nextState = draftReducer(currentStateRef.current, action);
+    currentStateRef.current = nextState;
+    // Stage before navigation can unmount this provider in the same batch.
+    stageStateSaveRef.current(nextState);
+    dispatchState(action);
+  }, []);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Capture initial seed state once on mount.
   const seedStateRef = useRef<CreateModeInitialState | null>(
@@ -273,8 +318,10 @@ export function useCreateModeState({
 
     hasInitialized.current = true;
     const seedState = seedStateRef.current;
-    const scratchData: DraftWorkspaceData | undefined =
-      scratch?.payload?.type === 'DRAFT_WORKSPACE'
+    const pending = pendingCreateDraftWrites.get(draftScope);
+    const scratchData: DraftWorkspaceData | undefined = pending
+      ? (pending.data ?? undefined)
+      : scratch?.payload?.type === 'DRAFT_WORKSPACE'
         ? scratch.payload.data
         : undefined;
 
@@ -306,6 +353,8 @@ export function useCreateModeState({
     config?.executor_profile,
     scratch,
     isValidProfile,
+    draftScope,
+    dispatch,
   ]);
 
   // ============================================================================
@@ -412,6 +461,7 @@ export function useCreateModeState({
     preferredRepos,
     projectDefaultsStatus,
     state.linkedTask?.remoteProjectId,
+    dispatch,
   ]);
 
   // ============================================================================
@@ -490,64 +540,87 @@ export function useCreateModeState({
     state.linkedTask?.remoteProjectId,
     state.repos.length,
     state.directFolderPath,
+    dispatch,
   ]);
 
   // ============================================================================
   // Persistence to scratch (debounced)
   // ============================================================================
-  const { debounced: debouncedSave } = useDebouncedCallback(
-    async (data: DraftWorkspaceData) => {
+  const hasPersistedDraft = scratch !== null;
+  const pendingSaveRef = useRef<(() => Promise<void>) | null>(null);
+  const { debounced: debouncedSave, cancel: cancelDebouncedSave } =
+    useDebouncedCallback(() => {
+      const save = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      void save?.();
+    }, 500);
+
+  useEffect(
+    () => () => {
+      // Capture an immutable snapshot and writer for the original Host. A
+      // rapid close must neither lose newer typing nor revive a sent draft.
+      const save = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      cancelDebouncedSave();
+      void save?.();
+    },
+    [draftScope, cancelDebouncedSave]
+  );
+
+  const stageStateSave = useCallback(
+    (nextState: DraftState) => {
+      if (nextState.phase !== 'ready') return;
+
+      const data: DraftWorkspaceData = {
+        message: nextState.message,
+        repos: nextState.repos.map((r) => ({
+          repo_id: r.repo.id,
+          target_branch: r.targetBranch ?? '',
+        })),
+        directory_path: nextState.directFolderPath.trim() || null,
+        executor_config: nextState.executorConfig ?? null,
+        linked_task: nextState.linkedTask
+          ? {
+              task_id: nextState.linkedTask.taskId,
+              simple_id: nextState.linkedTask.simpleId ?? '',
+              title: nextState.linkedTask.title ?? '',
+              remote_project_id: nextState.linkedTask.remoteProjectId,
+            }
+          : null,
+        attachments: nextState.attachments,
+      };
       const isEmpty =
         !data.message.trim() &&
         data.repos.length === 0 &&
         !data.directory_path &&
         !data.executor_config &&
+        !data.linked_task &&
         data.attachments.length === 0;
+      if (
+        isEmpty &&
+        !hasPersistedDraft &&
+        !pendingCreateDraftWrites.has(draftScope) &&
+        !pendingSaveRef.current
+      )
+        return;
 
-      if (isEmpty && !scratch) return;
-
-      try {
-        await updateScratch({
-          payload: { type: 'DRAFT_WORKSPACE', data },
-        });
-      } catch (e) {
-        console.error('[useCreateModeState] Failed to save:', e);
-      }
+      pendingSaveRef.current = async () => {
+        try {
+          await writeCreateDraftInOrder(draftScope, data, () =>
+            updateScratch({ payload: { type: 'DRAFT_WORKSPACE', data } })
+          );
+        } catch (e) {
+          console.error('[useCreateModeState] Failed to save:', e);
+        }
+      };
+      debouncedSave();
     },
-    500
+    [debouncedSave, draftScope, updateScratch, hasPersistedDraft]
   );
-
+  stageStateSaveRef.current = stageStateSave;
   useEffect(() => {
-    if (state.phase !== 'ready') return;
-
-    debouncedSave({
-      message: state.message,
-      repos: state.repos.map((r) => ({
-        repo_id: r.repo.id,
-        target_branch: r.targetBranch ?? '',
-      })),
-      directory_path: state.directFolderPath.trim() || null,
-      executor_config: state.executorConfig ?? null,
-      linked_task: state.linkedTask
-        ? {
-            task_id: state.linkedTask.taskId,
-            simple_id: state.linkedTask.simpleId ?? '',
-            title: state.linkedTask.title ?? '',
-            remote_project_id: state.linkedTask.remoteProjectId,
-          }
-        : null,
-      attachments: state.attachments,
-    });
-  }, [
-    state.phase,
-    state.message,
-    state.repos,
-    state.directFolderPath,
-    state.linkedTask,
-    state.executorConfig,
-    state.attachments,
-    debouncedSave,
-  ]);
+    stageStateSave(state);
+  }, [state, stageStateSave]);
 
   // ============================================================================
   // Resolve linked issue details from Electric (when simpleId/title are missing)
@@ -573,7 +646,7 @@ export function useCreateModeState({
         title: task.title,
       });
     }
-  }, [needsTaskResolution, tasksForResolution, state.linkedTask]);
+  }, [needsTaskResolution, tasksForResolution, state.linkedTask, dispatch]);
 
   // ============================================================================
   // Derived state
@@ -595,53 +668,75 @@ export function useCreateModeState({
   // ============================================================================
   // Actions
   // ============================================================================
-  const setMessage = useCallback((message: string) => {
-    dispatch({ type: 'SET_MESSAGE', message });
-  }, []);
+  const setMessage = useCallback(
+    (message: string) => {
+      dispatch({ type: 'SET_MESSAGE', message });
+    },
+    [dispatch]
+  );
 
-  const addRepo = useCallback((repo: Repo) => {
-    // Branch is always selected manually by the user.
-    dispatch({ type: 'ADD_REPO', repo, targetBranch: null });
-  }, []);
+  const addRepo = useCallback(
+    (repo: Repo) => {
+      // Branch is always selected manually by the user.
+      dispatch({ type: 'ADD_REPO', repo, targetBranch: null });
+    },
+    [dispatch]
+  );
 
-  const removeRepo = useCallback((repoId: string) => {
-    dispatch({ type: 'REMOVE_REPO', repoId });
-  }, []);
+  const removeRepo = useCallback(
+    (repoId: string) => {
+      dispatch({ type: 'REMOVE_REPO', repoId });
+    },
+    [dispatch]
+  );
 
   const clearRepos = useCallback(() => {
     dispatch({ type: 'CLEAR_REPOS' });
-  }, []);
+  }, [dispatch]);
 
-  const setTargetBranch = useCallback((repoId: string, branch: string) => {
-    dispatch({ type: 'SET_TARGET_BRANCH', repoId, branch });
-  }, []);
+  const setTargetBranch = useCallback(
+    (repoId: string, branch: string) => {
+      dispatch({ type: 'SET_TARGET_BRANCH', repoId, branch });
+    },
+    [dispatch]
+  );
 
-  const setDirectFolderPath = useCallback((path: string) => {
-    dispatch({ type: 'SET_DIRECT_FOLDER_PATH', path });
-  }, []);
+  const setDirectFolderPath = useCallback(
+    (path: string) => {
+      dispatch({ type: 'SET_DIRECT_FOLDER_PATH', path });
+    },
+    [dispatch]
+  );
 
   const clearDraft = useCallback(async () => {
+    pendingSaveRef.current = null;
+    cancelDebouncedSave();
+    // Clear local state before awaiting I/O so a late delete cannot reset a
+    // replacement draft that the user has already started editing.
+    dispatch({ type: 'CLEAR' });
     try {
-      await deleteScratch();
-      dispatch({ type: 'CLEAR' });
+      await writeCreateDraftInOrder(draftScope, null, deleteScratch);
     } catch (e) {
       console.error('[useCreateModeState] Failed to clear:', e);
     }
-  }, [deleteScratch]);
+  }, [deleteScratch, draftScope, cancelDebouncedSave, dispatch]);
 
   const clearLinkedTask = useCallback(() => {
     dispatch({ type: 'CLEAR_LINKED_TASK' });
-  }, []);
+  }, [dispatch]);
 
-  const setExecutorConfig = useCallback((config: ExecutorConfig | null) => {
-    dispatch({ type: 'SET_EXECUTOR_CONFIG', config });
-  }, []);
+  const setExecutorConfig = useCallback(
+    (config: ExecutorConfig | null) => {
+      dispatch({ type: 'SET_EXECUTOR_CONFIG', config });
+    },
+    [dispatch]
+  );
 
   const setAttachments = useCallback(
     (attachments: DraftWorkspaceAttachment[]) => {
       dispatch({ type: 'SET_ATTACHMENTS', attachments });
     },
-    []
+    [dispatch]
   );
 
   return {

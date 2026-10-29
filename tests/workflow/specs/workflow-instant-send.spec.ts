@@ -153,6 +153,7 @@ test("an empty history echoes Enter immediately and keeps the message through HT
   // The request remains held: this must be real history, not the editor text.
   await expect(historyRows(panel, text)).toHaveCount(1);
   await expect(historyRows(panel, text)).toBeVisible();
+  const echoElement = await historyRows(panel, text).elementHandle();
   await expect(editor).toHaveText("");
   await expect(editor).toBeFocused();
   expect(await editorHandle!.evaluate((element) => element.isConnected)).toBe(
@@ -173,9 +174,24 @@ test("an empty history echoes Enter immediately and keeps the message through HT
   await expect(historyRows(panel, text)).toHaveCount(1);
   await expect(editor).toHaveText(newerDraft);
   await expect(editor).toBeFocused();
+  // The response already carries the real Run state; a slower conversation
+  // stream must not leave the composer idle between acknowledgement and history.
+  await expect(
+    panel.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.locator("[data-composer-activity='running']"),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: "Send", exact: true }),
+  ).toHaveCount(0);
 
   api.publishUserMessage("analysis-session", text, "new-empty-turn");
   await expect(historyRows(panel, text)).toHaveCount(1);
+  expect(
+    await echoElement!.evaluate((element) => element.isConnected),
+    "Acknowledgement should retain the same message seat",
+  ).toBe(true);
   await expect(
     panel.getByRole("button", { name: "Stop", exact: true }),
   ).toBeVisible();
@@ -377,4 +393,202 @@ test("closing and reopening a pending conversation retains its single echo witho
   await expect(historyRows(panel, text)).toHaveCount(1);
   await expect(editor).toHaveText(newer);
   expect(submissions).toBe(1);
+});
+
+for (const historySize of [0, 100, 500]) {
+  test(`submission feedback paints without waiting for HTTP with ${historySize} history blocks`, async ({
+    page,
+  }) => {
+    const api = await mockWorkflowConversations(page, {
+      initialHistory: historySize > 0,
+      initialHistorySize: historySize,
+    });
+    const acknowledgement = deferred();
+    await page.route(
+      "**/api/sessions/analysis-session/follow-up",
+      async (route) => {
+        await acknowledgement.promise;
+        await route.fulfill({
+          json: {
+            success: true,
+            data: api.acknowledgement("analysis-session", "measured-send"),
+          },
+        });
+      },
+    );
+    const { panel, editor } = await openConversation(page);
+    const text = `Immediate submission with ${historySize} stable blocks`;
+    await editor.fill(text);
+    await expect(
+      panel.getByRole("button", { name: "Send", exact: true }),
+    ).toBeEnabled();
+    await page.evaluate((text) => {
+      const panel = document.querySelector(
+        '[data-testid="workflow-conversation-panel"]',
+      )!;
+      const editor = panel.querySelector(
+        '[data-chatbox-container] [data-lexical-editor="true"]',
+      )!;
+      const timing = {
+        start: 0,
+        committed: 0,
+        frame: 0,
+        events: [] as Array<{ name: string; duration: number }>,
+      };
+      const scope = window as Window & { sendFeedbackTiming?: typeof timing };
+      scope.sendFeedbackTiming = timing;
+      const hasEcho = () =>
+        [...panel.querySelectorAll("[data-semantic-key]")].some((row) =>
+          row.textContent?.includes(text),
+        );
+      const observer = new MutationObserver(() => {
+        if (!timing.start || !hasEcho()) return;
+        timing.committed ||= performance.now();
+        observer.disconnect();
+      });
+      observer.observe(panel, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      const eventObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.name === "keydown")
+            timing.events.push({ name: entry.name, duration: entry.duration });
+        }
+      });
+      eventObserver.observe({ type: "event", durationThreshold: 16 });
+      editor.addEventListener(
+        "keydown",
+        () => {
+          timing.start = performance.now();
+          const sample = () => {
+            if (hasEcho()) {
+              timing.frame = performance.now();
+              // Read Event Timing after the browser has presented the update.
+              requestAnimationFrame(() => eventObserver.disconnect());
+            } else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        },
+        { once: true, capture: true },
+      );
+    }, text);
+    await editor.press("Enter");
+    await expect(historyRows(panel, text)).toHaveCount(1);
+    await expect(editor).toHaveText("");
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const scope = window as Window & {
+            sendFeedbackTiming?: { frame: number };
+          };
+          return scope.sendFeedbackTiming?.frame ?? 0;
+        }),
+      )
+      .toBeGreaterThan(0);
+    const timing = await page.evaluate((historySize) => {
+      const scope = window as Window & {
+        sendFeedbackTiming?: {
+          start: number;
+          committed: number;
+          frame: number;
+          events: Array<{ name: string; duration: number }>;
+        };
+      };
+      const timing = scope.sendFeedbackTiming!;
+      return {
+        historySize,
+        domFeedbackMs: timing.committed - timing.start,
+        nextFrameSampleMs: timing.frame - timing.start,
+        eventTiming: timing.events,
+      };
+    }, historySize);
+    await test.info().attach("submission-feedback-timing", {
+      body: JSON.stringify(timing, null, 2),
+      contentType: "application/json",
+    });
+    // Frame sampling is an observation, not an exact presentation timestamp.
+    // Keep a generous regression bound for the development browser harness.
+    expect(timing.domFeedbackMs).toBeGreaterThanOrEqual(0);
+    expect(timing.domFeedbackMs).toBeLessThan(500);
+    await expect(editor).toBeFocused();
+    acknowledgement.resolve();
+  });
+}
+
+test("reading upwards interrupts send follow and a late acknowledgement keeps that reading position", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page, {
+    initialHistorySize: 100,
+  });
+  const acknowledgement = deferred();
+  await page.route(
+    "**/api/sessions/analysis-session/follow-up",
+    async (route) => {
+      await acknowledgement.promise;
+      await route.fulfill({
+        json: {
+          success: true,
+          data: api.acknowledgement("analysis-session", "reading-send"),
+        },
+      });
+    },
+  );
+  const { panel, editor } = await openConversation(page);
+  const text = "Keep reading history after this submission";
+  await editor.fill(text);
+  await editor.press("Enter");
+  await expect(historyRows(panel, text)).toBeInViewport();
+  const scroll = panel.locator('[style*="overflow-anchor: none"]');
+  await scroll.hover();
+  await page.mouse.wheel(0, -550);
+  await expect
+    .poll(() =>
+      scroll.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeGreaterThan(200);
+  const anchor = await scroll.evaluate(async (element) => {
+    // Let newly visible virtual rows finish their first size measurements.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const top = element.getBoundingClientRect().top;
+    const row = [
+      ...element.querySelectorAll<HTMLElement>("[data-semantic-key]"),
+    ].find((row) => row.getBoundingClientRect().bottom > top)!;
+    return {
+      key: row.dataset.semanticKey!,
+      top: row.getBoundingClientRect().top - top,
+    };
+  });
+  const response = page.waitForResponse((item) =>
+    item.url().endsWith("/analysis-session/follow-up"),
+  );
+  acknowledgement.resolve();
+  await (await response).finished();
+  api.publishUserMessage("analysis-session", text, "reading-send");
+  await expect(
+    panel.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(async () =>
+      scroll.evaluate((element, anchor) => {
+        const row = [
+          ...element.querySelectorAll<HTMLElement>("[data-semantic-key]"),
+        ].find((row) => row.dataset.semanticKey === anchor.key);
+        return row
+          ? Math.abs(
+              row.getBoundingClientRect().top -
+                element.getBoundingClientRect().top -
+                anchor.top,
+            )
+          : Infinity;
+      }, anchor),
+    )
+    .toBeLessThan(4);
 });

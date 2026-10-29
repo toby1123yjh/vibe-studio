@@ -27,19 +27,22 @@ export const CommentWidgetLine = memo(function CommentWidgetLine({
     onCancel();
   }, [setDraft, widgetKey, onCancel]);
 
-  const handleSave = useCallback(() => {
-    if (value.trim()) {
-      addComment({
-        filePath: draft.filePath,
-        side: draft.side,
-        lineNumber: draft.lineNumber,
-        text: value.trim(),
-        codeLine: draft.codeLine,
-      });
-    }
-    setDraft(widgetKey, null);
-    onSave();
-  }, [value, draft, setDraft, widgetKey, onSave, addComment]);
+  const handleSave = useCallback(
+    (markdown = value) => {
+      if (markdown.trim()) {
+        addComment({
+          filePath: draft.filePath,
+          side: draft.side,
+          lineNumber: draft.lineNumber,
+          text: markdown.trim(),
+          codeLine: draft.codeLine,
+        });
+      }
+      setDraft(widgetKey, null);
+      onSave();
+    },
+    [value, draft, setDraft, widgetKey, onSave, addComment]
+  );
 
   return (
     <CommentCard
@@ -48,7 +51,7 @@ export const CommentWidgetLine = memo(function CommentWidgetLine({
         <>
           <PrimaryButton
             variant="default"
-            onClick={handleSave}
+            onClick={() => handleSave()}
             disabled={!value.trim()}
           >
             {t('comments.addReviewComment')}

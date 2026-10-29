@@ -94,6 +94,11 @@ export function ProjectKanbanContainer({
     initialPageParam: null as ExecutionCursor | null,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: 10_000,
+    // Keep an open board current, including when an idle session starts running.
+    // Leave failures to the existing explicit Retry instead of retrying pages forever.
+    refetchInterval: (query) =>
+      query.state.status === 'error' ? false : 5_000,
+    refetchIntervalInBackground: false,
   });
   const {
     data: executionPages,

@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
+import type { AgentRunPortSnapshot } from 'shared/types';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { agentConversationApi } from '@/shared/lib/agentConversationApi';
 import { createHmrContext } from '@/shared/lib/hmrContext';
@@ -19,6 +20,7 @@ import {
 export interface AgentRunSessionContextValue
   extends ConversationSessionSnapshot {
   readonly store: AgentConversationStore | null;
+  applyRunSnapshot(sessionId: string, snapshot: AgentRunPortSnapshot): void;
 }
 
 const StoreContext = createHmrContext<AgentConversationStore | null>(
@@ -65,13 +67,27 @@ export function useAgentConversationStore() {
 
 export function useAgentRunSession(): AgentRunSessionContextValue {
   const store = useContext(StoreContext);
+  const hostId = useHostId();
+  const applyRunSnapshot = useCallback(
+    (sessionId: string, snapshot: AgentRunPortSnapshot) => {
+      getAgentConversationStore(
+        sessionId,
+        hostId,
+        agentConversationApi
+      ).applyRunSnapshot(snapshot);
+    },
+    [hostId]
+  );
   const source = store ?? EMPTY_STORE;
   const snapshot = useSyncExternalStore(
     source.subscribe,
     source.getSnapshot,
     source.getSnapshot
   );
-  return useMemo(() => ({ ...snapshot, store }), [snapshot, store]);
+  return useMemo(
+    () => ({ ...snapshot, store, applyRunSnapshot }),
+    [snapshot, store, applyRunSnapshot]
+  );
 }
 
 export function useConversationBlock(blockId: string) {

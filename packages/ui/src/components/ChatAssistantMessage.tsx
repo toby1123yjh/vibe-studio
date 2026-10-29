@@ -16,5 +16,12 @@ export function ChatAssistantMessage({
   workspaceId,
   renderMarkdown,
 }: ChatAssistantMessageProps) {
-  return renderMarkdown({ content, workspaceId });
+  return (
+    <div
+      className="min-w-0 text-normal leading-relaxed [overflow-wrap:anywhere] [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto"
+      data-chat-message="assistant"
+    >
+      {renderMarkdown({ content, workspaceId })}
+    </div>
+  );
 }

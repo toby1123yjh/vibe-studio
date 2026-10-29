@@ -1,5 +1,4 @@
-import { useEffect } from 'react';
-import { flushSync } from 'react-dom';
+import { useEffect, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {
   $getSelection,
@@ -20,9 +19,8 @@ import { useTypeaheadOpen } from './TypeaheadOpenContext';
 type SendMessageShortcut = 'ModifierEnter' | 'Enter';
 
 type Props = {
-  onCmdEnter?: () => void;
-  onShiftCmdEnter?: () => void;
-  onChange?: (markdown: string) => void;
+  onCmdEnter?: (markdown: string) => void;
+  onShiftCmdEnter?: (markdown: string) => void;
   transformers?: Transformer[];
   sendShortcut?: SendMessageShortcut;
 };
@@ -30,14 +28,37 @@ type Props = {
 export function KeyboardCommandsPlugin({
   onCmdEnter,
   onShiftCmdEnter,
-  onChange,
   transformers,
   sendShortcut = 'Enter',
 }: Props) {
   const [editor] = useLexicalComposerContext();
   const { isOpen: isTypeaheadOpen } = useTypeaheadOpen();
+  const compositionRef = useRef({ active: false, endedAt: 0 });
 
   useEffect(() => {
+    const onStart = () => {
+      compositionRef.current.active = true;
+    };
+    const onEnd = () => {
+      // Safari can deliver the candidate-confirming Enter after compositionend.
+      compositionRef.current = { active: false, endedAt: Date.now() };
+    };
+    return editor.registerRootListener((root, previousRoot) => {
+      previousRoot?.removeEventListener('compositionstart', onStart);
+      previousRoot?.removeEventListener('compositionend', onEnd);
+      compositionRef.current = { active: false, endedAt: 0 };
+      root?.addEventListener('compositionstart', onStart);
+      root?.addEventListener('compositionend', onEnd);
+    });
+  }, [editor]);
+
+  useEffect(() => {
+    const isComposing = (event: KeyboardEvent) =>
+      event.isComposing ||
+      event.keyCode === 229 ||
+      editor.isComposing() ||
+      compositionRef.current.active ||
+      Date.now() - compositionRef.current.endedAt < 10;
     const isNodeInsideListItem = (node: LexicalNode): boolean => {
       if ($isListItemNode(node)) {
         return true;
@@ -137,17 +158,9 @@ export function KeyboardCommandsPlugin({
       return unregisterTab;
     }
 
-    const flushAndSubmit = () => {
-      if (onChange && transformers) {
-        const markdown = editor
-          .getEditorState()
-          .read(() => $convertToMarkdownString(transformers));
-        flushSync(() => {
-          onChange(markdown);
-        });
-      }
-      onCmdEnter?.();
-    };
+    // Commands already run inside the latest Lexical update. Reading that
+    // state directly includes the last character without a React commit.
+    const snapshot = () => $convertToMarkdownString(transformers);
 
     const unregisterModifier = editor.registerCommand(
       KEY_MODIFIER_COMMAND,
@@ -155,21 +168,21 @@ export function KeyboardCommandsPlugin({
         if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') {
           return false;
         }
+        if (isComposing(event)) return true;
+        if (isTypeaheadOpen) return false;
+        if (event.altKey || (event.metaKey && event.ctrlKey)) return false;
+
+        const submit = event.shiftKey
+          ? onShiftCmdEnter
+          : sendShortcut === 'ModifierEnter'
+            ? onCmdEnter
+            : undefined;
+        if (!submit) return false;
 
         event.preventDefault();
         event.stopPropagation();
-
-        if (event.shiftKey && onShiftCmdEnter) {
-          onShiftCmdEnter();
-          return true;
-        }
-
-        if (!event.shiftKey && onCmdEnter && sendShortcut === 'ModifierEnter') {
-          flushAndSubmit();
-          return true;
-        }
-
-        return false;
+        if (!event.repeat) submit(snapshot());
+        return true;
       },
       COMMAND_PRIORITY_NORMAL
     );
@@ -178,6 +191,7 @@ export function KeyboardCommandsPlugin({
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (!event) return false;
+        if (isComposing(event)) return true;
 
         // If typeahead is open, let it handle Enter
         if (isTypeaheadOpen) {
@@ -185,11 +199,17 @@ export function KeyboardCommandsPlugin({
         }
 
         if (sendShortcut === 'Enter') {
-          if (event.shiftKey || event.metaKey || event.ctrlKey) {
+          if (
+            event.shiftKey ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.altKey
+          ) {
             return false;
           }
+          if (!onCmdEnter) return false;
           event.preventDefault();
-          flushAndSubmit();
+          if (!event.repeat) onCmdEnter(snapshot());
           return true;
         }
 
@@ -211,7 +231,6 @@ export function KeyboardCommandsPlugin({
     editor,
     onCmdEnter,
     onShiftCmdEnter,
-    onChange,
     transformers,
     sendShortcut,
     isTypeaheadOpen,

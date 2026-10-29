@@ -13,6 +13,8 @@ type MarkdownSyncPluginProps = {
   onEditorStateChange?: (state: EditorState) => void;
   editable: boolean;
   transformers: Transformer[];
+  /** Initial Markdown already imported by LexicalComposer before first paint. */
+  initialValue?: string;
 };
 
 const MARKDOWN_SYNC_TAG = 'markdown-sync';
@@ -28,9 +30,10 @@ export function MarkdownSyncPlugin({
   onEditorStateChange,
   editable,
   transformers,
+  initialValue,
 }: MarkdownSyncPluginProps) {
   const [editor] = useLexicalComposerContext();
-  const lastSerializedRef = useRef<string | undefined>(undefined);
+  const lastSerializedRef = useRef<string | undefined>(initialValue);
   const prevTransformersRef = useRef(transformers);
 
   // Detect transformer changes and force re-parse

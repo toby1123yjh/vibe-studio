@@ -282,6 +282,13 @@
     }
   },
   "conversation": {
+    "toolDetails": {
+      "parameters": "Paramètres",
+      "rawParameters": "Paramètres d’origine",
+      "result": "Résultat",
+      "callId": "Appel d’outil",
+      "locations": "Fichiers et emplacements"
+    },
     "plan": "Plan",
     "output": "Sortie",
     "deniedByUser": "{{toolName}} refusé par l'utilisateur",

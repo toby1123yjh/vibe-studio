@@ -1,10 +1,14 @@
-import { useRef, useState, type ReactNode } from "react";
-import { LexicalComposer } from "../../../../packages/web-core/node_modules/@lexical/react/LexicalComposer";
-import { RichTextPlugin } from "../../../../packages/web-core/node_modules/@lexical/react/LexicalRichTextPlugin";
-import { ContentEditable } from "../../../../packages/web-core/node_modules/@lexical/react/LexicalContentEditable";
-import { LexicalErrorBoundary } from "../../../../packages/web-core/node_modules/@lexical/react/LexicalErrorBoundary";
-import { OnChangePlugin } from "../../../../packages/web-core/node_modules/@lexical/react/LexicalOnChangePlugin";
-import { $getRoot } from "lexical";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { $convertToMarkdownString, type Transformer } from "@lexical/markdown";
+import { $getRoot, type LexicalEditor } from "lexical";
+import { KeyboardCommandsPlugin } from "../../../../packages/ui/src/components/KeyboardCommandsPlugin";
+import { MarkdownSyncPlugin } from "../../../../packages/ui/src/components/MarkdownSyncPlugin";
+import { TypeaheadOpenProvider } from "../../../../packages/ui/src/components/TypeaheadOpenContext";
 import {
   SessionChatBox,
   type ExecutionStatus,
@@ -12,10 +16,32 @@ import {
 } from "../../../../packages/ui/src/components/SessionChatBox";
 import { WorkspacesMain } from "../../../../packages/ui/src/components/WorkspacesMain";
 
+const transformers: Transformer[] = [];
+
+function CaptureEditor({
+  editorRef,
+}: {
+  editorRef: React.MutableRefObject<LexicalEditor | null>;
+}) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    editorRef.current = editor;
+    return () => {
+      editorRef.current = null;
+    };
+  }, [editor, editorRef]);
+  return null;
+}
+
 function PreviewEditor({
+  value,
   onChange,
   placeholder,
-}: SessionChatBoxEditorRenderProps) {
+  onCmdEnter,
+  editorRef,
+}: SessionChatBoxEditorRenderProps & {
+  editorRef: React.MutableRefObject<LexicalEditor | null>;
+}) {
   return (
     <LexicalComposer
       initialConfig={{
@@ -40,11 +66,19 @@ function PreviewEditor({
           }
           ErrorBoundary={LexicalErrorBoundary}
         />
-        <OnChangePlugin
-          onChange={(state) =>
-            state.read(() => onChange($getRoot().getTextContent()))
-          }
+        <CaptureEditor editorRef={editorRef} />
+        <MarkdownSyncPlugin
+          value={value}
+          onChange={onChange}
+          editable
+          transformers={transformers}
         />
+        <TypeaheadOpenProvider>
+          <KeyboardCommandsPlugin
+            onCmdEnter={onCmdEnter}
+            transformers={transformers}
+          />
+        </TypeaheadOpenProvider>
       </div>
     </LexicalComposer>
   );
@@ -64,6 +98,9 @@ export function SessionComposerPreview({
   const [compact, setCompact] = useState(true);
   const [mode, setMode] = useState<ExecutionStatus | "approval">("idle");
   const [lastAction, setLastAction] = useState("");
+  const [lastSubmitted, setLastSubmitted] = useState("");
+  const [submitCount, setSubmitCount] = useState(0);
+  const editorRef = useRef<LexicalEditor | null>(null);
   return (
     <>
       <label>
@@ -128,10 +165,42 @@ export function SessionComposerPreview({
             <SessionChatBox
               compact={compact}
               status={mode === "approval" ? "idle" : mode}
-              editor={{ value: text, onChange: setText }}
-              renderEditor={(props) => <PreviewEditor {...props} />}
+              editor={{
+                value: text,
+                onChange: setText,
+                getValue: () =>
+                  editorRef.current?.read(() =>
+                    $convertToMarkdownString(transformers),
+                  ) ?? text,
+              }}
+              renderEditor={(props) => (
+                <PreviewEditor {...props} editorRef={editorRef} />
+              )}
               actions={{
-                onSend: () => setLastAction("send"),
+                onSend: (markdown) => {
+                  setLastSubmitted(markdown);
+                  setSubmitCount((value) => value + 1);
+                  setLastAction("send");
+                  if (
+                    new URLSearchParams(window.location.search).has(
+                      "pendingSend",
+                    )
+                  ) {
+                    setMode("sending");
+                  }
+                  if (
+                    new URLSearchParams(window.location.search).has(
+                      "clearOnSend",
+                    )
+                  ) {
+                    setText("");
+                    editorRef.current?.update(() => {
+                      const root = $getRoot();
+                      root.clear();
+                      root.selectEnd();
+                    });
+                  }
+                },
                 onQueue: () => setLastAction("queue"),
                 onCancelQueue: () => setLastAction("cancel-queue"),
                 onStop: () => setLastAction("stop"),
@@ -172,6 +241,12 @@ export function SessionComposerPreview({
         />
       </div>
       <output data-testid="composer-action">{lastAction}</output>
+      <output hidden data-testid="composer-submitted">
+        {lastSubmitted}
+      </output>
+      <output hidden data-testid="composer-submit-count">
+        {submitCount}
+      </output>
       <output hidden data-testid="composer-draft">
         {text}
       </output>

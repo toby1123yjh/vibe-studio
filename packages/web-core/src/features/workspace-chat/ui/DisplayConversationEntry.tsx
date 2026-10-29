@@ -1345,6 +1345,7 @@ function AggregatedGroupEntry({
         return {
           summary: '',
           status: undefined,
+          active: false,
           expansionKey: patchEntry.patchKey,
           content: '',
           toolName: '',
@@ -1363,6 +1364,7 @@ function AggregatedGroupEntry({
         return {
           summary: '',
           status: undefined,
+          active: false,
           expansionKey: patchEntry.patchKey,
           content: '',
           toolName: '',
@@ -1418,115 +1420,36 @@ function AggregatedGroupEntry({
     setIsHovered(hovered);
   }, []);
 
-  const getCommandDetail = () => {
-    const categoryCounts: Record<string, number> = {
-      read: 0,
-      search: 0,
-      edit: 0,
-      fetch: 0,
-      other: 0,
-    };
-
-    for (const patchEntry of group.entries) {
-      if (patchEntry.type !== 'NORMALIZED_ENTRY') continue;
-
-      const entryType = patchEntry.content.entry_type;
-      if (entryType.type !== 'tool_use') continue;
-
-      const { action_type } = entryType;
-      if (action_type.action !== 'command_run') continue;
-
-      categoryCounts[action_type.category] += 1;
-    }
-
-    const parts = [
-      categoryCounts.read > 0 &&
-        t('conversation.aggregated.categories.read', {
-          count: categoryCounts.read,
-        }),
-      categoryCounts.search > 0 &&
-        t('conversation.aggregated.categories.search', {
-          count: categoryCounts.search,
-        }),
-      categoryCounts.edit > 0 &&
-        t('conversation.aggregated.categories.edit', {
-          count: categoryCounts.edit,
-        }),
-      categoryCounts.fetch > 0 &&
-        t('conversation.aggregated.categories.fetch', {
-          count: categoryCounts.fetch,
-        }),
-      categoryCounts.other > 0 &&
-        t('conversation.aggregated.categories.other', {
-          count: categoryCounts.other,
-        }),
-    ].filter(Boolean);
-
-    return parts.length > 0 ? parts.join(' · ') : undefined;
-  };
-
-  // Get the summary, icon, and detail based on aggregation type.
-  const getDisplayProps = () => {
-    const count = group.entries.length;
-
+  const getDisplayIcon = () => {
     switch (group.aggregationType) {
-      case 'tool_calls':
-        return {
-          summary: group.isRunning
-            ? t('conversation.aggregated.toolCallsInProgress')
-            : t('conversation.aggregated.toolCallsComplete'),
-          icon: ListMagnifyingGlassIcon,
-        };
       case 'file_read':
-        return {
-          summary: t('conversation.aggregated.readFiles', { count }),
-          icon: FileTextIcon,
-        };
-      case 'search':
-        return {
-          summary: t('conversation.aggregated.searches', { count }),
-          icon: ListMagnifyingGlassIcon,
-        };
-      case 'web_fetch':
-        return {
-          summary: t('conversation.aggregated.fetchedPages', { count }),
-          icon: GlobeIcon,
-        };
-      case 'command_run':
-        return {
-          summary: t('conversation.aggregated.ranCommands', { count }),
-          detail: getCommandDetail(),
-          icon: TerminalWindowIcon,
-        };
       case 'command_run_read':
-        return {
-          summary: t('conversation.aggregated.ranReadCommands', { count }),
-          icon: FileTextIcon,
-        };
-      case 'command_run_search':
-        return {
-          summary: t('conversation.aggregated.ranSearchCommands', { count }),
-          icon: ListMagnifyingGlassIcon,
-        };
-      case 'command_run_edit':
-        return {
-          summary: t('conversation.aggregated.ranEditCommands', { count }),
-          icon: PencilSimpleIcon,
-        };
+        return FileTextIcon;
+      case 'web_fetch':
       case 'command_run_fetch':
-        return {
-          summary: t('conversation.aggregated.ranFetchCommands', { count }),
-          icon: GlobeIcon,
-        };
+        return GlobeIcon;
+      case 'command_run_edit':
+        return PencilSimpleIcon;
+      case 'command_run':
       case 'command_run_other':
-        return {
-          summary: t('conversation.aggregated.ranCommands', { count }),
-          detail: t('conversation.aggregated.otherCommandDetail'),
-          icon: TerminalWindowIcon,
-        };
+        return TerminalWindowIcon;
+      default:
+        return ListMagnifyingGlassIcon;
     }
   };
-  const { summary, detail, icon } = getDisplayProps();
+  const icon = getDisplayIcon();
+  const latest = [...aggregatedEntries].reverse();
+  const selected =
+    latest.find((entry) => entry.active) ??
+    latest.find((entry) =>
+      ['failed', 'denied', 'timed_out'].includes(entry.status?.status ?? '')
+    ) ??
+    latest[0];
+  const summary = t('conversation.toolGroupLabel', {
+    ns: 'common',
+    defaultValue: 'Tool activity',
+  });
+  const detail = selected?.summary || selected?.toolName || undefined;
   const timing = getPatchGroupTiming({
     entries: group.entries,
     isRunning: group.isRunning,

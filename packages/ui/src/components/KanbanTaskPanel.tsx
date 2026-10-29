@@ -59,7 +59,7 @@ export interface KanbanTaskDescriptionEditorProps {
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
-  onCmdEnter?: () => void;
+  onCmdEnter?: (markdown: string) => void;
   onPasteFiles?: (files: File[]) => void;
   disabled?: boolean;
   autoFocus?: boolean;
@@ -102,7 +102,7 @@ export interface KanbanTaskPanelProps {
   // Actions
   onClose: () => void;
   onSubmit: () => void;
-  onCmdEnterSubmit?: () => void;
+  onCmdEnterSubmit?: (markdown?: string) => void;
   onDeleteDraft?: () => void;
 
   // Tag create callback - returns the new tag ID

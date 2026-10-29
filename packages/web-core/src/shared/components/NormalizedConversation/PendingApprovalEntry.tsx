@@ -139,7 +139,7 @@ function DenyReasonForm({
   value: string;
   onChange: (v: string) => void;
   onCancel: () => void;
-  onSubmit: () => void;
+  onSubmit: (markdown?: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-2 p-4">
@@ -160,7 +160,7 @@ function DenyReasonForm({
         >
           Cancel
         </Button>
-        <Button size="sm" onClick={onSubmit} disabled={isResponding}>
+        <Button size="sm" onClick={() => onSubmit()} disabled={isResponding}>
           Deny
         </Button>
       </div>
@@ -288,10 +288,13 @@ const PendingApprovalEntry = ({
     clear();
   }, [isResponding, clear]);
 
-  const handleSubmitDeny = useCallback(() => {
-    const trimmed = denyReason.trim();
-    respond(false, trimmed || DEFAULT_DENIAL_REASON);
-  }, [denyReason, respond]);
+  const handleSubmitDeny = useCallback(
+    (markdown = denyReason) => {
+      const trimmed = markdown.trim();
+      respond(false, trimmed || DEFAULT_DENIAL_REASON);
+    },
+    [denyReason, respond]
+  );
 
   const triggerDeny = useCallback(
     (event?: KeyboardEvent) => {

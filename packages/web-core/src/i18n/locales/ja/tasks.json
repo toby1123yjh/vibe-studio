@@ -372,6 +372,8 @@
     }
   },
   "conversation": {
+    "sendingMessage": "送信中…",
+    "acceptedMessage": "送信済み",
     "you": "あなた",
     "thinking": "考え中",
     "todo": "タスク",

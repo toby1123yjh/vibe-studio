@@ -149,8 +149,8 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         )
         .route("/v1/fallback/pull_requests", get(fallback_pull_requests))
         .route(
-            "/v1/fallback/pull_request_issues",
-            get(fallback_pull_request_issues),
+            "/v1/fallback/pull_request_tasks",
+            get(fallback_pull_request_tasks),
         )
         .route(
             "/v1/fallback/project_workspaces",
@@ -1123,8 +1123,8 @@ async fn fallback_pull_requests() -> ResponseJson<Value> {
     empty_rows("pull_requests")
 }
 
-async fn fallback_pull_request_issues() -> ResponseJson<Value> {
-    empty_rows("pull_request_issues")
+async fn fallback_pull_request_tasks() -> ResponseJson<Value> {
+    empty_rows("pull_request_tasks")
 }
 
 async fn fallback_project_workspaces(

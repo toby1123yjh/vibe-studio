@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -18,6 +19,7 @@ import {
 } from '../model/conversation-row-model';
 import { deriveConversationEntries } from '../model/deriveConversationEntries';
 import { deriveConversationTimeline } from '../model/deriveConversationTimeline';
+import { projectPendingConversationRows } from '../model/pendingConversationRows';
 import { useConversationVirtualizer } from '../model/useConversationVirtualizer';
 import { useScrollCommandExecutor } from '../model/useScrollCommandExecutor';
 import {
@@ -42,6 +44,7 @@ import type {
   AddEntryType,
   ConversationTimelineSource,
   DisplayEntry,
+  PatchTypeWithKey,
 } from '@/shared/hooks/useConversationHistory/types';
 import {
   isAggregatedGroup,
@@ -81,15 +84,19 @@ export interface ConversationListHandle {
   getVisibleUserMessagePatchKey: () => string | null;
 }
 
-const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
-const STREAMING_UNVIRTUALIZED_BUFFER_ROWS = 24;
+const PINNED_TAIL_ROWS = 32;
+const EMPTY_REPOS: RepoWithTargetBranch[] = [];
+const EMPTY_ENTRIES: PatchTypeWithKey[] = [];
+const EMPTY_ROWS: ConversationRow[] = [];
+const EMPTY_SEND_ALIASES: ReadonlyMap<string, string> = new Map();
 
 function renderRowContent(
   entry: DisplayEntry,
   attempt: WorkspaceWithSession,
   resetAction: UseResetProcessResult,
   repos: RepoWithTargetBranch[],
-  readOnly: boolean
+  readOnly: boolean,
+  submissionStatus?: 'sending' | 'accepted'
 ): React.ReactNode {
   if (isAggregatedGroup(entry)) {
     const blockIds = entry.entries.map((item) => item.conversationBlockId);
@@ -180,17 +187,20 @@ function renderRowContent(
       entry.content.entry_type.type === 'user_message'
     ) {
       return (
-        <ChatUserMessage
-          content={entry.content.content}
-          workspaceId={attempt.id}
-          renderMarkdown={({ content, workspaceId }) => (
-            <AppChatMarkdown
-              content={content}
-              workspaceId={workspaceId}
-              sessionId={attempt.session?.id}
-            />
-          )}
-        />
+        <div className="min-w-0 px-double py-2">
+          <ChatUserMessage
+            content={entry.content.content}
+            workspaceId={attempt.id}
+            submissionStatus={submissionStatus}
+            renderMarkdown={({ content, workspaceId }) => (
+              <AppChatMarkdown
+                content={content}
+                workspaceId={workspaceId}
+                sessionId={attempt.session?.id}
+              />
+            )}
+          />
+        </div>
       );
     }
     if (entry.conversationBlockId) {
@@ -222,13 +232,36 @@ function renderRowContent(
   return null;
 }
 
+const ConversationRowContent = memo(function ConversationRowContent({
+  row,
+  attempt,
+  resetAction,
+  repos,
+  readOnly,
+}: {
+  row: ConversationRow;
+  attempt: WorkspaceWithSession;
+  resetAction: UseResetProcessResult;
+  repos: RepoWithTargetBranch[];
+  readOnly: boolean;
+}) {
+  return renderRowContent(
+    row.entry,
+    attempt,
+    resetAction,
+    repos,
+    readOnly,
+    row.submissionStatus
+  );
+});
+
 export const ConversationList = forwardRef<
   ConversationListHandle,
   ConversationListProps
 >(function ConversationList(
   {
     attempt,
-    repos: reposProp = [],
+    repos: reposProp = EMPTY_REPOS,
     onAtBottomChange,
     sessionScopeId,
     initialViewState,
@@ -249,20 +282,6 @@ export const ConversationList = forwardRef<
     [hostId, attempt.id, sessionScopeId, attempt.session?.id]
   );
   const pendingSends = usePendingConversationSend(conversationSendScope);
-  const pendingSendsRef = useRef(pendingSends);
-  pendingSendsRef.current = pendingSends;
-  const sessionConversationRef = useRef(sessionConversation);
-  sessionConversationRef.current = sessionConversation;
-  useEffect(() => {
-    settleConversationSend(
-      conversationSendScope,
-      sessionConversation.conversation.entries
-    );
-  }, [
-    conversationSendScope,
-    sessionConversation.conversation.entries,
-    pendingSends.sends,
-  ]);
   const savedViewRef = useRef(initialViewState);
   const reportViewRef = useRef(onViewStateChange);
   reportViewRef.current = onViewStateChange;
@@ -316,9 +335,21 @@ export const ConversationList = forwardRef<
   const repos = reposProp;
   const resetAction = useResetProcess(attempt.id, attempt.session?.id);
   const conversationScopeKey = `${hostId ?? 'local'}:${attempt.id}:${sessionScopeId ?? attempt.session?.id ?? 'new'}`;
+  const [timeline, setTimeline] = useState<{
+    scopeKey: string;
+    entries: PatchTypeWithKey[];
+    rows: ConversationRow[];
+  }>({
+    scopeKey: conversationScopeKey,
+    entries: EMPTY_ENTRIES,
+    rows: EMPTY_ROWS,
+  });
+  const sendAliasesRef = useRef({
+    scopeKey: conversationScopeKey,
+    aliases: EMPTY_SEND_ALIASES,
+  });
   const [dataVersion, setDataVersion] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [hasRunningProcess, setHasRunningProcess] = useState(false);
   const { setEntries, reset } = useEntriesActions();
   const setTokenUsageInfo = useSetTokenUsageInfo();
   const scriptOutputCacheRef = useRef<
@@ -363,7 +394,6 @@ export const ConversationList = forwardRef<
       planRevealSpacerRef.current.style.height = '0px';
     }
     setLoading(true);
-    setHasRunningProcess(false);
     setDataVersion(0);
     reset();
   }, [conversationScopeKey, reset]);
@@ -519,15 +549,9 @@ export const ConversationList = forwardRef<
       workflowSystemEntries: workflowSystemEntriesRef.current,
     });
 
-    setHasRunningProcess(derivedEntries.hasRunningProcess);
     setTokenUsageInfo(derivedEntries.latestTokenUsageInfo);
-    const presentedEntries = projectPendingConversationSend(
-      derivedEntries.entries,
-      pendingSendsRef.current
-    );
-
     const derivedTimeline = deriveConversationTimeline(
-      presentedEntries,
+      derivedEntries.entries,
       pending.source,
       prevEntriesRef.current,
       prevRowsRef.current,
@@ -536,6 +560,11 @@ export const ConversationList = forwardRef<
 
     prevEntriesRef.current = derivedTimeline.displayEntries;
     prevRowsRef.current = derivedTimeline.rows;
+    setTimeline({
+      scopeKey: conversationScopeKey,
+      entries: derivedEntries.entries,
+      rows: derivedTimeline.rows,
+    });
 
     // Page completion and list derivation are separate React updates. Apply
     // their scroll transition only after the actual new window is committed.
@@ -550,7 +579,6 @@ export const ConversationList = forwardRef<
     }
 
     setDataVersion((current) => current + 1);
-    setEntries(presentedEntries);
 
     scrollOnEntriesChangedRef.current?.(pending.addType, pending.isInitialLoad);
 
@@ -559,34 +587,6 @@ export const ConversationList = forwardRef<
     }
   };
   flushTimelineRef.current = flushPendingUpdate;
-
-  useLayoutEffect(() => {
-    // A local submission should paint with the editor clear, even when no
-    // canonical history source has loaded yet. It never changes that source.
-    const source: ConversationTimelineSource = {
-      executionProcessState:
-        lastTimelineSourceRef.current?.executionProcessState ?? {},
-      liveExecutionProcesses:
-        lastTimelineSourceRef.current?.liveExecutionProcesses ?? [],
-      canonical:
-        sessionConversationRef.current.store?.getSnapshot().conversation ??
-        sessionConversationRef.current.conversation,
-    };
-    const queued = pendingUpdateRef.current;
-    pendingUpdateRef.current = {
-      source,
-      addType: queued?.addType ?? 'running',
-      loading: source.canonical.isLoading,
-      isInitialLoad: queued?.isInitialLoad ?? false,
-    };
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-    flushTimelineRef.current?.();
-    // Canonical source updates retain the existing history hook's frame batch.
-    // This synchronous path is only for a scoped local presentation change.
-  }, [pendingSends, conversationScopeKey]);
 
   useEffect(() => {
     const source = lastTimelineSourceRef.current;
@@ -632,37 +632,43 @@ export const ConversationList = forwardRef<
 
   const prevEntriesRef = useRef<DisplayEntry[]>([]);
   const prevRowsRef = useRef<ConversationRow[]>([]);
-  const conversationRows = prevRowsRef.current;
-
-  const hasActiveStreamingTurn = useMemo(
+  const canonicalRows =
+    timeline.scopeKey === conversationScopeKey ? timeline.rows : EMPTY_ROWS;
+  const canonicalEntries =
+    timeline.scopeKey === conversationScopeKey
+      ? timeline.entries
+      : EMPTY_ENTRIES;
+  const presentation = useMemo(
     () =>
-      hasRunningProcess ||
-      conversationRows.some((row) => row.rowFamily === 'loading'),
-    [conversationRows, hasRunningProcess]
+      projectPendingConversationRows(
+        canonicalRows,
+        pendingSends,
+        sendAliasesRef.current.scopeKey === conversationScopeKey
+          ? sendAliasesRef.current.aliases
+          : EMPTY_SEND_ALIASES
+      ),
+    [canonicalRows, pendingSends, conversationScopeKey]
   );
+  const conversationRows = presentation.rows;
+  useLayoutEffect(() => {
+    sendAliasesRef.current = {
+      scopeKey: conversationScopeKey,
+      aliases: presentation.aliases,
+    };
+  }, [conversationScopeKey, presentation.aliases]);
+  useEffect(() => {
+    // Settle only against the timeline that has actually committed. A newer
+    // socket snapshot may still be awaiting its frame-batched derivation.
+    settleConversationSend(conversationSendScope, canonicalEntries);
+    setEntries(projectPendingConversationSend(canonicalEntries, pendingSends));
+  }, [canonicalEntries, conversationSendScope, pendingSends, setEntries]);
 
-  // A single long agent turn can contain thousands of tools. Retaining every
-  // row since its user message defeats virtualization, so keep a bounded tail.
-  const firstUnvirtualizedRowIndex = Math.max(
-    0,
-    conversationRows.length -
-      ALWAYS_UNVIRTUALIZED_TAIL_ROWS -
-      (hasActiveStreamingTurn ? STREAMING_UNVIRTUALIZED_BUFFER_ROWS : 0)
-  );
-
-  const virtualizedRows = useMemo(
-    () => conversationRows.slice(0, firstUnvirtualizedRowIndex),
-    [conversationRows, firstUnvirtualizedRowIndex]
-  );
-
-  const unvirtualizedTailRows = useMemo(
-    () => conversationRows.slice(firstUnvirtualizedRowIndex),
-    [conversationRows, firstUnvirtualizedRowIndex]
-  );
-
+  // Keep the bounded activity tail in the same list as history. Moving a row
+  // between separate virtualized/unvirtualized parents remounts its Markdown
+  // and changes scroll estimates when a turn starts, settles or gains a row.
   const conversationVirtualizer = useConversationVirtualizer({
-    rows: virtualizedRows,
-    totalRowCount: conversationRows.length,
+    rows: conversationRows,
+    pinnedTailCount: PINNED_TAIL_ROWS,
     scrollContainerRef: tanstackScrollRef,
     onAtBottomChange,
     shouldSuppressSizeAdjustment: shouldSuppressInteractionDrivenSizeAdjustment,
@@ -693,7 +699,7 @@ export const ConversationList = forwardRef<
   }, [sessionConversation.store, conversationVirtualizer]);
 
   // NOTE: Do NOT call conversationVirtualizer.virtualizer.measure() when
-  // firstUnvirtualizedRowIndex changes. measure() wipes ALL cached item sizes,
+  // the mounted tail changes. measure() wipes ALL cached item sizes,
   // triggering a massive re-measurement storm and multi-second jitter.
   // TanStack Virtual handles count changes automatically via getItemKey.
 
@@ -713,18 +719,15 @@ export const ConversationList = forwardRef<
       );
 
       if (targetNode) {
-        let top = targetNode.offsetTop;
+        let top =
+          targetNode.getBoundingClientRect().top -
+          scrollEl.getBoundingClientRect().top +
+          scrollEl.scrollTop;
 
         if (align === 'center') {
-          top =
-            targetNode.offsetTop -
-            scrollEl.clientHeight / 2 +
-            targetNode.offsetHeight / 2;
+          top = top - scrollEl.clientHeight / 2 + targetNode.offsetHeight / 2;
         } else if (align === 'end') {
-          top =
-            targetNode.offsetTop -
-            scrollEl.clientHeight +
-            targetNode.offsetHeight;
+          top = top - scrollEl.clientHeight + targetNode.offsetHeight;
         }
 
         const requestedTop = Math.max(0, top);
@@ -739,19 +742,18 @@ export const ConversationList = forwardRef<
 
         scrollEl.scrollTo({
           top: Math.min(requestedTop, maxScrollable),
-          behavior,
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
+            .matches
+            ? 'auto'
+            : behavior,
         });
         return true;
       }
 
-      if (index < virtualizedRows.length) {
-        conversationVirtualizer.scrollToIndex(index, { align, behavior });
-        return true;
-      }
-
-      return false;
+      conversationVirtualizer.scrollToIndex(index, { align, behavior });
+      return true;
     },
-    [conversationRows.length, conversationVirtualizer, virtualizedRows.length]
+    [conversationRows.length, conversationVirtualizer]
   );
 
   const scrollToBottomAndClearSpacer = useCallback(
@@ -1211,7 +1213,7 @@ export const ConversationList = forwardRef<
             </div>
           )}
 
-          {virtualizedRows.length > 0 && (
+          {conversationRows.length > 0 && (
             <div
               style={{
                 height: `${totalSize}px`,
@@ -1220,7 +1222,7 @@ export const ConversationList = forwardRef<
               }}
             >
               {virtualItems.map((virtualItem) => {
-                const row = virtualizedRows[virtualItem.index];
+                const row = conversationRows[virtualItem.index];
                 if (!row) return null;
                 return (
                   <div
@@ -1237,37 +1239,18 @@ export const ConversationList = forwardRef<
                       transform: `translateY(${virtualItem.start}px)`,
                     }}
                   >
-                    {renderRowContent(
-                      row.entry,
-                      attempt,
-                      resetAction,
-                      repos,
-                      readOnly
-                    )}
+                    <ConversationRowContent
+                      row={row}
+                      attempt={attempt}
+                      resetAction={resetAction}
+                      repos={repos}
+                      readOnly={readOnly}
+                    />
                   </div>
                 );
               })}
             </div>
           )}
-
-          {unvirtualizedTailRows.map((row, tailIndex) => {
-            const rowIndex = firstUnvirtualizedRowIndex + tailIndex;
-            return (
-              <div
-                key={row.semanticKey}
-                data-row-index={rowIndex}
-                data-semantic-key={row.semanticKey}
-              >
-                {renderRowContent(
-                  row.entry,
-                  attempt,
-                  resetAction,
-                  repos,
-                  readOnly
-                )}
-              </div>
-            );
-          })}
 
           {/* Plan-reveal spacer: provides extra scroll room so plan-reveal
               can align the plan entry to the top of the viewport. Height is set

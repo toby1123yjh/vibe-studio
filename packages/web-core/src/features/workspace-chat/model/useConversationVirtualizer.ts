@@ -15,9 +15,10 @@ import {
 } from 'react';
 import {
   useVirtualizer,
+  defaultRangeExtractor,
   measureElement as defaultMeasureElement,
 } from '@tanstack/react-virtual';
-import type { Virtualizer, VirtualItem } from '@tanstack/react-virtual';
+import type { Range, Virtualizer, VirtualItem } from '@tanstack/react-virtual';
 
 import {
   type ConversationRow,
@@ -46,17 +47,11 @@ const OVERSCAN = 8;
 // ---------------------------------------------------------------------------
 
 export interface ConversationVirtualizerOptions {
-  /** The semantic row model driving the list (virtualized head only). */
+  /** The semantic row model driving the entire list. */
   rows: ConversationRow[];
 
-  /**
-   * Total number of conversation rows (virtualized + unvirtualized tail).
-   * The bottom-lock correction must fire when ANY row is added — including
-   * unvirtualized tail rows that don't change `rows.length` or `totalSize`.
-   * Without this, streaming entries appended to the tail silently grow the
-   * scroll container while the correction never fires.
-   */
-  totalRowCount: number;
+  /** Keep a bounded activity tail mounted in the same keyed row list. */
+  pinnedTailCount: number;
 
   /** Ref to the scrollable container element. */
   scrollContainerRef: RefObject<HTMLDivElement | null>;
@@ -147,13 +142,14 @@ export interface ConversationVirtualizerResult {
  */
 export function useConversationVirtualizer({
   rows,
-  totalRowCount,
+  pinnedTailCount,
   scrollContainerRef,
   onAtBottomChange,
   shouldSuppressSizeAdjustment,
 }: ConversationVirtualizerOptions): ConversationVirtualizerResult {
   const bottomLockedRef = useRef(false);
   const smoothScrollDeadlineRef = useRef(0);
+  const followingPausedRef = useRef(false);
 
   const isBottomScrollCorrectionActive = useCallback(
     () => bottomLockedRef.current,
@@ -184,12 +180,26 @@ export function useConversationVirtualizer({
     },
     [rows, scrollContainerRef]
   );
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indices = defaultRangeExtractor(range);
+      const firstTailIndex = Math.max(
+        (indices.at(-1) ?? -1) + 1,
+        range.count - pinnedTailCount
+      );
+      for (let index = firstTailIndex; index < range.count; index += 1)
+        indices.push(index);
+      return indices;
+    },
+    [pinnedTailCount]
+  );
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement,
     estimateSize,
     getItemKey,
+    rangeExtractor,
     overscan: OVERSCAN,
     measureElement: defaultMeasureElement,
     useAnimationFrameWithResizeObserver: false,
@@ -249,9 +259,9 @@ export function useConversationVirtualizer({
     const el = scrollContainerRef.current;
     const nextValue = isBottomScrollCorrectionActive()
       ? true
-      : el
+      : el && !followingPausedRef.current
         ? isNearBottom(el.scrollTop, el.clientHeight, el.scrollHeight)
-        : true;
+        : !el;
 
     if (nextValue !== lastAtBottomRef.current) {
       lastAtBottomRef.current = nextValue;
@@ -273,6 +283,46 @@ export function useConversationVirtualizer({
 
     prevScrollTopRef.current = el.scrollTop;
 
+    const pauseFollowing = () => {
+      const isSmoothJumpActive =
+        performance.now() < smoothScrollDeadlineRef.current;
+      followingPausedRef.current = true;
+      bottomLockedRef.current = false;
+      smoothScrollDeadlineRef.current = 0;
+      // Stop a native smooth jump immediately when the user starts reading.
+      // An instant write during an ordinary wheel event can cancel the wheel's
+      // own compositor scroll, so only interrupt an actual smooth jump.
+      if (isSmoothJumpActive)
+        el.scrollTo({ top: el.scrollTop, behavior: 'instant' });
+      syncIsAtBottom();
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) pauseFollowing();
+    };
+    let touchY: number | null = null;
+    const handleTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY;
+      if (touchY !== null && nextY !== undefined && nextY > touchY + 2)
+        pauseFollowing();
+      touchY = nextY ?? null;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, [contenteditable="true"]')
+      )
+        return;
+      if (
+        ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ||
+        (event.key === ' ' && event.shiftKey)
+      )
+        pauseFollowing();
+    };
+
     const handleScroll = () => {
       const currentScrollTop = el.scrollTop;
 
@@ -288,18 +338,52 @@ export function useConversationVirtualizer({
         !shouldSuppressSizeAdjustment?.()
       ) {
         bottomLockedRef.current = false;
+        followingPausedRef.current = true;
       }
+
+      // Resume only after scrolling back down to the real bottom. Merely
+      // remaining within the near-bottom threshold is not an intent to follow.
+      if (
+        followingPausedRef.current &&
+        currentScrollTop > prevScrollTopRef.current &&
+        el.scrollHeight - el.clientHeight - currentScrollTop <= 1
+      )
+        followingPausedRef.current = false;
 
       prevScrollTopRef.current = currentScrollTop;
       syncIsAtBottom();
     };
 
     el.addEventListener('scroll', handleScroll, { passive: true });
+    el.addEventListener('wheel', handleWheel, { passive: true });
+    el.addEventListener('touchstart', handleTouchStart, { passive: true });
+    el.addEventListener('touchmove', handleTouchMove, { passive: true });
+    el.addEventListener('keydown', handleKeyDown);
     handleScroll();
 
     return () => {
       el.removeEventListener('scroll', handleScroll);
+      el.removeEventListener('wheel', handleWheel);
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+      el.removeEventListener('keydown', handleKeyDown);
     };
+  }, [scrollContainerRef, shouldSuppressSizeAdjustment, syncIsAtBottom]);
+
+  useEffect(() => {
+    const element = scrollContainerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => {
+      if (
+        bottomLockedRef.current &&
+        performance.now() >= smoothScrollDeadlineRef.current &&
+        !shouldSuppressSizeAdjustment?.()
+      )
+        element.scrollTop = element.scrollHeight - element.clientHeight;
+      syncIsAtBottom();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [scrollContainerRef, shouldSuppressSizeAdjustment, syncIsAtBottom]);
 
   // -------------------------------------------------------------------------
@@ -322,13 +406,7 @@ export function useConversationVirtualizer({
     if (maxScroll > 0 && Math.abs(maxScroll - el.scrollTop) > 1) {
       el.scrollTop = maxScroll;
     }
-  }, [
-    rows.length,
-    totalRowCount,
-    totalSize,
-    syncIsAtBottom,
-    scrollContainerRef,
-  ]);
+  }, [rows.length, totalSize, syncIsAtBottom, scrollContainerRef]);
 
   // -------------------------------------------------------------------------
   // Imperative helpers
@@ -340,11 +418,16 @@ export function useConversationVirtualizer({
       if (!el) return;
 
       bottomLockedRef.current = true;
+      followingPausedRef.current = false;
 
-      if (behavior === 'smooth') {
+      if (
+        behavior === 'smooth' &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ) {
         smoothScrollDeadlineRef.current = performance.now() + 500;
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       } else {
+        smoothScrollDeadlineRef.current = 0;
         el.scrollTop = el.scrollHeight - el.clientHeight;
       }
     },
@@ -362,10 +445,13 @@ export function useConversationVirtualizer({
       if (bottomLockedRef.current) {
         bottomLockedRef.current = false;
       }
+      followingPausedRef.current = true;
 
       virtualizer.scrollToIndex(index, {
         align: options?.align ?? 'start',
-        behavior: options?.behavior ?? 'smooth',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'auto'
+          : (options?.behavior ?? 'smooth'),
       });
     },
     [virtualizer]
@@ -383,9 +469,13 @@ export function useConversationVirtualizer({
 
     if (targetIndex < 0) return false;
 
+    bottomLockedRef.current = false;
+    followingPausedRef.current = true;
     virtualizer.scrollToIndex(targetIndex, {
       align: 'start',
-      behavior: 'smooth',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto'
+        : 'smooth',
     });
     return true;
   }, [scrollContainerRef, virtualizer, rows]);
@@ -393,12 +483,14 @@ export function useConversationVirtualizer({
   const checkIsAtBottom = useCallback((): boolean => {
     const el = scrollContainerRef.current;
     if (!el) return true;
+    if (followingPausedRef.current) return false;
     return isNearBottom(el.scrollTop, el.clientHeight, el.scrollHeight);
   }, [scrollContainerRef]);
 
   const releaseBottomLock = useCallback(() => {
-    if (!bottomLockedRef.current) return;
     bottomLockedRef.current = false;
+    followingPausedRef.current = true;
+    smoothScrollDeadlineRef.current = 0;
   }, []);
 
   // -------------------------------------------------------------------------

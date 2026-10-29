@@ -45,11 +45,17 @@ export function PrimaryButton({
       {value}
       {children}
       {ActionIcon ? (
-        ActionIcon === 'spinner' ? (
-          <SpinnerIcon className={'size-icon-sm animate-spin'} weight="bold" />
-        ) : (
-          <ActionIcon className={'size-icon-xs'} weight="bold" />
-        )
+        <span
+          className="inline-flex shrink-0 items-center justify-center"
+          data-button-icon="true"
+          aria-hidden="true"
+        >
+          {ActionIcon === 'spinner' ? (
+            <SpinnerIcon className="size-icon-sm animate-spin" weight="bold" />
+          ) : (
+            <ActionIcon className="size-icon-xs" weight="bold" />
+          )}
+        </span>
       ) : null}
     </button>
   );

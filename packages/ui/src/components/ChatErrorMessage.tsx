@@ -1,5 +1,6 @@
 import { WarningCircleIcon } from '@phosphor-icons/react';
 import { cn } from '../lib/cn';
+import { ChatDisclosureRow } from './ChatDisclosure';
 
 interface ChatErrorMessageProps {
   content: string;
@@ -15,23 +16,13 @@ export function ChatErrorMessage({
   onToggle,
 }: ChatErrorMessageProps) {
   return (
-    <div
-      className={cn(
-        'flex items-start gap-base text-sm text-error cursor-pointer',
-        className
-      )}
+    <ChatDisclosureRow
+      icon={<WarningCircleIcon className="size-icon-base" />}
+      label={content}
+      className={cn('text-error hover:text-error', className)}
       onClick={onToggle}
-      role="button"
-    >
-      <WarningCircleIcon className="shrink-0 size-icon-base pt-0.5" />
-      <span
-        className={cn(
-          !expanded && 'truncate',
-          expanded && 'whitespace-pre-wrap break-all'
-        )}
-      >
-        {content}
-      </span>
-    </div>
+      expanded={onToggle ? Boolean(expanded) : undefined}
+      wrapLabel={expanded || !onToggle}
+    />
   );
 }

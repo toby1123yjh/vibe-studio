@@ -20,6 +20,7 @@ import {
   RouterProvider,
   ScratchScopeFixture,
 } from "./conversation-support";
+import { WorkspaceCreationHandoffPreview } from "./WorkspaceCreationHandoffPreview";
 import {
   getWorkflowNodeActionGate,
   getWorkflowNodeExecutionForWork,
@@ -92,19 +93,19 @@ const fixtureGraph: WorkflowGraph = fileDriven
               type: "task_splitter",
               data: { ...node.data, display_name: "Split the task" },
             }
-          : node,
+          : node
       ),
     }
   : graph;
 client.setQueryData(
   workflowTemplateQueryKeys.detail(
     "visual-template",
-    new URLSearchParams(location.search).get("host"),
+    new URLSearchParams(location.search).get("host")
   ),
   {
     id: "visual-template",
     graph_json: JSON.stringify(fixtureGraph),
-  },
+  }
 );
 
 // Navigation must never accidentally leave the isolated fixture or run an Agent.
@@ -424,7 +425,7 @@ function makeFileDrivenRun(): WorkflowRunResponse {
   if (new URLSearchParams(location.search).get("clone") === "1") {
     run.split_batches[0].source_batch_id = "original-batch";
     run.nodes = run.nodes.filter(
-      (execution) => execution.id !== "research-execution",
+      (execution) => execution.id !== "research-execution"
     );
   }
   return run;
@@ -466,12 +467,12 @@ function Fixture() {
   const [currentGraph, setGraph] = useState(fixtureGraph);
   const [selection, setSelection] = useState<string | null>(null);
   const [run, setRun] = useState(() =>
-    fileDriven ? makeFileDrivenRun() : makeRun("running"),
+    fileDriven ? makeFileDrivenRun() : makeRun("running")
   );
   const runtimeView = getWorkflowRuntimeView(run);
   const runtimeSummary = buildWorkflowRunDashboardSummary(run, runtimeView);
   const reusedWork = runtimeView.node_work.find(
-    (work) => work.status === "reused",
+    (work) => work.status === "reused"
   );
   const selected = currentGraph.nodes.find((node) => node.id === selection);
 
@@ -531,7 +532,7 @@ function Fixture() {
                 actualExecutionIds: run.nodes.map((execution) => execution.id),
                 reusedExecution: getWorkflowNodeExecutionForWork(
                   run,
-                  reusedWork,
+                  reusedWork
                 ),
                 reusedActions: getWorkflowNodeActionGate(reusedWork),
               })}
@@ -579,7 +580,7 @@ function Fixture() {
                               display_name: event.target.value,
                             },
                           }
-                        : node,
+                        : node
                     ),
                   }))
                 }
@@ -598,11 +599,14 @@ function Fixture() {
 const router = createConversationFixtureRouter(
   new URLSearchParams(location.search).get("mode") === "scratch-scope" ? (
     <ScratchScopeFixture />
+  ) : new URLSearchParams(location.search).get("mode") ===
+    "creation-handoff" ? (
+    <WorkspaceCreationHandoffPreview />
   ) : (
     <ReactFlowProvider>
       <Fixture />
     </ReactFlowProvider>
-  ),
+  )
 );
 
 createRoot(document.getElementById("root")!).render(
@@ -612,5 +616,5 @@ createRoot(document.getElementById("root")!).render(
         <RouterProvider router={router} />
       </ThemeProvider>
     </AppNavigationProvider>
-  </QueryClientProvider>,
+  </QueryClientProvider>
 );

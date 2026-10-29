@@ -67,33 +67,46 @@ export function RetryEditorInline({
     onCancelled?.();
   };
 
-  const onSend = useCallback(() => {
-    if (!canSend || !processProfile) return;
-    setSendError(null);
-    retryMutation.mutate({
+  const onSend = useCallback(
+    (markdown = message) => {
+      if (
+        isAttemptRunning ||
+        !markdown.trim() ||
+        !sessionId ||
+        !processProfile ||
+        isSending
+      )
+        return;
+      setSendError(null);
+      retryMutation.mutate({
+        message: markdown,
+        executor: processProfile.executor,
+        variant: selectedVariant,
+        executionProcessId,
+        branchStatus,
+        processes: attemptData.processes,
+      });
+    },
+    [
+      isAttemptRunning,
+      sessionId,
+      isSending,
+      retryMutation,
       message,
-      executor: processProfile.executor,
-      variant: selectedVariant,
+      processProfile,
+      selectedVariant,
       executionProcessId,
       branchStatus,
-      processes: attemptData.processes,
-    });
-  }, [
-    canSend,
-    retryMutation,
-    message,
-    processProfile,
-    selectedVariant,
-    executionProcessId,
-    branchStatus,
-    attemptData.processes,
-  ]);
+      attemptData.processes,
+    ]
+  );
 
-  const handleCmdEnter = useCallback(() => {
-    if (canSend && !isSending) {
-      onSend();
-    }
-  }, [canSend, isSending, onSend]);
+  const handleCmdEnter = useCallback(
+    (markdown: string) => {
+      onSend(markdown);
+    },
+    [onSend]
+  );
 
   const handlePasteFiles = useCallback(
     async (files: File[]) => {
@@ -189,7 +202,7 @@ export function RetryEditorInline({
             <X className="h-3 w-3 mr-1" />{' '}
             {t('buttons.cancel', { ns: 'common' })}
           </Button>
-          <Button onClick={onSend} disabled={!canSend || isSending}>
+          <Button onClick={() => onSend()} disabled={!canSend || isSending}>
             <Send className="h-3 w-3 mr-1" />{' '}
             {t('buttons.send', { ns: 'common', defaultValue: 'Send' })}
           </Button>

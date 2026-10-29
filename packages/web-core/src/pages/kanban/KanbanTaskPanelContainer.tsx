@@ -770,124 +770,130 @@ export function KanbanTaskPanelContainer({
   );
 
   // Submit handler
-  const handleSubmit = useCallback(async () => {
-    if (!displayData.title.trim() || hasPendingAttachments) return;
+  const handleSubmit = useCallback(
+    async (submittedDescription?: string) => {
+      if (!displayData.title.trim() || hasPendingAttachments) return;
 
-    setSubmitError(null);
-    setIsSubmitting(true);
-    try {
-      if (mode === 'create') {
-        // Create new issue at the top of the column
-        const statusTasks = tasks.filter(
-          (i) => i.status_id === displayData.statusId
-        );
-        const minSortOrder =
-          statusTasks.length > 0
-            ? Math.min(...statusTasks.map((i) => i.sort_order))
-            : 0;
+      const description = submittedDescription ?? displayData.description;
 
-        const { persisted } = insertTask({
-          project_id: projectId,
-          status_id: displayData.statusId,
-          title: displayData.title,
-          description: displayData.description,
-          priority: displayData.priority,
-          sort_order: minSortOrder - 1,
-          start_date: null,
-          target_date: null,
-          completed_at: null,
-          parent_task_id: kanbanCreateDefaultParentTaskId,
-          parent_task_sort_order: null,
-          extension_metadata: null,
-        });
-
-        // Wait for the issue to be confirmed by the backend and get the synced entity
-        const syncedTask = await persisted;
-
-        // Commit only attachments still referenced in the description
-        const allUploadedIds = getAttachmentIds();
-        if (allUploadedIds.length > 0) {
-          const referencedIds = extractAttachmentIds(
-            displayData.description ?? ''
+      setSubmitError(null);
+      setIsSubmitting(true);
+      try {
+        if (mode === 'create') {
+          // Create new issue at the top of the column
+          const statusTasks = tasks.filter(
+            (i) => i.status_id === displayData.statusId
           );
-          const idsToCommit = allUploadedIds.filter((id) =>
-            referencedIds.has(id)
-          );
-          const idsToDelete = allUploadedIds.filter(
-            (id) => !referencedIds.has(id)
-          );
+          const minSortOrder =
+            statusTasks.length > 0
+              ? Math.min(...statusTasks.map((i) => i.sort_order))
+              : 0;
 
-          if (idsToCommit.length > 0) {
-            await commitTaskAttachments(syncedTask.id, {
-              attachment_ids: idsToCommit,
+          const { persisted } = insertTask({
+            project_id: projectId,
+            status_id: displayData.statusId,
+            title: displayData.title,
+            description,
+            priority: displayData.priority,
+            sort_order: minSortOrder - 1,
+            start_date: null,
+            target_date: null,
+            completed_at: null,
+            parent_task_id: kanbanCreateDefaultParentTaskId,
+            parent_task_sort_order: null,
+            extension_metadata: null,
+          });
+
+          // Wait for the issue to be confirmed by the backend and get the synced entity
+          const syncedTask = await persisted;
+
+          // Commit only attachments still referenced in the description
+          const allUploadedIds = getAttachmentIds();
+          if (allUploadedIds.length > 0) {
+            const referencedIds = extractAttachmentIds(description ?? '');
+            const idsToCommit = allUploadedIds.filter((id) =>
+              referencedIds.has(id)
+            );
+            const idsToDelete = allUploadedIds.filter(
+              (id) => !referencedIds.has(id)
+            );
+
+            if (idsToCommit.length > 0) {
+              await commitTaskAttachments(syncedTask.id, {
+                attachment_ids: idsToCommit,
+              });
+            }
+            for (const id of idsToDelete) {
+              deleteAttachment(id).catch((err) =>
+                console.error('Failed to delete abandoned attachment:', err)
+              );
+            }
+            clearAttachments();
+          }
+
+          // Create assignee records for all selected assignees
+          displayData.assigneeIds.forEach((userId) => {
+            insertTaskAssignee({
+              task_id: syncedTask.id,
+              user_id: userId,
+            });
+          });
+
+          // Create tag records if tags were selected
+          for (const tagId of displayData.tagIds) {
+            insertTaskTag({
+              task_id: syncedTask.id,
+              tag_id: tagId,
             });
           }
-          for (const id of idsToDelete) {
-            deleteAttachment(id).catch((err) =>
-              console.error('Failed to delete abandoned attachment:', err)
-            );
-          }
-          clearAttachments();
+
+          // Creation only opens Task details. The user chooses an execution
+          // there; keep the expectation, composer close and navigation together.
+          onExpectTaskOpen(syncedTask.id);
+          openTask(syncedTask.id);
+        } else {
+          // Update existing issue - would use update mutation
+          // For now, just close the panel
+          closeKanbanTaskPanel();
         }
-
-        // Create assignee records for all selected assignees
-        displayData.assigneeIds.forEach((userId) => {
-          insertTaskAssignee({
-            task_id: syncedTask.id,
-            user_id: userId,
-          });
-        });
-
-        // Create tag records if tags were selected
-        for (const tagId of displayData.tagIds) {
-          insertTaskTag({
-            task_id: syncedTask.id,
-            tag_id: tagId,
-          });
-        }
-
-        // Creation only opens Task details. The user chooses an execution
-        // there; keep the expectation, composer close and navigation together.
-        onExpectTaskOpen(syncedTask.id);
-        openTask(syncedTask.id);
-      } else {
-        // Update existing issue - would use update mutation
-        // For now, just close the panel
-        closeKanbanTaskPanel();
+      } catch (error) {
+        console.error('Failed to save task:', error);
+        setSubmitError(
+          error instanceof Error ? error.message : 'Failed to save task'
+        );
+      } finally {
+        setIsSubmitting(false);
       }
-    } catch (error) {
-      console.error('Failed to save task:', error);
-      setSubmitError(
-        error instanceof Error ? error.message : 'Failed to save task'
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [
-    mode,
-    displayData,
-    projectId,
-    tasks,
-    insertTask,
-    insertTaskAssignee,
-    insertTaskTag,
-    openTask,
-    kanbanCreateDefaultParentTaskId,
-    closeKanbanTaskPanel,
-    getAttachmentIds,
-    clearAttachments,
-    hasPendingAttachments,
-    onExpectTaskOpen,
-  ]);
+    },
+    [
+      mode,
+      displayData,
+      projectId,
+      tasks,
+      insertTask,
+      insertTaskAssignee,
+      insertTaskTag,
+      openTask,
+      kanbanCreateDefaultParentTaskId,
+      closeKanbanTaskPanel,
+      getAttachmentIds,
+      clearAttachments,
+      hasPendingAttachments,
+      onExpectTaskOpen,
+    ]
+  );
 
   useEffect(() => {
     setSubmitError(null);
   }, [mode, selectedKanbanTaskId, projectId]);
 
-  const handleCmdEnterSubmit = useCallback(() => {
-    if (mode !== 'create') return;
-    void handleSubmit();
-  }, [mode, handleSubmit]);
+  const handleCmdEnterSubmit = useCallback(
+    (markdown?: string) => {
+      if (mode !== 'create') return;
+      void handleSubmit(markdown);
+    },
+    [mode, handleSubmit]
+  );
 
   const handleDeleteDraft = useCallback(() => {
     dispatchFormState({
@@ -977,7 +983,7 @@ export function KanbanTaskPanelContainer({
       linkedPrs={linkedPrs}
       onLinkPr={mode === 'edit' ? handleLinkPr : undefined}
       onClose={closeKanbanTaskPanel}
-      onSubmit={handleSubmit}
+      onSubmit={() => void handleSubmit()}
       onCmdEnterSubmit={handleCmdEnterSubmit}
       onCreateTag={handleCreateTag}
       renderAddTagControl={({

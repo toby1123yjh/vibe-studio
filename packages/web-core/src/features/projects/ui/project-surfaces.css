@@ -704,15 +704,48 @@
   border-top: 1px solid var(--vk-border-subtle);
 }
 
-.vk-kanban-issue-card__tasks > small {
+.vk-kanban-issue-card__execution-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vk-space-1) var(--vk-space-2);
+}
+
+.vk-kanban-issue-card__execution-header > small {
   color: var(--vk-text-low);
   font-size: var(--vk-font-size-2xs);
 }
 
+.vk-kanban-issue-card__activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vk-space-1);
+  min-width: 0;
+}
+
+.vk-kanban-execution-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vk-space-1);
+  height: 20px;
+  padding-inline: var(--vk-space-1);
+  border-radius: var(--vk-radius-sm);
+  font-size: var(--vk-font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vk-kanban-execution-activity > svg,
+.vk-kanban-task-preview__status > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 .vk-kanban-task-preview,
 .vk-kanban-more-tasks {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--vk-space-2);
   min-width: 0;
@@ -724,6 +757,13 @@
   font-size: var(--vk-font-size-2xs);
   text-align: left;
   cursor: pointer;
+}
+
+.vk-kanban-task-preview {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  min-height: var(--vk-task-action-size);
+  padding-block: 0;
 }
 
 .vk-task-action-row {
@@ -781,10 +821,20 @@
   }
 }
 
-.vk-kanban-task-preview span {
+.vk-kanban-task-preview__title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vk-kanban-task-preview__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--vk-radius-full);
+  color: var(--vk-text-low);
 }
 
 .vk-kanban-task-preview:hover,
@@ -803,25 +853,32 @@
   color: var(--vk-button-link-text);
 }
 
-.vk-kanban-task-preview [data-status='running'] {
-  color: var(--vk-status-running);
+.vk-kanban-task-preview__status[data-status='running'],
+.vk-kanban-execution-activity[data-status='running'] {
+  color: var(--vk-status-running-text);
+  background: var(--vk-status-running-subtle);
 }
 
-.vk-kanban-task-preview [data-status='waiting'],
-.vk-kanban-task-preview [data-status='pending'] {
-  color: var(--vk-status-waiting);
+.vk-kanban-task-preview__status[data-status='waiting'],
+.vk-kanban-task-preview__status[data-status='pending'],
+.vk-kanban-execution-activity[data-status='waiting'],
+.vk-kanban-execution-activity[data-status='pending'] {
+  color: var(--vk-status-waiting-text);
+  background: var(--vk-status-waiting-subtle);
 }
 
-.vk-kanban-task-preview [data-status='succeeded'] {
-  color: var(--vk-status-success);
+.vk-kanban-task-preview__status[data-status='succeeded'] {
+  color: var(--vk-status-success-text);
 }
 
-.vk-kanban-task-preview [data-status='failed'] {
-  color: var(--vk-status-error);
+.vk-kanban-task-preview__status[data-status='failed'],
+.vk-kanban-execution-activity[data-status='failed'] {
+  color: var(--vk-status-error-text);
+  background: var(--vk-status-error-subtle);
 }
 
-.vk-kanban-task-preview [data-status='cancelled'] {
-  color: var(--vk-status-cancelled);
+.vk-kanban-task-preview__status[data-status='cancelled'] {
+  color: var(--vk-status-cancelled-text);
 }
 
 .vk-kanban-drag-preview {
@@ -1216,7 +1273,10 @@
   padding-top: var(--vk-space-3);
 }
 
-.vk-task-status-icon--running,
+.vk-task-status-icon--running {
+  animation: vk-spin 1.2s linear infinite;
+}
+
 .vk-spin {
   animation: vk-spin var(--vk-duration-slow) linear infinite;
 }

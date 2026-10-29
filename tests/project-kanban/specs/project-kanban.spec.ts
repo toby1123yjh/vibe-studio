@@ -106,16 +106,25 @@ test("supports keyboard cross-column movement and emits one Escape event", async
   const card = page.locator('[data-task-id="issue-1"]');
   await card.focus();
   await page.keyboard.press("Space");
+  // dnd-kit's KeyboardSensor installs its keydown listener in the next task.
+  await page.evaluate(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+  );
   await page.keyboard.press("Escape");
   expect(
     await page.evaluate(
       () => (window as Window & { escapeEvents?: number }).escapeEvents,
     ),
   ).toBe(1);
+  await expect(card).toHaveAttribute("data-dragging", "false");
+  await expect(page.locator(".vk-kanban-drag-preview")).toHaveCount(0);
 
   await card.focus();
   await page.keyboard.press("Space");
   await expect(card).toHaveAttribute("data-dragging", "true");
+  await page.evaluate(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+  );
   await page.keyboard.press("ArrowRight");
   await expect(
     page.getByText(

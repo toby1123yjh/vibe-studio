@@ -60,6 +60,7 @@ export function ChatBoxBase({
   return (
     <div
       {...(dropzone?.getRootProps() ?? {})}
+      data-chat-composer="true"
       className={cn(
         '@container/chat-composer relative flex min-h-0 min-w-0 max-w-full max-h-[min(70cqh,32rem)] flex-col rounded-[var(--vk-radius-md)] border border-border bg-secondary focus-within:border-brand/50',
         compact ? 'w-full' : 'w-chat',
@@ -97,25 +98,10 @@ export function ChatBoxBase({
         {banner}
       </div>
 
-      {visualVariant === VisualVariant.NORMAL && (
-        <div
-          className="flex min-w-0 shrink-0 flex-wrap items-center gap-x-base gap-y-half border-b px-plusfifty py-base"
-          data-composer-configuration="true"
-        >
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-base gap-y-half text-sm empty:hidden">
-            {headerLeft}
-          </div>
-          {modelSelector && (
-            <div className="flex min-w-0 max-w-full flex-[1_1_14rem] flex-wrap items-center gap-half">
-              {modelSelector}
-            </div>
-          )}
-          <Toolbar className="min-w-0 max-w-full flex-wrap gap-half empty:hidden">
-            {headerRight}
-          </Toolbar>
-        </div>
-      )}
-      <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-base px-plusfifty pt-base text-sm text-low empty:hidden">
+      <div
+        className="flex min-w-0 shrink-0 flex-wrap items-center gap-base px-plusfifty pt-base text-sm text-low empty:hidden"
+        data-composer-status="true"
+      >
         {status}
       </div>
       <div
@@ -126,21 +112,42 @@ export function ChatBoxBase({
       </div>
       {/* Scrolling message content never takes the send controls with it. */}
       <div
-        className="min-h-8 min-w-0 shrink overflow-y-auto px-plusfifty py-plusfifty [overflow-wrap:anywhere]"
+        className="min-h-8 min-w-0 shrink overflow-x-hidden overflow-y-auto px-plusfifty py-plusfifty [overflow-wrap:anywhere]"
         data-composer-message="true"
       >
         {editor}
       </div>
       <div
-        className="flex min-w-0 shrink-0 flex-wrap items-end justify-between gap-x-base gap-y-half px-base pb-base"
+        className="grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-x-base gap-y-half px-base pb-base"
         data-composer-actions="true"
       >
-        {footerLeft && (
-          <Toolbar className="min-w-0 max-w-full flex-wrap !gap-x-half !gap-y-half">
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-x-base gap-y-half"
+          data-composer-configuration="true"
+        >
+          <Toolbar className="min-w-0 max-w-full flex-wrap !gap-x-half !gap-y-half empty:hidden">
             {footerLeft}
           </Toolbar>
-        )}
-        <div className="ml-auto flex min-w-0 max-w-full flex-wrap justify-end gap-half [&_button]:min-h-8 [&_button]:whitespace-normal [&_button]:break-words [@media(pointer:coarse)]:[&_button]:min-h-11">
+          {visualVariant === VisualVariant.NORMAL && (
+            <>
+              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-base gap-y-half text-sm empty:hidden">
+                {headerLeft}
+              </div>
+              {modelSelector && (
+                <div className="flex min-w-0 max-w-full flex-wrap items-center gap-half [&_button]:max-w-full">
+                  {modelSelector}
+                </div>
+              )}
+              <Toolbar className="min-w-0 max-w-full flex-wrap gap-half empty:hidden">
+                {headerRight}
+              </Toolbar>
+            </>
+          )}
+        </div>
+        <div
+          className="flex min-w-0 max-w-full flex-wrap justify-end gap-half [&_button]:min-h-8 [&_button]:justify-center [&_button]:whitespace-normal [&_button]:break-words [@media(pointer:coarse)]:[&_button]:min-h-11"
+          data-composer-primary-actions="true"
+        >
           {footerRight}
         </div>
       </div>
