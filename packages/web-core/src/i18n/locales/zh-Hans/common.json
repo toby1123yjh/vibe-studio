@@ -800,6 +800,16 @@
         "attemptB": "执行 B"
       }
     },
+    "coordination": {
+      "pending": "等待主 Agent",
+      "claimed": "主 Agent 已接手",
+      "completed": "主 Agent 已处理异常",
+      "failed": "主 Agent 处理未完成",
+      "cancelled": "主 Agent 接力已停止",
+      "unknown": "主 Agent 协调",
+      "outcomeHint": "保留原执行结果，交付进展以后续实际运行为准。",
+      "openMainSession": "打开原主会话"
+    },
     "split": {
       "output": "输出",
       "defaultPrompt": "将输入工作拆成独立子任务，在工作流控制目录中写入 tasks.json 和每项子任务的说明文件。记录依赖关系，并引用相关源文件。",

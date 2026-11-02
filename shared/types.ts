@@ -168,6 +168,8 @@ export type PrepareWorkflowMainSessionRequest = { project_id: string, workflow_i
 
 export type WorkflowContextView = { project_id: string, main_session_id: string, workflow_id: string, workflow_name: string, main_agent_config: ExecutorConfig, main_agent_prompt: string, prepared_issue_id: string | null, issue_id: string | null, instance_id: string | null, workspace_id: string, latest_run_id: string | null, definition_locked_at: string | null, allowed_actions: Array<string>, };
 
+export type WorkflowCoordinationEventView = { id: string, run_id: string, node_execution_id: string | null, kind: string, state: string, session_id: string, error_text: string | null, evidence_path: string | null, };
+
 export type WorkflowMainSessionView = { session: Session, context: WorkflowContextView, };
 
 export type WorkflowSubmissionScope = { "type": "all" } | { "type": "from_nodes", node_ids: Array<string>, };
@@ -176,7 +178,12 @@ export type WorkflowSubmissionAction = "start" | "retry" | "rework";
 
 export type WorkflowActivePolicy = "after_current" | "stop_then_run";
 
-export type WorkflowSubmission = { request_id: string, action: WorkflowSubmissionAction, input_text?: string, material_paths: Array<string>, source_run_id?: string, source_node_execution_id?: string, scope: WorkflowSubmissionScope, active_policy?: WorkflowActivePolicy, source_message_id?: string, delivery_intent?: WorkflowDeliveryCompleteness, source_batch_id?: string, };
+export type WorkflowSubmission = { request_id: string, action: WorkflowSubmissionAction, input_text?: string,
+/**
+ * Project-relative instructions for an explicit retry/rework. Runtime
+ * captures the file into the new accepted request before dispatch.
+ */
+instruction_path?: string, material_paths: Array<string>, source_run_id?: string, source_node_execution_id?: string, scope: WorkflowSubmissionScope, active_policy?: WorkflowActivePolicy, source_message_id?: string, delivery_intent?: WorkflowDeliveryCompleteness, source_batch_id?: string, };
 
 export type AcceptedWorkflowSubmission = { request_id: string, project_id: string, issue_id: string, instance_id: string, run_id: string, phase: string, };
 
@@ -513,7 +520,7 @@ reused_results: Array<WorkflowReuseView>, };
 
 export type WorkflowRunRuntimeView = { run_id: string, status: WorkflowRunStatus, active_node_count: number, pending_node_count: number, waiting_node_count: number, failed_node_count: number, completed_node_count: number, reused_node_count: number, skipped_node_count: number, node_work: Array<WorkflowNodeWorkView>, };
 
-export type WorkflowRunResponse = { id: string, orchestration_run_id: string | null, workflow_id: string, attempt_id: string | null, task_id: string, workspace_id: string | null, trigger_source: string, input_text: string, output_text: string | null, status: WorkflowRunStatus, started_at: string | null, finished_at: string | null, error_text: string | null, created_at: string, updated_at: string, nodes: Array<WorkflowNodeExecutionResponse>, split_batches: Array<WorkflowSplitBatchView>, handoffs: Array<WorkflowHandoffView>, delivery: WorkflowDeliveryView | null, request_path: string | null, runtime_view?: WorkflowRunRuntimeView, queue_phase?: string, };
+export type WorkflowRunResponse = { id: string, orchestration_run_id: string | null, workflow_id: string, attempt_id: string | null, task_id: string, workspace_id: string | null, trigger_source: string, input_text: string, output_text: string | null, status: WorkflowRunStatus, started_at: string | null, finished_at: string | null, error_text: string | null, created_at: string, updated_at: string, nodes: Array<WorkflowNodeExecutionResponse>, split_batches: Array<WorkflowSplitBatchView>, handoffs: Array<WorkflowHandoffView>, handover_events: Array<WorkflowCoordinationEventView>, delivery: WorkflowDeliveryView | null, request_path: string | null, runtime_view?: WorkflowRunRuntimeView, queue_phase?: string, };
 
 export type WorkflowNodeExecutionResponse = { id: string, run_id: string, execution_id: string | null, node_id: string, node_type: string, iteration: bigint, status: NodeExecutionStatus, input_text: string | null, output_text: string | null, session_id: string | null, orchestration_node_execution_id: string | null, agent_run_id: string | null, projection_status: ProjectionStatus | null, execution_process_id: string | null, arena_group_id: string | null, tokens_used: bigint | null, cost_estimate: number | null, started_at: string | null, finished_at: string | null, error_text: string | null, created_at: string, updated_at: string, };
 

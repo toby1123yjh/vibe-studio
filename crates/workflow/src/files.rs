@@ -175,7 +175,7 @@ pub async fn readable_file(root: &Path, relative: &str) -> Result<PathBuf, Workf
 }
 
 /// Validate each existing parent before creating a system control directory.
-/// A symlinked `.vibe-kanban` must not cause writes outside the project.
+/// A symlinked control directory must not cause writes outside the project.
 pub async fn control_file_path(root: &Path, relative: &str) -> Result<PathBuf, WorkflowFileError> {
     let target = relative_control_path(root, relative)?;
     let canonical_root = fs::canonicalize(root).await?;
@@ -212,32 +212,43 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-pub fn run_control_dir(root: &Path, run_id: &str) -> Result<PathBuf, WorkflowFileError> {
-    if run_id.is_empty()
-        || !run_id
+fn validate_control_id(id: &str) -> Result<(), WorkflowFileError> {
+    if id.is_empty()
+        || !id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
-        return Err(WorkflowFileError::InvalidPath(run_id.to_owned()));
+        return Err(WorkflowFileError::InvalidPath(id.to_owned()));
     }
-    Ok(root.join(".vibe-kanban").join("workflows").join(run_id))
+    Ok(())
+}
+
+/// Stable definition and run identities isolate repeated runs without coupling
+/// control paths to user-editable workflow or node names.
+pub fn run_relative_dir(workflow_id: &str, run_id: &str) -> Result<String, WorkflowFileError> {
+    validate_control_id(workflow_id)?;
+    validate_control_id(run_id)?;
+    Ok(format!(
+        ".vibe-studio/workflows/{workflow_id}/runs/{run_id}"
+    ))
+}
+
+pub fn run_control_dir(
+    root: &Path,
+    workflow_id: &str,
+    run_id: &str,
+) -> Result<PathBuf, WorkflowFileError> {
+    Ok(root.join(run_relative_dir(workflow_id, run_id)?))
 }
 
 pub fn split_control_dir(
     root: &Path,
+    workflow_id: &str,
     run_id: &str,
     split_execution_id: &str,
 ) -> Result<PathBuf, WorkflowFileError> {
-    let run = run_control_dir(root, run_id)?;
-    if split_execution_id.is_empty()
-        || !split_execution_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
-        return Err(WorkflowFileError::InvalidPath(
-            split_execution_id.to_owned(),
-        ));
-    }
+    let run = run_control_dir(root, workflow_id, run_id)?;
+    validate_control_id(split_execution_id)?;
     Ok(run.join("splits").join(split_execution_id))
 }
 
@@ -351,21 +362,38 @@ mod tests {
             relative_control_path(root, r"notes\result.md").unwrap(),
             root.join("notes/result.md")
         );
-        assert!(run_control_dir(root, "../run").is_err());
-        assert!(split_control_dir(root, "run", "../../split").is_err());
+        assert!(run_control_dir(root, "workflow", "../run").is_err());
+        assert!(run_control_dir(root, "../workflow", "run").is_err());
+        assert!(split_control_dir(root, "workflow", "run", "../../split").is_err());
+    }
+
+    #[test]
+    fn control_paths_separate_definitions_runs_and_split_attempts() {
+        let root = Path::new("workspace");
+        let first = run_control_dir(root, "workflow-a", "run-a").unwrap();
+        assert_eq!(
+            first,
+            root.join(".vibe-studio/workflows/workflow-a/runs/run-a")
+        );
+        assert_ne!(first, run_control_dir(root, "workflow-a", "run-b").unwrap());
+        assert_ne!(first, run_control_dir(root, "workflow-b", "run-a").unwrap());
+        assert_ne!(
+            split_control_dir(root, "workflow-a", "run-a", "attempt-a").unwrap(),
+            split_control_dir(root, "workflow-a", "run-a", "attempt-b").unwrap()
+        );
     }
 
     #[tokio::test]
     async fn atomic_files_are_readable_and_hashes_detect_changes() {
         let root = tempfile::tempdir().unwrap();
-        let path = control_file_path(root.path(), ".vibe-kanban/workflows/run/tasks.json")
-            .await
-            .unwrap();
+        let relative = format!(
+            "{}/tasks.json",
+            run_relative_dir("workflow", "run").unwrap()
+        );
+        let path = control_file_path(root.path(), &relative).await.unwrap();
         write_json_atomic(&path, &manifest()).await.unwrap();
         let accepted_hash = sha256_file(&path).await.unwrap();
-        let resolved = readable_file(root.path(), ".vibe-kanban/workflows/run/tasks.json")
-            .await
-            .unwrap();
+        let resolved = readable_file(root.path(), &relative).await.unwrap();
         let read: SplitTaskManifest = read_json(&resolved).await.unwrap();
         assert_eq!(read, manifest());
         let mut changed = manifest();
@@ -379,7 +407,7 @@ mod tests {
         }
         assert_eq!(count, 1, "atomic writes must not retain temporary files");
         assert!(
-            readable_file(root.path(), ".vibe-kanban/workflows/run")
+            readable_file(root.path(), &run_relative_dir("workflow", "run").unwrap())
                 .await
                 .is_err()
         );

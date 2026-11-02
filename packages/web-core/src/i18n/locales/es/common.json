@@ -1454,6 +1454,16 @@
         "attemptB": "Attempt B"
       }
     },
+    "coordination": {
+      "pending": "Esperando al Agent principal",
+      "claimed": "El Agent principal tomó el relevo",
+      "completed": "El Agent principal procesó la excepción",
+      "failed": "El Agent principal no pudo terminar",
+      "cancelled": "Relevo al Agent principal detenido",
+      "unknown": "Coordinación del Agent principal",
+      "outcomeHint": "Se conserva el resultado original. Consulta las ejecuciones posteriores para ver la entrega.",
+      "openMainSession": "Abrir la conversación principal original"
+    },
     "split": {
       "output": "Salida",
       "defaultPrompt": "Divide el trabajo entrante en subtareas independientes. Escribe tasks.json y un archivo de instrucciones por subtarea en el directorio de control del flujo. Incluye dependencias y referencias a los archivos de origen.",

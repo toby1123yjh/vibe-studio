@@ -1,80 +1,80 @@
-import { useState } from "react";
-import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactFlowProvider } from "@xyflow/react";
-import { ThemeMode, type WorkflowRunResponse } from "shared/types";
-import i18n from "../../../../packages/web-core/src/i18n/config";
-import "../../../../packages/web-core/src/app/styles/new/index.css";
-import "../../../../packages/ui/src/styles/tokens.css";
-import { ThemeProvider } from "@/shared/providers/ThemeProvider";
-import { useTheme } from "@/shared/hooks/useTheme";
-import { AppNavigationProvider } from "@/shared/hooks/useAppNavigation";
-import type { AppNavigation } from "@/shared/lib/routes/appNavigation";
-import { workflowTemplateQueryKeys } from "@/shared/hooks/useWorkflowTemplates";
-import { WorkflowCanvas } from "@/features/workflow/ui/WorkflowCanvas";
-import { WorkflowConfigurationFrame } from "@/features/workflow/ui/WorkflowConfigurationFrame";
-import { WorkflowRunCanvasTab } from "@/features/workflow/ui/WorkflowRunCanvasTab";
-import { WorkflowRunResult } from "@/features/workflow/ui/WorkflowRunResult";
+import { useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactFlowProvider } from '@xyflow/react';
+import { ThemeMode, type WorkflowRunResponse } from 'shared/types';
+import i18n from '../../../../packages/web-core/src/i18n/config';
+import '../../../../packages/web-core/src/app/styles/new/index.css';
+import '../../../../packages/ui/src/styles/tokens.css';
+import { ThemeProvider } from '@/shared/providers/ThemeProvider';
+import { useTheme } from '@/shared/hooks/useTheme';
+import { AppNavigationProvider } from '@/shared/hooks/useAppNavigation';
+import type { AppNavigation } from '@/shared/lib/routes/appNavigation';
+import { workflowTemplateQueryKeys } from '@/shared/hooks/useWorkflowTemplates';
+import { WorkflowCanvas } from '@/features/workflow/ui/WorkflowCanvas';
+import { WorkflowConfigurationFrame } from '@/features/workflow/ui/WorkflowConfigurationFrame';
+import { WorkflowRunCanvasTab } from '@/features/workflow/ui/WorkflowRunCanvasTab';
+import { WorkflowRunResult } from '@/features/workflow/ui/WorkflowRunResult';
 import {
   createConversationFixtureRouter,
   RouterProvider,
   ScratchScopeFixture,
-} from "./conversation-support";
-import { WorkspaceCreationHandoffPreview } from "./WorkspaceCreationHandoffPreview";
+} from './conversation-support';
+import { WorkspaceCreationHandoffPreview } from './WorkspaceCreationHandoffPreview';
 import {
   getWorkflowNodeActionGate,
   getWorkflowNodeExecutionForWork,
   getWorkflowRuntimeView,
-} from "@/features/workflow/model/workflowRuntimeView";
-import { buildWorkflowRunDashboardSummary } from "@/features/workflow/model/workflowRunView";
+} from '@/features/workflow/model/workflowRuntimeView';
+import { buildWorkflowRunDashboardSummary } from '@/features/workflow/model/workflowRunView';
 import {
   migrateWorkflowGraph,
   WORKFLOW_GRAPH_VERSION,
   type WorkflowGraph,
-} from "@/features/workflow/model/workflowGraph";
+} from '@/features/workflow/model/workflowGraph';
 
-void i18n.changeLanguage("en");
+void i18n.changeLanguage('en');
 
 const graph: WorkflowGraph = migrateWorkflowGraph({
   version: WORKFLOW_GRAPH_VERSION,
   nodes: [
     {
-      id: "start",
-      type: "start",
-      data: { display_name: "Start" },
+      id: 'start',
+      type: 'start',
+      data: { display_name: 'Start' },
       position: { x: 0, y: 180 },
     },
     {
-      id: "plan",
-      type: "agent",
+      id: 'plan',
+      type: 'agent',
       data: {
-        display_name: "Plan the change",
-        prompt_template: "Create an implementation plan.",
-        executor_config: { executor: "CODEX" },
+        display_name: 'Plan the change',
+        prompt_template: 'Create an implementation plan.',
+        executor_config: { executor: 'CODEX' },
       },
       position: { x: 200, y: 100 },
     },
     {
-      id: "build",
-      type: "agent",
+      id: 'build',
+      type: 'agent',
       data: {
-        display_name: "Implement the change",
-        prompt_template: "Implement the approved plan.",
-        executor_config: { executor: "CLAUDE_CODE" },
+        display_name: 'Implement the change',
+        prompt_template: 'Implement the approved plan.',
+        executor_config: { executor: 'CLAUDE_CODE' },
       },
       position: { x: 560, y: 100 },
     },
     {
-      id: "end",
-      type: "end",
-      data: { display_name: "End" },
+      id: 'end',
+      type: 'end',
+      data: { display_name: 'End' },
       position: { x: 920, y: 180 },
     },
   ],
   edges: [
-    { id: "start-plan", source: "start", target: "plan", type: "default" },
-    { id: "plan-build", source: "plan", target: "build", type: "default" },
-    { id: "build-end", source: "build", target: "end", type: "default" },
+    { id: 'start-plan', source: 'start', target: 'plan', type: 'default' },
+    { id: 'plan-build', source: 'plan', target: 'build', type: 'default' },
+    { id: 'build-end', source: 'build', target: 'end', type: 'default' },
   ],
 });
 
@@ -82,16 +82,16 @@ const client = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 });
 const fileDriven =
-  new URLSearchParams(location.search).get("mode") === "file-run";
+  new URLSearchParams(location.search).get('mode') === 'file-run';
 const fixtureGraph: WorkflowGraph = fileDriven
   ? {
       ...graph,
       nodes: graph.nodes.map((node) =>
-        node.id === "plan"
+        node.id === 'plan'
           ? {
               ...node,
-              type: "task_splitter",
-              data: { ...node.data, display_name: "Split the task" },
+              type: 'task_splitter',
+              data: { ...node.data, display_name: 'Split the task' },
             }
           : node
       ),
@@ -99,23 +99,23 @@ const fixtureGraph: WorkflowGraph = fileDriven
   : graph;
 client.setQueryData(
   workflowTemplateQueryKeys.detail(
-    "visual-template",
-    new URLSearchParams(location.search).get("host")
+    'visual-template',
+    new URLSearchParams(location.search).get('host')
   ),
   {
-    id: "visual-template",
+    id: 'visual-template',
     graph_json: JSON.stringify(fixtureGraph),
   }
 );
 
 // Navigation must never accidentally leave the isolated fixture or run an Agent.
 function unexpectedNavigation(): never {
-  throw new Error("Visual fixture must not navigate to an execution");
+  throw new Error('Visual fixture must not navigate to an execution');
 }
 const navigation: AppNavigation = {
   resolveFromPath: () => {
-    const hostId = new URLSearchParams(location.search).get("host");
-    return hostId ? { kind: "workspaces", hostId } : null;
+    const hostId = new URLSearchParams(location.search).get('host');
+    return hostId ? { kind: 'workspaces', hostId } : null;
   },
   goToRoot: unexpectedNavigation,
   goToOnboarding: unexpectedNavigation,
@@ -135,36 +135,37 @@ const navigation: AppNavigation = {
   goToProjectWorkspaceCreate: unexpectedNavigation,
 };
 
-function makeRun(status: "running" | "succeeded"): WorkflowRunResponse {
+function makeRun(status: 'running' | 'succeeded'): WorkflowRunResponse {
   return {
-    id: "visual-run",
+    id: 'visual-run',
     orchestration_run_id: null,
-    workflow_id: "visual-template",
+    workflow_id: 'visual-template',
     attempt_id: null,
-    task_id: "visual-issue",
-    workspace_id: "visual-workspace",
-    trigger_source: "manual",
-    input_text: "Visual fixture",
+    task_id: 'visual-issue',
+    workspace_id: 'visual-workspace',
+    trigger_source: 'manual',
+    input_text: 'Visual fixture',
     output_text: null,
     status,
-    started_at: "2026-09-07T00:00:00Z",
+    started_at: '2026-09-07T00:00:00Z',
     finished_at: null,
     error_text: null,
-    created_at: "2026-09-07T00:00:00Z",
-    updated_at: "2026-09-07T00:00:01Z",
+    created_at: '2026-09-07T00:00:00Z',
+    updated_at: '2026-09-07T00:00:01Z',
     nodes: [],
     split_batches: [],
     handoffs: [],
+    handover_events: [],
     delivery: null,
     request_path: null,
     runtime_view: {
-      run_id: "visual-run",
+      run_id: 'visual-run',
       status,
-      active_node_count: status === "running" ? 1 : 0,
-      completed_node_count: status === "running" ? 2 : 4,
+      active_node_count: status === 'running' ? 1 : 0,
+      completed_node_count: status === 'running' ? 2 : 4,
       reused_node_count: 0,
       skipped_node_count: 0,
-      pending_node_count: status === "running" ? 1 : 0,
+      pending_node_count: status === 'running' ? 1 : 0,
       waiting_node_count: 0,
       failed_node_count: 0,
       node_work: fixtureGraph.nodes.map((node) => ({
@@ -172,26 +173,26 @@ function makeRun(status: "running" | "succeeded"): WorkflowRunResponse {
         node_type: node.type,
         iteration: 0n,
         status:
-          node.id === "build"
+          node.id === 'build'
             ? status
-            : node.id === "end" && status === "running"
-              ? "pending"
-              : "succeeded",
+            : node.id === 'end' && status === 'running'
+              ? 'pending'
+              : 'succeeded',
         pending_work_count: 0,
         starting_child_count: 0,
         active_execution_id:
-          node.id === "build" && status === "running"
-            ? "visual-execution"
+          node.id === 'build' && status === 'running'
+            ? 'visual-execution'
             : null,
         active_session_id: null,
         orchestration_node_execution_id: null,
         active_agent_run_id: null,
-        projection_status: "current",
+        projection_status: 'current',
         active_started_at: null,
         active_elapsed_ms: null,
         active_slow: false,
         active_slow_threshold_ms: 300000,
-        runtime_health: "ok",
+        runtime_health: 'ok',
         can_open_session: false,
         can_retry: false,
         can_approve: false,
@@ -206,31 +207,31 @@ function makeRun(status: "running" | "succeeded"): WorkflowRunResponse {
 }
 
 function makeReusedRun(): WorkflowRunResponse {
-  const run = makeRun("succeeded");
+  const run = makeRun('succeeded');
   run.nodes = [
     {
-      id: "fresh-build-execution",
+      id: 'fresh-build-execution',
       run_id: run.id,
-      execution_id: "fresh-build-task",
-      node_id: "build",
-      node_type: "agent",
+      execution_id: 'fresh-build-task',
+      node_id: 'build',
+      node_type: 'agent',
       iteration: 0n,
-      status: "succeeded",
-      input_text: "Use the earlier plan",
-      output_text: "Fresh build result",
-      session_id: "fresh-build-session",
-      orchestration_node_execution_id: "fresh-build-orchestration",
-      agent_run_id: "fresh-build-agent-run",
-      projection_status: "current",
+      status: 'succeeded',
+      input_text: 'Use the earlier plan',
+      output_text: 'Fresh build result',
+      session_id: 'fresh-build-session',
+      orchestration_node_execution_id: 'fresh-build-orchestration',
+      agent_run_id: 'fresh-build-agent-run',
+      projection_status: 'current',
       execution_process_id: null,
       arena_group_id: null,
       tokens_used: 42n,
       cost_estimate: 0.01,
-      started_at: "2026-09-07T00:00:00Z",
-      finished_at: "2026-09-07T00:00:01Z",
+      started_at: '2026-09-07T00:00:00Z',
+      finished_at: '2026-09-07T00:00:01Z',
       error_text: null,
-      created_at: "2026-09-07T00:00:00Z",
-      updated_at: "2026-09-07T00:00:01Z",
+      created_at: '2026-09-07T00:00:00Z',
+      updated_at: '2026-09-07T00:00:01Z',
     },
   ];
   const view = run.runtime_view!;
@@ -238,10 +239,10 @@ function makeReusedRun(): WorkflowRunResponse {
   view.reused_node_count = 2;
   view.skipped_node_count = 1;
   view.node_work = view.node_work.map((work) => {
-    if (work.node_id === "start" || work.node_id === "plan") {
+    if (work.node_id === 'start' || work.node_id === 'plan') {
       return {
         ...work,
-        status: "reused",
+        status: 'reused',
         iteration: 1n,
         // Deliberately inconsistent action flags verify frontend fail-closed
         // guards rather than hiding controls only because a fixture says false.
@@ -257,123 +258,126 @@ function makeReusedRun(): WorkflowRunResponse {
             node_id: work.node_id,
             iteration: 0,
             source_node_execution_id: `${work.node_id}-source-0`,
-            source_run_id: "earlier-run",
+            source_run_id: 'earlier-run',
             output_text:
-              work.node_id === "plan" ? "Earlier plan, first iteration" : null,
+              work.node_id === 'plan' ? 'Earlier plan, first iteration' : null,
           },
-          ...(work.node_id === "plan"
+          ...(work.node_id === 'plan'
             ? [
                 {
                   node_id: work.node_id,
                   iteration: 1,
-                  source_node_execution_id: "plan-source-1",
-                  source_run_id: "earlier-run",
-                  output_text: "Earlier plan, second iteration",
+                  source_node_execution_id: 'plan-source-1',
+                  source_run_id: 'earlier-run',
+                  output_text: 'Earlier plan, second iteration',
                 },
               ]
             : []),
         ],
       };
     }
-    if (work.node_id === "end") return { ...work, status: "skipped" };
+    if (work.node_id === 'end') return { ...work, status: 'skipped' };
     return {
       ...work,
-      orchestration_node_execution_id: "fresh-build-orchestration",
-      active_agent_run_id: "fresh-build-agent-run",
+      orchestration_node_execution_id: 'fresh-build-orchestration',
+      active_agent_run_id: 'fresh-build-agent-run',
     };
   });
   return run;
 }
 
 function makeFileDrivenRun(): WorkflowRunResponse {
-  const run = makeRun("running");
-  run.attempt_id = "visual-instance";
-  run.request_path = ".vibe-kanban/workflows/visual-run/request.md";
+  const run = makeRun('running');
+  run.attempt_id = 'visual-instance';
+  run.request_path =
+    '.vibe-studio/workflows/visual-template/runs/visual-run/request.md';
   run.split_batches = [
     {
-      id: "visual-batch",
+      id: 'visual-batch',
       run_id: run.id,
-      node_execution_id: "split-execution",
-      splitter_node_id: "plan",
-      summary_node_id: "end",
-      manifest_path: ".vibe-kanban/workflows/visual-run/tasks.json",
-      manifest_sha256: "a".repeat(64),
-      dispatch_path: ".vibe-kanban/workflows/visual-run/dispatch.json",
-      state: "running",
+      node_execution_id: 'split-execution',
+      splitter_node_id: 'plan',
+      summary_node_id: 'end',
+      manifest_path:
+        '.vibe-studio/workflows/visual-template/runs/visual-run/tasks.json',
+      manifest_sha256: 'a'.repeat(64),
+      dispatch_path:
+        '.vibe-studio/workflows/visual-template/runs/visual-run/dispatch.json',
+      state: 'running',
       error_text: null,
       source_batch_id: null,
       summary_node_execution_id: null,
       handover: {
-        state: "completed",
-        session_id: "main-session",
-        agent_run_id: "main-run",
-        run_attempt_id: "main-attempt",
+        state: 'completed',
+        session_id: 'main-session',
+        agent_run_id: 'main-run',
+        run_attempt_id: 'main-attempt',
         error_text: null,
       },
       subtasks: [
         {
-          id: "research",
-          subtask_id: "research",
-          title: "Research the requirements",
+          id: 'research',
+          subtask_id: 'research',
+          title: 'Research the requirements',
           instruction_path:
-            ".vibe-kanban/workflows/visual-run/instructions/research.md",
-          node_id: "build",
+            '.vibe-studio/workflows/visual-template/runs/visual-run/instructions/research.md',
+          node_id: 'build',
           stage_index: 0,
-          state: "succeeded",
+          state: 'succeeded',
           depends_on: [],
-          node_execution_id: "research-execution",
-          session_id: "research-session",
-          agent_run_id: "research-run",
+          node_execution_id: 'research-execution',
+          session_id: 'research-session',
+          agent_run_id: 'research-run',
           error_text: null,
           handoff_path:
-            ".vibe-kanban/workflows/visual-run/research/handoff.json",
+            '.vibe-studio/workflows/visual-template/runs/visual-run/research/handoff.json',
         },
         {
-          id: "review",
-          subtask_id: "review",
-          title: "Review the source material",
+          id: 'review',
+          subtask_id: 'review',
+          title: 'Review the source material',
           instruction_path:
-            ".vibe-kanban/workflows/visual-run/instructions/review.md",
-          node_id: "build",
+            '.vibe-studio/workflows/visual-template/runs/visual-run/instructions/review.md',
+          node_id: 'build',
           stage_index: 0,
-          state: "failed",
+          state: 'failed',
           depends_on: [],
-          node_execution_id: "review-execution",
-          session_id: "review-session",
-          agent_run_id: "review-run",
-          error_text: "Source material was removed",
+          node_execution_id: 'review-execution',
+          session_id: 'review-session',
+          agent_run_id: 'review-run',
+          error_text: 'Source material was removed',
           handoff_path: null,
         },
         {
-          id: "independent",
-          subtask_id: "independent",
-          title: "Prepare independent analysis",
+          id: 'independent',
+          subtask_id: 'independent',
+          title: 'Prepare independent analysis',
           instruction_path:
-            ".vibe-kanban/workflows/visual-run/instructions/analysis.md",
-          node_id: "build",
+            '.vibe-studio/workflows/visual-template/runs/visual-run/instructions/analysis.md',
+          node_id: 'build',
           stage_index: 0,
-          state: "running",
+          state: 'running',
           depends_on: [],
-          node_execution_id: "analysis-execution",
-          session_id: "analysis-session",
-          agent_run_id: "analysis-run",
+          node_execution_id: 'analysis-execution',
+          session_id: 'analysis-session',
+          agent_run_id: 'analysis-run',
           error_text: null,
           handoff_path: null,
         },
         {
-          id: "followup",
-          subtask_id: "followup",
-          title: "Use the review result",
+          id: 'followup',
+          subtask_id: 'followup',
+          title: 'Use the review result',
           instruction_path:
-            ".vibe-kanban/workflows/visual-run/instructions/followup.md",
-          node_id: "build",
+            '.vibe-studio/workflows/visual-template/runs/visual-run/instructions/followup.md',
+          node_id: 'build',
           stage_index: 1,
-          state: "blocked",
-          depends_on: ["review"],
+          state: 'blocked',
+          depends_on: ['review'],
           node_execution_id: null,
           session_id: null,
           agent_run_id: null,
-          error_text: "Review dependency failed",
+          error_text: 'Review dependency failed',
           handoff_path: null,
         },
       ],
@@ -381,11 +385,12 @@ function makeFileDrivenRun(): WorkflowRunResponse {
   ];
   run.handoffs = [
     {
-      node_execution_id: "research-execution",
+      node_execution_id: 'research-execution',
       run_id: run.id,
-      handoff_path: ".vibe-kanban/workflows/visual-run/research/handoff.json",
+      handoff_path:
+        '.vibe-studio/workflows/visual-template/runs/visual-run/research/handoff.json',
       files: [
-        { path: "deliverables/research report.md", sha256: "b".repeat(64) },
+        { path: 'deliverables/research report.md', sha256: 'b'.repeat(64) },
       ],
     },
   ];
@@ -394,10 +399,10 @@ function makeFileDrivenRun(): WorkflowRunResponse {
   run.nodes = [
     {
       ...baseExecution,
-      id: "split-execution",
+      id: 'split-execution',
       run_id: run.id,
-      node_id: "plan",
-      node_type: "task_splitter",
+      node_id: 'plan',
+      node_type: 'task_splitter',
       session_id: null,
     },
     ...run.split_batches[0].subtasks
@@ -409,23 +414,23 @@ function makeFileDrivenRun(): WorkflowRunResponse {
         node_id: task.node_id!,
         session_id: task.session_id,
         status:
-          task.state === "failed"
-            ? "failed"
-            : task.state === "succeeded"
-              ? "succeeded"
-              : "running",
+          task.state === 'failed'
+            ? 'failed'
+            : task.state === 'succeeded'
+              ? 'succeeded'
+              : 'running',
       })),
   ];
   const view = run.runtime_view!;
   view.node_work = view.node_work.map((work) => ({
     ...work,
     orchestration_node_execution_id: `orchestration-${work.node_id}`,
-    active_agent_run_id: work.node_id === "build" ? "analysis-run" : null,
+    active_agent_run_id: work.node_id === 'build' ? 'analysis-run' : null,
   }));
-  if (new URLSearchParams(location.search).get("clone") === "1") {
-    run.split_batches[0].source_batch_id = "original-batch";
+  if (new URLSearchParams(location.search).get('clone') === '1') {
+    run.split_batches[0].source_batch_id = 'original-batch';
     run.nodes = run.nodes.filter(
-      (execution) => execution.id !== "research-execution"
+      (execution) => execution.id !== 'research-execution'
     );
   }
   return run;
@@ -433,60 +438,125 @@ function makeFileDrivenRun(): WorkflowRunResponse {
 
 function makePartialRun(): WorkflowRunResponse {
   const run = makeFileDrivenRun();
-  run.id = "partial-run";
-  run.status = "succeeded";
+  run.id = 'partial-run';
+  run.status = 'succeeded';
   run.split_batches = [];
   run.output_text =
-    "Available research summarized. The review remains incomplete.";
+    'Available research summarized. The review remains incomplete.';
   run.delivery = {
-    completeness: "partial",
-    source_run_id: "visual-run",
-    source_batch_id: "visual-batch",
+    completeness: 'partial',
+    source_run_id: 'visual-run',
+    source_batch_id: 'visual-batch',
     missing_subtasks: [
       {
-        subtask_id: "review",
-        title: "Review the source material",
-        state: "failed",
-        reason: "Source material was removed",
+        subtask_id: 'review',
+        title: 'Review the source material',
+        state: 'failed',
+        reason: 'Source material was removed',
       },
     ],
   };
   run.runtime_view = {
     ...run.runtime_view!,
     run_id: run.id,
-    status: "succeeded",
+    status: 'succeeded',
   };
   return run;
 }
 
+function makeExceptionRun(state = 'pending'): WorkflowRunResponse {
+  const run = makeReusedRun();
+  run.status = 'failed';
+  run.error_text = 'Required delivery manifest is missing';
+  run.nodes = [
+    {
+      ...run.nodes[0],
+      id: 'failed-build',
+      status: 'failed',
+      session_id: 'research-session',
+      error_text: run.error_text,
+    },
+  ];
+  run.handover_events = [
+    {
+      id: 'build-exception',
+      run_id: run.id,
+      node_execution_id: 'failed-build',
+      kind: 'node_exception',
+      state,
+      session_id: 'main-session',
+      error_text: null,
+      evidence_path:
+        '.vibe-studio/workflows/visual-template/runs/visual-run/exceptions/failed-build.md',
+    },
+  ];
+  run.runtime_view = {
+    ...run.runtime_view!,
+    status: 'failed',
+    completed_node_count: 0,
+    failed_node_count: 1,
+    node_work: run.runtime_view!.node_work.map((work) =>
+      work.node_id === 'build'
+        ? {
+            ...work,
+            status: 'failed',
+            active_execution_id: 'failed-build',
+            active_session_id: 'research-session',
+            can_open_session: true,
+          }
+        : work
+    ),
+  };
+  return run;
+}
+
+const exceptionMode =
+  new URLSearchParams(location.search).get('mode') === 'exception-run';
+
 const runtime =
-  fileDriven || new URLSearchParams(location.search).get("mode") === "run";
+  exceptionMode ||
+  fileDriven ||
+  new URLSearchParams(location.search).get('mode') === 'run';
 
 function Fixture() {
   const { setTheme } = useTheme();
   const [currentGraph, setGraph] = useState(fixtureGraph);
   const [selection, setSelection] = useState<string | null>(null);
   const [run, setRun] = useState(() =>
-    fileDriven ? makeFileDrivenRun() : makeRun("running")
+    exceptionMode
+      ? makeExceptionRun()
+      : fileDriven
+        ? makeFileDrivenRun()
+        : makeRun('running')
   );
   const runtimeView = getWorkflowRuntimeView(run);
   const runtimeSummary = buildWorkflowRunDashboardSummary(run, runtimeView);
   const reusedWork = runtimeView.node_work.find(
-    (work) => work.status === "reused"
+    (work) => work.status === 'reused'
   );
   const selected = currentGraph.nodes.find((node) => node.id === selection);
 
   return (
     <div
       className="new-design"
-      style={{ height: "100dvh", display: "flex", flexDirection: "column" }}
+      style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}
     >
-      <header style={{ display: "flex", gap: 16, padding: 12 }}>
+      <header style={{ display: 'flex', gap: 16, padding: 12 }}>
         <button onClick={() => setTheme(ThemeMode.LIGHT)}>Light</button>
         <button onClick={() => setTheme(ThemeMode.DARK)}>Dark</button>
         <button onClick={() => setTheme(ThemeMode.SYSTEM)}>System</button>
         {runtime ? (
           <>
+            {exceptionMode ? (
+              <>
+                <button onClick={() => setRun(makeExceptionRun('claimed'))}>
+                  Claim exception
+                </button>
+                <button onClick={() => setRun(makeExceptionRun('completed'))}>
+                  Resolve exception
+                </button>
+              </>
+            ) : null}
             {fileDriven ? (
               <>
                 <WorkflowRunResult run={run} projectId="visual-project" />
@@ -496,13 +566,13 @@ function Fixture() {
                 <button
                   onClick={() => {
                     const next = makeFileDrivenRun();
-                    next.split_batches[0].state = "pending";
+                    next.split_batches[0].state = 'pending';
                     next.split_batches[0].dispatch_path = null;
-                    next.split_batches[0].handover!.state = "claimed";
+                    next.split_batches[0].handover!.state = 'claimed';
                     next.split_batches[0].subtasks =
                       next.split_batches[0].subtasks.map((task) => ({
                         ...task,
-                        state: "pending",
+                        state: 'pending',
                         node_id: null,
                         node_execution_id: null,
                         session_id: null,
@@ -515,7 +585,7 @@ function Fixture() {
                 </button>
               </>
             ) : null}
-            <button onClick={() => setRun(makeRun("succeeded"))}>
+            <button onClick={() => setRun(makeRun('succeeded'))}>
               Complete run
             </button>
             <button onClick={() => setRun(makeReusedRun())}>
@@ -542,7 +612,7 @@ function Fixture() {
       </header>
       <div
         data-testid="visual-canvas"
-        style={{ flex: 1, minHeight: 0, position: "relative" }}
+        style={{ flex: 1, minHeight: 0, position: 'relative' }}
       >
         {runtime ? (
           <WorkflowRunCanvasTab projectId="visual-project" run={run} />
@@ -558,16 +628,16 @@ function Fixture() {
         {!runtime ? (
           <WorkflowConfigurationFrame
             open={!!selected}
-            title={selected?.data.display_name ?? "Node"}
+            title={selected?.data.display_name ?? 'Node'}
             description="Configure this Node"
-            objectKey={selection ?? ""}
+            objectKey={selection ?? ''}
             onClose={() => setSelection(null)}
           >
-            <label style={{ display: "block", padding: 16 }}>
+            <label style={{ display: 'block', padding: 16 }}>
               Task name
               <input
                 aria-label="Task name"
-                value={selected?.data.display_name ?? ""}
+                value={selected?.data.display_name ?? ''}
                 onChange={(event) =>
                   setGraph((current) => ({
                     ...current,
@@ -597,10 +667,10 @@ function Fixture() {
 }
 
 const router = createConversationFixtureRouter(
-  new URLSearchParams(location.search).get("mode") === "scratch-scope" ? (
+  new URLSearchParams(location.search).get('mode') === 'scratch-scope' ? (
     <ScratchScopeFixture />
-  ) : new URLSearchParams(location.search).get("mode") ===
-    "creation-handoff" ? (
+  ) : new URLSearchParams(location.search).get('mode') ===
+    'creation-handoff' ? (
     <WorkspaceCreationHandoffPreview />
   ) : (
     <ReactFlowProvider>
@@ -609,7 +679,7 @@ const router = createConversationFixtureRouter(
   )
 );
 
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={client}>
     <AppNavigationProvider value={navigation}>
       <ThemeProvider initialTheme={ThemeMode.LIGHT}>

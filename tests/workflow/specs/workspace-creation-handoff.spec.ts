@@ -67,7 +67,7 @@ test("workspace creation retains feedback until Session discovery and imports th
   const stop = page.getByRole("button", { name: "Stop", exact: true });
   await expect(stop).toBeVisible();
   await expect(
-    page.locator('[data-composer-activity="running"]'),
+    page.locator('[data-conversation-activity="running"]'),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Send", exact: true }),
@@ -79,5 +79,5 @@ test("workspace creation retains feedback until Session discovery and imports th
   await expect(stop).toBeVisible();
   api.setRunStatus("main-session", "succeeded");
   await expect(page.getByRole("button", { name: /^Send/ })).toBeVisible();
-  await expect(page.locator("[data-composer-activity]")).toHaveCount(0);
+  await expect(page.locator("[data-conversation-activity]")).toHaveCount(0);
 });

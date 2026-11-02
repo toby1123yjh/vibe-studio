@@ -54,7 +54,7 @@ use workflow::{
     handlers::{NodeHandlerContext, NodeHandlerStatus, UpstreamOutput, handle_pure_node},
     planner::{
         NodeExecutionSnapshot, NodeExecutionStatus as PlannerNodeExecutionStatus, RunSnapshot,
-        triggered_execution_count,
+        skipped_node_rounds, triggered_execution_count,
     },
     runner::WorkflowRunner,
     validation::validate_graph_for_run,
@@ -576,6 +576,7 @@ impl AgentRunReconciliationBoundary for DeploymentAgentRunReconciliationBoundary
                                 orchestration_node_execution_id,
                                 agent_run_id,
                                 &error.to_string(),
+                                "delivery_invalid",
                             )
                             .await?;
                             outcome.failed = true;
@@ -666,6 +667,7 @@ impl AgentRunReconciliationBoundary for DeploymentAgentRunReconciliationBoundary
                             orchestration_node_execution_id,
                             agent_run_id,
                             error_text,
+                            "execution_failed",
                         )
                         .await?;
                         outcome.failed = true;
@@ -1144,6 +1146,7 @@ pub async fn fail_accepted_workflow_run(
 ) -> Result<(), ApiError> {
     let lock = workflow_run_lock(run_id);
     let _guard = lock.lock().await;
+    record_failed_node_exceptions(pool, run_id).await?;
     settle_workflow_failure(pool, run_id, error).await
 }
 
@@ -1455,8 +1458,12 @@ pub async fn get_workflow_run_response(
         nodes,
         split_batches: files.split_batches,
         handoffs: files.handoffs,
+        handover_events: super::handover::list_views(pool, run_id).await?,
         delivery: files.delivery,
-        request_path: Some(format!(".vibe-kanban/workflows/{run_id}/request.md")),
+        request_path: Some(format!(
+            "{}/request.md",
+            file_handoff::run_directory(pool, run_id).await?
+        )),
         runtime_view: Some(runtime_view),
         queue_phase: sqlx::query_scalar("SELECT phase FROM workflow_run_queue WHERE run_id=?")
             .bind(run_id)
@@ -1851,7 +1858,10 @@ pub async fn select_arena_winner_at<
             .await?;
         let execution_id = file_handoff::execution_id(pool, run_id, node_id, iteration).await?;
         let root = workflow_control_root(pool, run.workspace_id).await?;
-        let note = format!(".vibe-kanban/workflows/{run_id}/results/{execution_id}.md");
+        let note = format!(
+            "{}/results/{execution_id}.md",
+            file_handoff::run_directory(pool, run_id).await?
+        );
         file_handoff::write_result_note(pool, execution_id, &root, &note, &output_text).await?;
         file_handoff::publish(pool, run_id, execution_id, Some(note), artifact_paths).await?;
         mark_node_succeeded(pool, run_id, node_id, iteration, Some(&output_text), None).await?;
@@ -1966,12 +1976,9 @@ async fn claim_interaction(
             .bind(if rejected { "failed" } else { "succeeded" })
             .bind(response["output_text"].as_str()).bind(response["error"].as_str())
             .bind(id).execute(&mut *tx).await?;
-        if let Some(skipped) = response["skipped"].as_array() {
-            for target in skipped.iter().filter_map(serde_json::Value::as_str) {
-                sqlx::query("UPDATE node_executions SET status='skipped', finished_at=datetime('now','subsec') WHERE id=(SELECT id FROM node_executions WHERE run_id=? AND node_id=? AND status='pending' ORDER BY iteration ASC LIMIT 1)")
-                    .bind(run_id).bind(target).execute(&mut *tx).await?;
-            }
-        }
+        // The committed route is authoritative. The driver derives excluded
+        // paths from all incoming edges; a target with another selected input
+        // must not be skipped just because this Condition did not select it.
         // Rejection is a node fact. The parent remains active until every
         // real child, system turn and durable command has settled.
         sqlx::query("UPDATE workflow_runs SET status='running', error_text=?, updated_at=datetime('now','subsec') WHERE id=?")
@@ -2268,6 +2275,7 @@ where
             source_message_id: None,
             delivery_intent: None,
             source_batch_id: None,
+            instruction_path: None,
         },
         None,
         "manual",
@@ -2980,6 +2988,7 @@ where
             return Ok(());
         }
         if let Some(failure) = failure {
+            record_failed_node_exceptions(pool, run_id).await?;
             settle_workflow_failure(pool, run_id, &failure).await?;
             return Ok(());
         }
@@ -2991,6 +3000,7 @@ where
                     PlannerNodeExecutionStatus::Failed | PlannerNodeExecutionStatus::Cancelled
                 )
         }) {
+            record_failed_node_exceptions(pool, run_id).await?;
             settle_workflow_failure(
                 pool,
                 run_id,
@@ -3021,6 +3031,7 @@ where
             arena_creator,
         )
         .await?;
+        mark_excluded_node_rounds(pool, run_id, graph).await?;
         ensure_triggered_node_iterations(pool, run_id, graph).await?;
         let snapshot = load_run_snapshot(pool, run_id).await?;
         let failed = batches.failed
@@ -3031,6 +3042,7 @@ where
                 )
             });
         if failed {
+            record_failed_node_exceptions(pool, run_id).await?;
             if batches.waiting {
                 return Ok(());
             }
@@ -3221,6 +3233,7 @@ where
                             orchestration_node_execution_id,
                             agent_run_id,
                             &error.to_string(),
+                            "delivery_invalid",
                         )
                         .await?;
                         return Ok(RunStep::Continue);
@@ -3273,7 +3286,8 @@ where
         }
         WorkflowNodeKind::Condition => {
             let pre_worktree_snapshot = workflow_worktree_snapshot(pool, workspace_id).await?;
-            let upstream_nodes = router_upstream_nodes(pool, graph, run_id, node).await?;
+            let upstream_nodes =
+                router_upstream_nodes(pool, graph, run_id, node, iteration).await?;
             let prompt = build_router_prompt(
                 &run_id.to_string(),
                 graph,
@@ -3526,8 +3540,7 @@ where
                             None,
                         )
                         .await?;
-                        mark_skipped_targets(pool, run_id, &outcome.skipped_target_node_ids)
-                            .await?;
+                        mark_excluded_node_rounds(pool, run_id, graph).await?;
                         Ok(RunStep::Continue)
                     }
                     NodeHandlerStatus::AwaitingHuman => {
@@ -3621,7 +3634,8 @@ where
     A: WorkflowAgentExecutor,
 {
     let execution_id = file_handoff::execution_id(pool, run_id, &node.id, iteration).await?;
-    let prompt = render_task_splitter_prompt(node, &context, run_id, execution_id);
+    let directory = file_handoff::run_directory(pool, run_id).await?;
+    let prompt = render_task_splitter_prompt(node, &context, run_id, execution_id, &directory);
     let session_id = node_execution_session_id(pool, run_id, &node.id, iteration).await?;
     let (orchestration_run_id, orchestration_node_execution_id) =
         canonical_node_identity(pool, run_id, &node.id, iteration).await?;
@@ -3686,6 +3700,7 @@ where
                     orchestration_node_execution_id,
                     agent_run_id,
                     &message,
+                    "delivery_invalid",
                 )
                 .await?;
                 return Ok(RunStep::Continue);
@@ -3716,12 +3731,13 @@ fn render_task_splitter_prompt(
     context: &NodeHandlerContext,
     run_id: Uuid,
     execution_id: Uuid,
+    run_directory: &str,
 ) -> String {
     let requested = render_prompt_template(
         node.data.prompt_template.as_deref().unwrap_or_default(),
         context,
     );
-    let directory = format!(".vibe-kanban/workflows/{run_id}/splits/{execution_id}");
+    let directory = format!("{run_directory}/splits/{execution_id}");
     let control = format!("{directory}/tasks.json");
     let example = json!({"schema_version":1,"run_id":run_id,"split_execution_id":execution_id,
         "tasks":[{"subtask_id":"analysis","title":"Analyze the materials",
@@ -3812,8 +3828,10 @@ async fn accept_split_manifest(
 ) -> Result<(), ApiError> {
     let node_execution_id = file_handoff::execution_id(pool, run_id, &node.id, iteration).await?;
     let root = workflow_control_root(pool, workspace_id).await?;
-    let manifest_path =
-        format!(".vibe-kanban/workflows/{run_id}/splits/{node_execution_id}/tasks.json");
+    let manifest_path = format!(
+        "{}/splits/{node_execution_id}/tasks.json",
+        file_handoff::run_directory(pool, run_id).await?
+    );
     let reference = file_handoff::bind_file(&root, &manifest_path).await?;
     let bytes = file_handoff::read_bound_file(&root, &reference).await?;
     let manifest: SplitTaskManifest = serde_json::from_slice(&bytes)
@@ -4145,74 +4163,34 @@ async fn router_upstream_nodes(
     graph: &WorkflowGraph,
     run_id: Uuid,
     node: &WorkflowNode,
+    iteration: i64,
 ) -> Result<Vec<RouterUpstreamNode>, ApiError> {
-    let mut upstream_nodes = Vec::new();
-    let workspace_id: Uuid =
-        sqlx::query_scalar("SELECT workspace_id FROM workflow_runs WHERE id=?")
-            .bind(run_id)
-            .fetch_one(pool)
-            .await?;
-    let root = workflow_control_root(pool, workspace_id).await?;
-    for edge in graph.edges.iter().filter(|edge| edge.target == node.id) {
-        let source_node = graph
-            .nodes
-            .iter()
-            .find(|candidate| candidate.id == edge.source);
-        let rows = sqlx::query(
-            r#"
-            SELECT source_node_execution_id, status, error_text
-            FROM workflow_effective_node_executions
-            WHERE run_id = ? AND node_id = ?
-            ORDER BY iteration ASC
-            "#,
-        )
-        .bind(run_id)
-        .bind(&edge.source)
-        .fetch_all(pool)
-        .await?;
-        for row in &rows {
-            let status: String = row.try_get("status")?;
-            let output_text = if status == "succeeded" {
-                let execution_id: Uuid = row.try_get("source_node_execution_id")?;
-                let (index, files) = file_handoff::verified(pool, &root, execution_id).await?;
-                Some(format!(
-                    "Read source execution {execution_id} handoff `{}` and referenced files: {}",
-                    index.path,
-                    files
-                        .iter()
-                        .map(|file| format!("`{}`", file.path))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-            } else {
-                None
-            };
-            upstream_nodes.push(RouterUpstreamNode {
-                node_id: edge.source.clone(),
-                node_type: source_node
-                    .map(|source| node_kind_value(&source.kind).to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                status,
-                output_text,
-                error_text: row.try_get("error_text")?,
-            });
-        }
-        if rows.is_empty() {
-            let skipped:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_node_dispositions WHERE run_id=? AND node_id=?)")
-                .bind(run_id).bind(&edge.source).fetch_one(pool).await?;
-            upstream_nodes.push(RouterUpstreamNode {
-                node_id: edge.source.clone(),
-                node_type: source_node
-                    .map(|source| node_kind_value(&source.kind).to_string())
-                    .unwrap_or_else(|| "unknown".into()),
-                status: if skipped { "skipped" } else { "pending" }.into(),
-                output_text: None,
-                error_text: None,
-            });
-        }
-    }
-
-    Ok(upstream_nodes)
+    // Conditions consume the same accepted execution set as ordinary nodes.
+    // Older successful rounds and excluded branches must not affect routing.
+    Ok(file_handoff::incoming(pool, graph, run_id, node, iteration)
+        .await?
+        .into_iter()
+        .map(|(node_id, execution_id, index, files)| RouterUpstreamNode {
+            node_type: graph
+                .nodes
+                .iter()
+                .find(|source| source.id == node_id)
+                .map(|source| node_kind_value(&source.kind).to_string())
+                .unwrap_or_else(|| "unknown".into()),
+            node_id,
+            status: "succeeded".into(),
+            output_text: Some(format!(
+                "Read source execution {execution_id} handoff `{}` and referenced files: {}",
+                index.path,
+                files
+                    .iter()
+                    .map(|file| format!("`{}`", file.path))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            error_text: None,
+        })
+        .collect())
 }
 
 async fn workflow_worktree_snapshot(
@@ -4625,6 +4603,7 @@ async fn complete_condition_router(
                 orchestration_node_execution_id,
                 agent_run_id,
                 &error.to_string(),
+                "delivery_invalid",
             )
             .await?;
             return Err(error);
@@ -4640,7 +4619,7 @@ async fn complete_condition_router(
             agent_run_id,
         )
         .await?;
-        mark_skipped_targets(pool, run_id, &completion.skipped_target_node_ids).await?;
+        mark_excluded_node_rounds(pool, run_id, graph).await?;
     }
 
     Ok(completion)
@@ -4662,7 +4641,10 @@ fn outgoing_edges(graph: &WorkflowGraph, node_id: &str) -> Vec<WorkflowEdge> {
         .collect()
 }
 
-async fn load_run_snapshot(pool: &SqlitePool, run_id: Uuid) -> Result<RunSnapshot, ApiError> {
+pub(super) async fn load_run_snapshot(
+    pool: &SqlitePool,
+    run_id: Uuid,
+) -> Result<RunSnapshot, ApiError> {
     let rows = sqlx::query(
         r#"
         SELECT node_id, iteration, status, output_text, error_text
@@ -4864,7 +4846,30 @@ async fn mark_node_failed(
             finished: true,
         },
     )
-    .await
+    .await?;
+    let execution_id = file_handoff::execution_id(pool, run_id, node_id, iteration).await?;
+    super::handover::record_node_exception(
+        pool,
+        run_id,
+        execution_id,
+        "execution_failed",
+        error_text,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Repair the crash window between recording the immutable failure and queuing
+/// its coordination event. Event identity belongs to the exact failed execution,
+/// so ordinary reconciliation cannot create another main-Agent turn for it.
+async fn record_failed_node_exceptions(pool: &SqlitePool, run_id: Uuid) -> Result<(), ApiError> {
+    let failures: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT n.id, CASE WHEN s.status='succeeded' THEN 'delivery_invalid' ELSE 'execution_failed' END, COALESCE(n.error_text,'Workflow node failed') FROM node_executions n LEFT JOIN agent_run_state s ON s.agent_run_id=n.agent_run_id WHERE n.run_id=? AND n.status='failed' AND n.node_type IN ('agent','task_splitter','condition','transform') AND NOT EXISTS(SELECT 1 FROM workflow_split_subtasks t WHERE t.node_execution_id=n.id)",
+    ).bind(run_id).fetch_all(pool).await?;
+    for (execution_id, kind, error) in failures {
+        super::handover::record_node_exception(pool, run_id, execution_id, &kind, &error).await?;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4877,6 +4882,7 @@ async fn mark_canonical_node_failed(
     orchestration_node_execution_id: Uuid,
     agent_run_id: Uuid,
     error_text: &str,
+    failure_kind: &str,
 ) -> Result<(), ApiError> {
     update_node_execution(
         pool,
@@ -4895,26 +4901,30 @@ async fn mark_canonical_node_failed(
             finished: true,
         },
     )
-    .await
+    .await?;
+    let execution_id = file_handoff::execution_id(pool, run_id, node_id, iteration).await?;
+    super::handover::record_node_exception(pool, run_id, execution_id, failure_kind, error_text)
+        .await?;
+    Ok(())
 }
 
-async fn mark_skipped_targets(
+async fn mark_excluded_node_rounds(
     pool: &SqlitePool,
     run_id: Uuid,
-    node_ids: &[String],
+    graph: &WorkflowGraph,
 ) -> Result<(), ApiError> {
-    for node_id in node_ids {
+    let snapshot = load_run_snapshot(pool, run_id).await?;
+    for (node_id, expected_iteration) in skipped_node_rounds(graph, &snapshot) {
         let row = sqlx::query(
             r#"
             SELECT id, iteration
             FROM node_executions
-            WHERE run_id = ? AND node_id = ? AND status = 'pending'
-            ORDER BY iteration ASC
-            LIMIT 1
+            WHERE run_id = ? AND node_id = ? AND iteration = ? AND status = 'pending'
             "#,
         )
         .bind(run_id)
-        .bind(node_id)
+        .bind(&node_id)
+        .bind(expected_iteration)
         .fetch_optional(pool)
         .await?;
 
@@ -4938,7 +4948,7 @@ async fn mark_skipped_targets(
         if result.rows_affected() > 0 {
             emit_node_status(
                 run_id,
-                node_id,
+                &node_id,
                 DbNodeExecutionStatus::Skipped,
                 json!({ "status": "skipped", "iteration": iteration }),
             );
@@ -5330,9 +5340,7 @@ fn node_execution_status_from_str(
     }
 }
 
-fn planner_status_from_str(
-    value: &str,
-) -> Result<PlannerNodeExecutionStatus, WorkflowRuntimeError> {
+pub(super) fn planner_status_from_str(value: &str) -> Result<PlannerNodeExecutionStatus, ApiError> {
     Ok(match node_execution_status_from_str(value)? {
         DbNodeExecutionStatus::Pending => PlannerNodeExecutionStatus::Pending,
         DbNodeExecutionStatus::Running => PlannerNodeExecutionStatus::Running,
@@ -5603,7 +5611,7 @@ mod tests {
         );
         node.data.include_workflow_context = Some(false);
         let context = NodeHandlerContext::with_upstream_outputs(
-            "Read accepted request from `.vibe-kanban/workflows/run/request.md`.",
+            "Read accepted request from `.vibe-studio/workflows/definition/runs/run/request.md`.",
             vec![upstream(
                 "agent-plan",
                 "Read delivery file: `artifacts/plan.md`",
@@ -5614,7 +5622,7 @@ mod tests {
 
         assert_eq!(
             prompt,
-            "Review the accepted plan using file tools.\n\nRead accepted request from `.vibe-kanban/workflows/run/request.md`.\nRead delivery file: `artifacts/plan.md`"
+            "Review the accepted plan using file tools.\n\nRead accepted request from `.vibe-studio/workflows/definition/runs/run/request.md`.\nRead delivery file: `artifacts/plan.md`"
         );
         assert!(!prompt.contains("# Workflow Agent Envelope"));
         assert!(!prompt.contains("## Direct Upstream Handoff"));

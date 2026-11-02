@@ -1,4 +1,4 @@
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow)]
@@ -27,8 +27,10 @@ mod tests {
             CREATE TABLE node_executions(run_id BLOB,status TEXT,arena_group_id BLOB,finished_at TEXT);
             CREATE TABLE orchestration_agent_run_links(orchestration_run_id BLOB,agent_run_id BLOB);
             CREATE TABLE agent_run_state(agent_run_id BLOB,status TEXT);
-            CREATE TABLE agent_run_attempts(id BLOB,agent_run_id BLOB);
+            CREATE TABLE agent_runs(id BLOB PRIMARY KEY,status TEXT DEFAULT 'succeeded');
+            CREATE TABLE agent_run_attempts(id BLOB,agent_run_id BLOB,status TEXT DEFAULT 'succeeded');
             CREATE TABLE agent_process_registry(run_attempt_id BLOB,registry_status TEXT);
+            CREATE TABLE workflow_handover_events(run_id BLOB,state TEXT,agent_run_id BLOB);
             CREATE TABLE orchestration_outbox(orchestration_run_id BLOB,delivery_status TEXT);")
             .execute(&pool).await.unwrap();
         pool
@@ -156,7 +158,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO agent_run_attempts VALUES (?,?)")
+        sqlx::query("INSERT INTO agent_run_attempts(id,agent_run_id) VALUES (?,?)")
             .bind(attempt)
             .bind(agent)
             .execute(&pool)
@@ -238,7 +240,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO agent_run_attempts VALUES (?,?)")
+        sqlx::query("INSERT INTO agent_run_attempts(id,agent_run_id) VALUES (?,?)")
             .bind(attempt)
             .bind(agent)
             .execute(&pool)
@@ -335,6 +337,109 @@ mod tests {
                 .unwrap()
         );
     }
+
+    #[tokio::test]
+    async fn exception_handover_retains_slot_until_both_decision_and_process_settle() {
+        let pool = pool().await;
+        let project = Uuid::new_v4();
+        let source = enqueue(&pool, project).await;
+        let successor = enqueue(&pool, project).await;
+        WorkflowQueueEntry::claim_next(&pool).await.unwrap();
+        sqlx::query("UPDATE workflow_runs SET status='failed' WHERE id=?")
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO workflow_handover_events(run_id,state) VALUES (?,'pending')")
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !WorkflowQueueEntry::release_terminal(&pool, source)
+                .await
+                .unwrap()
+        );
+        assert!(
+            WorkflowQueueEntry::claim_next(&pool)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let agent = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        sqlx::query(
+            "UPDATE workflow_handover_events SET state='claimed',agent_run_id=? WHERE run_id=?",
+        )
+        .bind(agent)
+        .bind(source)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO agent_runs(id,status) VALUES (?,'running')")
+            .bind(agent)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_run_attempts(id,agent_run_id,status) VALUES (?,?,'running')",
+        )
+        .bind(attempt)
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE workflow_handover_events SET state='completed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !WorkflowQueueEntry::release_terminal(&pool, source)
+                .await
+                .unwrap()
+        );
+        sqlx::query("UPDATE agent_runs SET status='succeeded'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE agent_run_attempts SET status='succeeded'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !WorkflowQueueEntry::release_terminal(&pool, source)
+                .await
+                .unwrap()
+        );
+        sqlx::query("INSERT INTO agent_process_registry VALUES (?,'unreachable')")
+            .bind(attempt)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !WorkflowQueueEntry::release_terminal(&pool, source)
+                .await
+                .unwrap()
+        );
+        sqlx::query("UPDATE agent_process_registry SET registry_status='exited'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            WorkflowQueueEntry::release_terminal(&pool, source)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            WorkflowQueueEntry::claim_next(&pool)
+                .await
+                .unwrap()
+                .unwrap()
+                .run_id,
+            successor
+        );
+    }
 }
 
 impl WorkflowQueueEntry {
@@ -392,6 +497,17 @@ impl WorkflowQueueEntry {
     /// guard against releasing an unknown/missing or nonterminal child state.
     pub async fn release_terminal(pool: &SqlitePool, run_id: Uuid) -> Result<bool, sqlx::Error> {
         let mut tx = pool.begin().await?;
+        let released = Self::release_terminal_in(&mut tx, run_id).await?;
+        tx.commit().await?;
+        Ok(released)
+    }
+
+    /// Used by management acceptance to retire an unstarted exception and
+    /// release its settled source atomically with the replacement submission.
+    pub async fn release_terminal_in(
+        conn: &mut SqliteConnection,
+        run_id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
         let released = sqlx::query(
             "WITH owned_runs(id) AS (
                  SELECT ?1 UNION SELECT o.id FROM orchestration_runs o
@@ -417,15 +533,25 @@ impl WorkflowQueueEntry {
                  SELECT 1 FROM orchestration_outbox o WHERE o.orchestration_run_id IN (SELECT id FROM owned_runs)
                    AND o.delivery_status IN ('pending','delivering','failed')
              )
+             AND NOT EXISTS (
+                 SELECT 1 FROM workflow_handover_events h WHERE h.run_id=?1
+                 AND (h.state IN ('pending','claimed') OR EXISTS (
+                     SELECT 1 FROM agent_runs r
+                     LEFT JOIN agent_run_attempts a ON a.agent_run_id=r.id
+                     LEFT JOIN agent_process_registry p ON p.run_attempt_id=a.id
+                     WHERE r.id=h.agent_run_id AND (r.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed')
+                       OR a.id IS NULL OR a.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed')
+                       OR p.run_attempt_id IS NULL OR p.registry_status<>'exited')
+                 ))
+             )
              AND NOT EXISTS (SELECT 1 FROM node_executions n WHERE n.run_id = ?1 AND n.status IN ('running','cancelling','awaiting_human','awaiting_arena'))",
-        ).bind(run_id).execute(&mut *tx).await?.rows_affected() == 1;
+        ).bind(run_id).execute(&mut *conn).await?.rows_affected() == 1;
         if released {
             sqlx::query("UPDATE workflow_run_queue SET phase = 'finished' WHERE run_id = ?")
                 .bind(run_id)
-                .execute(&mut *tx)
+                .execute(&mut *conn)
                 .await?;
         }
-        tx.commit().await?;
         Ok(released)
     }
 }

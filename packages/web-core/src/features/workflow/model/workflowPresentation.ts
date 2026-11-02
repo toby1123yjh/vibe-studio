@@ -5,6 +5,26 @@ import type {
   WorkflowNodeKind,
 } from './workflowGraph';
 
+export function getWorkflowCoordinationLabel(
+  state: string,
+  t: TFunction<'common'>
+): string {
+  switch (state) {
+    case 'pending':
+      return t('workflow.coordination.pending');
+    case 'claimed':
+      return t('workflow.coordination.claimed');
+    case 'completed':
+      return t('workflow.coordination.completed');
+    case 'failed':
+      return t('workflow.coordination.failed');
+    case 'cancelled':
+      return t('workflow.coordination.cancelled');
+    default:
+      return t('workflow.coordination.unknown');
+  }
+}
+
 const NODE_KIND_LABELS: Record<WorkflowNodeKind, string> = {
   start: 'Start',
   end: 'End',

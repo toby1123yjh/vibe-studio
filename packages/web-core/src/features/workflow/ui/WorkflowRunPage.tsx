@@ -19,6 +19,7 @@ import { buildWorkflowRunDashboardSummary } from '../model/workflowRunView';
 import {
   getWorkflowRunActionGate,
   getWorkflowRuntimeView,
+  shouldRefreshWorkflowRun,
 } from '../model/workflowRuntimeView';
 import { workflowNodeStatusKey } from './workflowI18n';
 import { WorkflowRunCanvasTab } from './WorkflowRunCanvasTab';
@@ -68,13 +69,7 @@ export function WorkflowRunPage({ projectId, runId }: WorkflowRunPageProps) {
   const cancelLockRef = useRef(false);
   const [cancelState, setCancelState] = useState<CancelSubmissionState>('idle');
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const shouldStreamEvents =
-    !!run &&
-    (run.status === 'pending' ||
-      run.status === 'running' ||
-      run.status === 'awaiting_human' ||
-      run.status === 'awaiting_arena' ||
-      run.status === 'cancelling');
+  const shouldStreamEvents = !!run && shouldRefreshWorkflowRun(run);
 
   useWorkflowRunEvents(runId, {
     enabled: shouldStreamEvents,

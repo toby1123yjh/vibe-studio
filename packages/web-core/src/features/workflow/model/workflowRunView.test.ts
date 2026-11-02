@@ -40,6 +40,7 @@ const baseRun = {
   input_text: 'Implement workflow',
   split_batches: [],
   handoffs: [],
+  handover_events: [],
   delivery: null,
   request_path: null,
   output_text: null,

@@ -137,6 +137,11 @@ pub struct WorkflowSubmission {
     #[serde(default)]
     #[ts(optional)]
     pub input_text: Option<String>,
+    /// Project-relative instructions for an explicit retry/rework. Runtime
+    /// captures the file into the new accepted request before dispatch.
+    #[serde(default)]
+    #[ts(optional)]
+    pub instruction_path: Option<String>,
     #[serde(default)]
     pub material_paths: Vec<String>,
     #[serde(default)]
@@ -226,6 +231,18 @@ pub struct WorkflowNotificationView {
     pub created_at: DateTime<Utc>,
     pub current_status: String,
     pub is_resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct WorkflowCoordinationEventView {
+    pub id: Uuid,
+    pub run_id: Uuid,
+    pub node_execution_id: Option<Uuid>,
+    pub kind: String,
+    pub state: String,
+    pub session_id: Uuid,
+    pub error_text: Option<String>,
+    pub evidence_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -709,6 +726,7 @@ struct ManagementScope {
     integration_id: Option<Uuid>,
     handover_run_id: Option<Uuid>,
     handover_batch_id: Option<Uuid>,
+    handover_node_execution_id: Option<Uuid>,
 }
 
 async fn resolve_scope_in(
@@ -736,7 +754,7 @@ async fn resolve_scope_in(
                 {
                     return Err(ApiError::Unauthorized);
                 }
-                let real:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_runs r JOIN agent_turns t ON t.agent_run_id=r.id WHERE r.id=? AND r.session_id=? AND t.id=? AND (json_extract(t.input_message,'$.role')='user' OR (json_extract(t.input_message,'$.role')='system' AND EXISTS(SELECT 1 FROM workflow_handover_events e JOIN workflow_runs w ON w.id=e.run_id JOIN workflow_attempts a ON a.id=w.attempt_id WHERE e.agent_run_id=r.id AND e.session_id=r.session_id AND e.turn_id=t.id AND e.state='claimed' AND a.main_session_id=e.session_id AND w.status IN ('running','awaiting_human','awaiting_arena') AND w.error_text IS NULL AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents s WHERE s.run_id=w.id)))))")
+                let real:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_runs r JOIN agent_turns t ON t.agent_run_id=r.id WHERE r.id=? AND r.session_id=? AND t.id=? AND (json_extract(t.input_message,'$.role')='user' OR (json_extract(t.input_message,'$.role')='system' AND EXISTS(SELECT 1 FROM workflow_handover_events e JOIN workflow_runs w ON w.id=e.run_id JOIN workflow_attempts a ON a.id=w.attempt_id JOIN workflow_project_slots p ON p.run_id=w.id LEFT JOIN workflow_split_batches b ON b.id=e.batch_id LEFT JOIN node_executions n ON n.id=e.source_node_execution_id WHERE e.agent_run_id=r.id AND e.session_id=r.session_id AND e.turn_id=t.id AND e.state='claimed' AND a.main_session_id=e.session_id AND ((e.batch_id IS NOT NULL AND b.run_id=w.id AND w.status IN ('running','awaiting_human','awaiting_arena') AND w.error_text IS NULL) OR (n.run_id=w.id AND n.status='failed' AND w.status='failed')) AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents s WHERE s.run_id=w.id)))))")
                     .bind(agent_run_id).bind(session_id).bind(turn_id).fetch_one(&mut *conn).await?;
                 if !real {
                     return Err(ApiError::Unauthorized);
@@ -767,8 +785,8 @@ async fn resolve_scope_in(
                     ));
                 }
             }
-            let handover: Option<(Uuid, Uuid)> = if scoped {
-                sqlx::query_as("SELECT e.run_id,e.batch_id FROM workflow_handover_events e JOIN agent_turns t ON t.id=e.turn_id WHERE e.agent_run_id=? AND e.turn_id=? AND e.session_id=? AND e.state='claimed' AND json_extract(t.input_message,'$.role')='system'")
+            let handover: Option<(Uuid, Option<Uuid>, Option<Uuid>)> = if scoped {
+                sqlx::query_as("SELECT e.run_id,e.batch_id,e.source_node_execution_id FROM workflow_handover_events e JOIN agent_turns t ON t.id=e.turn_id WHERE e.agent_run_id=? AND e.turn_id=? AND e.session_id=? AND e.state='claimed' AND json_extract(t.input_message,'$.role')='system'")
                     .bind(agent_run_id).bind(turn_id).bind(session_id).fetch_optional(&mut *conn).await?
             } else {
                 None
@@ -797,7 +815,8 @@ async fn resolve_scope_in(
                 namespace: format!("main-session:{session_id}"),
                 integration_id: None,
                 handover_run_id: handover.map(|identity| identity.0),
-                handover_batch_id: handover.map(|identity| identity.1),
+                handover_batch_id: handover.and_then(|identity| identity.1),
+                handover_node_execution_id: handover.and_then(|identity| identity.2),
             }
         }
         WorkflowManagementCaller::Instance {
@@ -822,6 +841,7 @@ async fn resolve_scope_in(
                 integration_id: *integration_id,
                 handover_run_id: None,
                 handover_batch_id: None,
+                handover_node_execution_id: None,
             }
         }
     };
@@ -843,6 +863,54 @@ pub async fn verify_management_caller(
 ) -> Result<(), ApiError> {
     let mut conn = pool.acquire().await?;
     resolve_scope_in(&mut conn, caller).await?;
+    Ok(())
+}
+
+/// An automatic exception turn can repair only the failed execution that
+/// caused that turn. A user turn retains the ordinary management surface.
+async fn validate_handover_submission_in(
+    conn: &mut SqliteConnection,
+    scope: &ManagementScope,
+    submission: &WorkflowSubmission,
+) -> Result<(), ApiError> {
+    if scope.handover_batch_id.is_some() {
+        return Err(ApiError::Forbidden(
+            "An automatic dispatch handover cannot submit a new Run; dispatch the accepted batch instead".into(),
+        ));
+    }
+    let Some(execution_id) = scope.handover_node_execution_id else {
+        return Ok(());
+    };
+    if submission.source_run_id != scope.handover_run_id
+        || submission.source_node_execution_id != Some(execution_id)
+        || !matches!(
+            submission.action,
+            WorkflowSubmissionAction::Retry | WorkflowSubmissionAction::Rework
+        )
+        || submission.active_policy.is_some()
+        || submission.delivery_intent.is_some()
+        || submission.source_batch_id.is_some()
+        || submission.instruction_path.is_none()
+    {
+        return Err(ApiError::Forbidden(
+            "An automatic exception handover may only retry/rework its exact failed source using an instruction file".into(),
+        ));
+    }
+    let node_id: String = sqlx::query_scalar(
+        "SELECT node_id FROM node_executions WHERE id=? AND run_id=? AND status='failed'",
+    )
+    .bind(execution_id)
+    .bind(scope.handover_run_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ApiError::Forbidden("Workflow exception source changed".into()))?;
+    if submission.action == WorkflowSubmissionAction::Rework
+        && !matches!(&submission.scope, WorkflowSubmissionScope::FromNodes { node_ids } if node_ids.contains(&node_id))
+    {
+        return Err(ApiError::Forbidden(
+            "Exception rework must name a partial scope including its failed Node".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -930,6 +998,12 @@ pub async fn submit_workflow(
     trigger_source: &str,
 ) -> Result<AcceptedWorkflowSubmission, ApiError> {
     validate_request_id(&submission.request_id)?;
+    if submission.action == WorkflowSubmissionAction::Start && submission.instruction_path.is_some()
+    {
+        return Err(ApiError::BadRequest(
+            "instruction_path is only available for retry/rework".into(),
+        ));
+    }
     let hash = request_hash(&submission)?;
     // Reject paths at the existing file boundary. The actual workspace is read
     // from the durable Session/instance, never a tool-supplied directory.
@@ -940,9 +1014,7 @@ pub async fn submit_workflow(
         .collect::<Result<Vec<_>, _>>()?;
     let mut read_conn = pool.acquire().await?;
     let initial_scope = resolve_scope_in(&mut read_conn, caller).await?;
-    if initial_scope.handover_run_id.is_some() {
-        return Err(ApiError::Forbidden("An automatic dispatch handover cannot submit a new Run; dispatch the accepted batch instead".into()));
-    }
+    validate_handover_submission_in(&mut read_conn, &initial_scope, &submission).await?;
     if let Some(instance_id) = initial_scope.instance_id {
         if let Some(row)=sqlx::query("SELECT run_id,request_hash FROM workflow_run_submissions WHERE caller_namespace=? AND instance_id=? AND request_id=?")
             .bind(&initial_scope.namespace).bind(instance_id).bind(&submission.request_id).fetch_optional(&mut *read_conn).await? {
@@ -998,6 +1070,26 @@ pub async fn submit_workflow(
         }
     }
     let working_dir = Session::resolve_agent_working_dir(pool, workspace_id).await?;
+    // Capture file contents now. The accepted Run must not later reinterpret
+    // mutable instructions while it waits for its source's actual process exit.
+    let captured_instructions = if let Some(relative) = &submission.instruction_path {
+        let root = runner::workflow_control_root(pool, workspace_id).await?;
+        let path = checked_workflow_file(&root, relative).await?;
+        let contents = tokio::fs::read_to_string(path).await.map_err(|_| {
+            ApiError::BadRequest("Workflow instructions must be readable UTF-8".into())
+        })?;
+        if contents.trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "Workflow instruction file must contain concrete instructions".into(),
+            ));
+        }
+        Some(format!(
+            "\n\nAccepted recovery instructions from `{relative}` (SHA-256 {}):\n{contents}",
+            sha256_bytes(contents.as_bytes())
+        ))
+    } else {
+        None
+    };
     if !materials.is_empty() {
         let mut root = std::path::PathBuf::from(
             root.ok_or_else(|| ApiError::Conflict("Workflow workspace is not ready".into()))?,
@@ -1021,11 +1113,7 @@ pub async fn submit_workflow(
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut scope = resolve_scope_in(&mut tx, caller).await?;
-    if scope.handover_run_id.is_some() {
-        return Err(ApiError::Forbidden(
-            "An automatic dispatch handover cannot submit a new Run".into(),
-        ));
-    }
+    validate_handover_submission_in(&mut tx, &scope, &submission).await?;
     if scope.workspace_id != Some(workspace_id) {
         return Err(ApiError::Conflict(
             "Workflow workspace changed before acceptance".into(),
@@ -1129,9 +1217,17 @@ pub async fn submit_workflow(
             .as_ref()
             .filter(|input| !input.trim().is_empty())
             .cloned()
+            .or_else(|| {
+                captured_instructions.as_ref()?;
+                source.as_ref()?.try_get::<String, _>("input_text").ok()
+            })
             .ok_or_else(|| {
                 ApiError::BadRequest("Accepted requirements are required for start/rework".into())
             })?,
+    };
+    let input = match captured_instructions {
+        Some(instructions) => format!("{input}{instructions}"),
+        None => input,
     };
     let input = if materials.is_empty() || submission.action == WorkflowSubmissionAction::Retry {
         input
@@ -1297,6 +1393,22 @@ pub async fn submit_workflow(
             ));
         }
     }
+    if let Some(source_run_id) = submission.source_run_id {
+        // A real user decision supersedes queued, never-started automatic
+        // exception turns. Claimed turns and their actual processes still
+        // retain occupancy until exit; acceptance never cancels user input.
+        if scope.handover_node_execution_id.is_none() {
+            let retired = sqlx::query("UPDATE workflow_handover_events SET state='completed',error_text=NULL,updated_at=datetime('now','subsec') WHERE run_id=? AND source_node_execution_id IS NOT NULL AND state='pending' AND agent_run_id IS NULL")
+                .bind(source_run_id).execute(&mut *tx).await?.rows_affected();
+            if retired > 0 {
+                db::models::workflow_queue::WorkflowQueueEntry::release_terminal_in(
+                    &mut tx,
+                    source_run_id,
+                )
+                .await?;
+            }
+        }
+    }
     let settled = if let Some(source_run_id) = submission.source_run_id {
         source_boundary_settled_in(&mut tx, source_run_id).await?
     } else {
@@ -1315,6 +1427,12 @@ pub async fn submit_workflow(
     let settled_plan = if settled {
         Some(plan_submission_in(&mut tx, &graph, workspace_id, &basis).await?)
     } else {
+        if scope.handover_node_execution_id.is_some() {
+            // The exception controller is the only remaining source work.
+            // Reject already-invalid reuse now, then verify it again after
+            // the controller's actual process exits before fixing the plan.
+            plan_submission_in(&mut tx, &graph, workspace_id, &basis).await?;
+        }
         None
     };
     let phase = if !settled {
@@ -1421,7 +1539,8 @@ pub async fn dispatch_workflow(
             "Dispatch batch is outside the current workflow instance".into(),
         ));
     }
-    if scope.handover_run_id.is_some_and(|id| id != run_id)
+    if scope.handover_node_execution_id.is_some()
+        || scope.handover_run_id.is_some_and(|id| id != run_id)
         || scope
             .handover_batch_id
             .is_some_and(|id| id != request.batch_id)
@@ -1482,7 +1601,8 @@ pub async fn dispatch_workflow(
             "Workflow dispatch scope changed".into(),
         ));
     }
-    if current_scope.handover_run_id.is_some_and(|id| id != run_id)
+    if current_scope.handover_node_execution_id.is_some()
+        || current_scope.handover_run_id.is_some_and(|id| id != run_id)
         || current_scope
             .handover_batch_id
             .is_some_and(|id| id != request.batch_id)

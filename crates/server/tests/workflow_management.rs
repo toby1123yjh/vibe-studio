@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use db::models::{
     workflow::{NodeExecutionStatus, WorkflowRunStatus},
     workflow_files::WorkflowDeliveryCompleteness,
+    workflow_handover::WorkflowHandoverEvent,
     workflow_queue::WorkflowQueueEntry,
 };
 use serde_json::json;
@@ -127,11 +128,16 @@ async fn write_agent_delivery(pool: &SqlitePool, request: &AgentNodeRequest, tex
         .await
         .unwrap();
     let root = std::path::Path::new(&root);
+    let workflow_id: Uuid = sqlx::query_scalar("SELECT workflow_id FROM workflow_runs WHERE id=?")
+        .bind(request.run_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let run_directory =
+        workflow::files::run_relative_dir(&workflow_id.to_string(), &request.run_id.to_string())
+            .unwrap();
     if request.node_id == "split" {
-        let directory = format!(
-            ".vibe-kanban/workflows/{}/splits/{execution_id}",
-            request.run_id
-        );
+        let directory = format!("{run_directory}/splits/{execution_id}");
         let mut tasks = Vec::new();
         for (id, depends_on) in [
             ("analysis", Vec::new()),
@@ -172,16 +178,10 @@ async fn write_agent_delivery(pool: &SqlitePool, request: &AgentNodeRequest, tex
         .unwrap();
         return;
     }
-    let result = format!(
-        ".vibe-kanban/workflows/{}/results/{}.md",
-        request.run_id, execution_id
-    );
+    let result = format!("{run_directory}/results/{execution_id}.md");
     let result_path = control_file_path(root, &result).await.unwrap();
     write_text_atomic(&result_path, text).await.unwrap();
-    let index = format!(
-        ".vibe-kanban/workflows/{}/handoffs/{}.json",
-        request.run_id, execution_id
-    );
+    let index = format!("{run_directory}/handoffs/{execution_id}.json");
     let index_path = control_file_path(root, &index).await.unwrap();
     write_json_atomic(
         &index_path,
@@ -507,6 +507,56 @@ impl Fixture {
             .await
             .unwrap();
     }
+
+    /// Persist the exact automatic turn and token binding without invoking a
+    /// native provider. All records satisfy the production FK/check clauses.
+    async fn exception_caller(
+        &self,
+        source_run_id: Uuid,
+    ) -> (WorkflowManagementCaller, WorkflowHandoverEvent) {
+        let event = WorkflowHandoverEvent::list_pending(&self.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|event| event.run_id == source_run_id && event.source_node_execution_id.is_some())
+            .expect("failed source queues its original Main Session");
+        let agent_run_id = Uuid::new_v4();
+        let attempt_id = Uuid::new_v4();
+        let turn_id = Uuid::new_v4();
+        assert!(
+            WorkflowHandoverEvent::claim(&self.pool, event.id, agent_run_id, attempt_id, turn_id)
+                .await
+                .unwrap()
+        );
+        sqlx::query("INSERT INTO agent_runs(id,session_id,workspace_id,request_id,idempotency_key,correlation_id,schema_version,payload_version,runtime_profile_id,provider_id,workspace_mode,workspace_path,status,request_envelope) VALUES (?,?,?,?,?,?,1,1,'CODEX:DEFAULT','codex','shared_workspace','fixture','running','{}')")
+            .bind(agent_run_id).bind(event.session_id).bind(self.resolver.workspace_id)
+            .bind(event.id).bind(format!("exception:{}",event.id)).bind(event.id)
+            .execute(&self.pool).await.unwrap();
+        sqlx::query("INSERT INTO agent_turns(id,agent_run_id,request_id,intent,input_message) VALUES (?,?,?,'follow_up',?)")
+            .bind(turn_id).bind(agent_run_id).bind(event.id)
+            .bind(json!({"message_id":event.id,"role":"system","content":"Read the actual failed-source evidence."}).to_string())
+            .execute(&self.pool).await.unwrap();
+        sqlx::query("INSERT INTO agent_run_attempts(id,agent_run_id,turn_id,request_id,idempotency_key,attempt_number,mode,transport,schema_version,payload_version,capability_snapshot,request_envelope,status) VALUES (?,?,?,?,?,1,'resume','app_server_jsonrpc',1,1,'{}','{}','running')")
+            .bind(attempt_id).bind(agent_run_id).bind(turn_id).bind(event.id).bind(format!("exception-attempt:{}",event.id))
+            .execute(&self.pool).await.unwrap();
+        sqlx::query("INSERT INTO agent_process_registry(id,run_attempt_id,registry_status) VALUES (?,?,'reserved')")
+            .bind(Uuid::new_v4()).bind(attempt_id).execute(&self.pool).await.unwrap();
+        sqlx::query("UPDATE workflow_main_session_bindings SET token_hash='exception-token',actual_main_agent_run_id=?,actual_main_turn_id=?,actual_main_run_attempt_id=?,source_message_id=NULL WHERE session_id=?")
+            .bind(agent_run_id).bind(turn_id).bind(attempt_id).bind(event.session_id).execute(&self.pool).await.unwrap();
+        let claimed = WorkflowHandoverEvent::find_by_id(&self.pool, event.id)
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            WorkflowManagementCaller::MainSession {
+                session_id: event.session_id,
+                agent_run_id: Some(agent_run_id),
+                turn_id: Some(turn_id),
+                token_hash: Some("exception-token".into()),
+            },
+            claimed,
+        )
+    }
 }
 
 fn main_caller(session_id: Uuid) -> WorkflowManagementCaller {
@@ -535,6 +585,7 @@ fn submission(
         request_id: key.into(),
         action,
         input_text: Some(format!("requirements for {key}")),
+        instruction_path: None,
         material_paths: Vec::new(),
         source_run_id: source,
         source_node_execution_id: None,
@@ -921,11 +972,45 @@ async fn explicit_partial_summary_keeps_failed_source_and_missing_files_visible(
     let unchanged = runner::get_workflow_run_response(&f.pool, source.run_id)
         .await
         .unwrap();
-    let unchanged = serde_json::to_value(unchanged).unwrap();
-    // Available actions follow the latest Run; accepted source outcomes and
-    // file identities remain immutable even after another Run is accepted.
+    assert_eq!(failed.queue_phase.as_deref(), Some("active"));
+    assert_eq!(unchanged.queue_phase.as_deref(), Some("finished"));
+    assert_eq!(
+        unchanged.handover_events.len(),
+        failed.handover_events.len()
+    );
+    let mut retired_exceptions = 0;
+    for event in &failed.handover_events {
+        let observed = unchanged
+            .handover_events
+            .iter()
+            .find(|candidate| candidate.id == event.id)
+            .unwrap();
+        let mut expected = serde_json::to_value(event).unwrap();
+        if event.kind == "node_exception" && event.state == "pending" {
+            // A user-accepted successor takes over a notification that never
+            // started a Main Agent turn; it does not rewrite the failure.
+            expected["state"] = json!("completed");
+            expected["error_text"] = serde_json::Value::Null;
+            let retired = WorkflowHandoverEvent::find_by_id(&f.pool, event.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(retired.agent_run_id.is_none());
+            assert!(retired.run_attempt_id.is_none());
+            assert!(retired.turn_id.is_none());
+            retired_exceptions += 1;
+        }
+        assert_eq!(serde_json::to_value(observed).unwrap(), expected);
+    }
+    assert!(retired_exceptions > 0);
+    let unchanged = serde_json::to_value(&unchanged).unwrap();
+    // Available actions follow the latest Run and the retired notification
+    // releases its queue slot. Accepted outcomes and file identities remain.
     for (field, expected) in history.as_object().unwrap() {
-        if field != "runtime_view" {
+        if !matches!(
+            field.as_str(),
+            "runtime_view" | "handover_events" | "queue_phase"
+        ) {
             assert_eq!(
                 &unchanged[field], expected,
                 "source history changed: {field}"
@@ -1484,7 +1569,293 @@ async fn retry_appends_run_reuses_exact_successes_and_preserves_old_history() {
 }
 
 #[tokio::test]
-async fn partial_rework_projects_every_real_reused_iteration_without_new_executions() {
+async fn exception_system_turn_captures_file_once_and_waits_for_its_real_process_exit() {
+    let f = Fixture::new(false).await;
+    let prepared = f.prepare("prepare", None).await;
+    let user = main_caller(prepared.session.id);
+    let first = start(&f, &user, "start").await;
+    f.dispatch(first.run_id, &f.agent(Some("agent-b"))).await;
+    let original = runner::get_workflow_run_response(&f.pool, first.run_id)
+        .await
+        .unwrap();
+    let original_nodes = serde_json::to_value(&original.nodes).unwrap();
+    let failed = original
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "agent-b")
+        .unwrap();
+    let (controller, event) = f.exception_caller(first.run_id).await;
+    let relative = format!(
+        ".vibe-studio/workflows/{}/runs/{}/instructions/{}.md",
+        original.workflow_id, first.run_id, event.id
+    );
+    let path = control_file_path(f._directory.path(), &relative)
+        .await
+        .unwrap();
+    write_text_atomic(
+        &path,
+        "Supplement only the missing delivery; retain the original completed work.",
+    )
+    .await
+    .unwrap();
+    let mut retry = submission(
+        "exception-repair",
+        WorkflowSubmissionAction::Retry,
+        Some(first.run_id),
+    );
+    retry.input_text = None;
+    retry.source_node_execution_id = Some(failed.id);
+    retry.instruction_path = Some(relative.clone());
+
+    let mut wrong = retry.clone();
+    wrong.source_node_execution_id = Some(Uuid::new_v4());
+    assert!(matches!(
+        management::submit_workflow(&f.pool, &controller, wrong, None, "fixture").await,
+        Err(ApiError::Forbidden(_))
+    ));
+    let mut unbounded = retry.clone();
+    unbounded.action = WorkflowSubmissionAction::Rework;
+    assert!(matches!(
+        management::submit_workflow(&f.pool, &controller, unbounded, None, "fixture").await,
+        Err(ApiError::Forbidden(_))
+    ));
+    let mut no_file = retry.clone();
+    no_file.instruction_path = None;
+    assert!(matches!(
+        management::submit_workflow(&f.pool, &controller, no_file, None, "fixture").await,
+        Err(ApiError::Forbidden(_))
+    ));
+
+    let accepted =
+        management::submit_workflow(&f.pool, &controller, retry.clone(), None, "fixture")
+            .await
+            .unwrap();
+    assert_eq!(accepted.instance_id, first.instance_id);
+    assert_eq!(accepted.phase, "waiting_for_source");
+    let captured = runner::get_workflow_run_response(&f.pool, accepted.run_id)
+        .await
+        .unwrap();
+    assert!(captured.input_text.contains(&original.input_text));
+    assert!(
+        captured
+            .input_text
+            .contains("Supplement only the missing delivery")
+    );
+    assert!(captured.input_text.contains(&relative));
+    assert!(captured.input_text.contains("SHA-256"));
+    // An accepted reply can be replayed after the author edits/deletes the
+    // instruction file: it is the original acceptance, not a second reading.
+    tokio::fs::remove_file(&path).await.unwrap();
+    let replay = management::submit_workflow(&f.pool, &controller, retry.clone(), None, "fixture")
+        .await
+        .unwrap();
+    assert_eq!(accepted.run_id, replay.run_id);
+    assert_eq!(f.count("workflow_runs").await, 2);
+    let queried =
+        management::get_workflow_instance(&f.pool, &controller, Some(accepted.run_id), None, 10)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(queried.runs[0].id, accepted.run_id);
+
+    write_text_atomic(
+        &path,
+        "This later file content must not replace accepted instructions.",
+    )
+    .await
+    .unwrap();
+    let mut stale = retry;
+    stale.request_id = "another-old-decision".into();
+    assert!(
+        matches!(management::submit_workflow(&f.pool,&controller,stale,None,"fixture").await,Err(ApiError::Conflict(error)) if error.contains("STALE_EXECUTION_BASIS"))
+    );
+    management::resolve_waiting_submissions(&f.pool)
+        .await
+        .unwrap();
+    assert!(
+        !WorkflowQueueEntry::release_terminal(&f.pool, first.run_id)
+            .await
+            .unwrap()
+    );
+    WorkflowHandoverEvent::finish(&f.pool, event.id, "completed", None)
+        .await
+        .unwrap();
+    assert!(
+        !WorkflowQueueEntry::release_terminal(&f.pool, first.run_id)
+            .await
+            .unwrap()
+    );
+    sqlx::query("UPDATE agent_runs SET status='succeeded' WHERE id=?")
+        .bind(event.agent_run_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_run_attempts SET status='succeeded' WHERE id=?")
+        .bind(event.run_attempt_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_process_registry SET registry_status='unreachable',pid=12345,process_started_at=datetime('now','subsec') WHERE run_attempt_id=?")
+        .bind(event.run_attempt_id).execute(&f.pool).await.unwrap();
+    assert!(
+        !WorkflowQueueEntry::release_terminal(&f.pool, first.run_id)
+            .await
+            .unwrap()
+    );
+    sqlx::query("UPDATE agent_process_registry SET registry_status='exited',observed_exited_at=datetime('now','subsec') WHERE run_attempt_id=?")
+        .bind(event.run_attempt_id).execute(&f.pool).await.unwrap();
+    assert!(
+        WorkflowQueueEntry::release_terminal(&f.pool, first.run_id)
+            .await
+            .unwrap()
+    );
+    management::resolve_waiting_submissions(&f.pool)
+        .await
+        .unwrap();
+    let success = f.agent(None);
+    f.dispatch(accepted.run_id, &success).await;
+    let result = runner::get_workflow_run_response(&f.pool, accepted.run_id)
+        .await
+        .unwrap();
+    assert_eq!(result.status, WorkflowRunStatus::Succeeded);
+    assert_eq!(result.input_text, captured.input_text);
+    assert!(!result.input_text.contains("later file content"));
+    let new_node = result
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "agent-b")
+        .unwrap();
+    assert_ne!(new_node.id, failed.id);
+    assert_eq!(new_node.session_id, failed.session_id);
+    assert_eq!(success.calls.lock().unwrap().len(), 1);
+    let preserved = runner::get_workflow_run_response(&f.pool, first.run_id)
+        .await
+        .unwrap();
+    assert_eq!(preserved.status, WorkflowRunStatus::Failed);
+    assert_eq!(
+        serde_json::to_value(preserved.nodes).unwrap(),
+        original_nodes
+    );
+}
+
+#[tokio::test]
+async fn exception_turn_cannot_submit_after_a_user_stop_and_manual_retry_retires_pending_event() {
+    let f = Fixture::new(false).await;
+    let prepared = f.prepare("prepare", None).await;
+    let user = main_caller(prepared.session.id);
+    let first = start(&f, &user, "start").await;
+    f.dispatch(first.run_id, &f.agent(Some("agent-b"))).await;
+    let (controller, event) = f.exception_caller(first.run_id).await;
+    management::stop_workflow(
+        &f.pool,
+        &user,
+        first.run_id,
+        "user-stop",
+        &FakeStop::default(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        management::verify_management_caller(&f.pool, &controller).await,
+        Err(ApiError::Unauthorized)
+    ));
+    let mut retry = submission(
+        "too-late",
+        WorkflowSubmissionAction::Retry,
+        Some(first.run_id),
+    );
+    retry.source_node_execution_id = event.source_node_execution_id;
+    retry.instruction_path = Some("no-longer-readable.md".into());
+    assert!(matches!(
+        management::submit_workflow(&f.pool, &controller, retry, None, "fixture").await,
+        Err(ApiError::Unauthorized)
+    ));
+    assert_eq!(f.count("workflow_runs").await, 1);
+
+    let manual = Fixture::new(false).await;
+    let prepared = manual.prepare("prepare", None).await;
+    let user = main_caller(prepared.session.id);
+    let first = start(&manual, &user, "start").await;
+    manual
+        .dispatch(first.run_id, &manual.agent(Some("agent-b")))
+        .await;
+    let event = WorkflowHandoverEvent::list_pending(&manual.pool)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let mut retry = submission(
+        "user-retry",
+        WorkflowSubmissionAction::Retry,
+        Some(first.run_id),
+    );
+    retry.source_node_execution_id = event.source_node_execution_id;
+    let accepted = management::submit_workflow(&manual.pool, &user, retry, None, "fixture")
+        .await
+        .unwrap();
+    assert_eq!(accepted.phase, "queued");
+    let retired = WorkflowHandoverEvent::find_by_id(&manual.pool, event.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retired.state, "completed");
+    assert!(retired.agent_run_id.is_none());
+    assert!(
+        !WorkflowHandoverEvent::claim(
+            &manual.pool,
+            event.id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4()
+        )
+        .await
+        .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn recovery_instruction_file_must_stay_inside_the_actual_working_directory() {
+    let f = Fixture::new(false).await;
+    let prepared = f.prepare("prepare", None).await;
+    let user = main_caller(prepared.session.id);
+    let first = start(&f, &user, "start").await;
+    f.dispatch(first.run_id, &f.agent(Some("agent-b"))).await;
+    let failed: Uuid =
+        sqlx::query_scalar("SELECT id FROM node_executions WHERE run_id=? AND node_id='agent-b'")
+            .bind(first.run_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    for relative in [
+        "../outside.md",
+        "/absolute.md",
+        "C:\\outside.md",
+        "missing.md",
+    ] {
+        let mut retry = submission(
+            relative,
+            WorkflowSubmissionAction::Retry,
+            Some(first.run_id),
+        );
+        retry.source_node_execution_id = Some(failed);
+        retry.instruction_path = Some(relative.into());
+        assert!(matches!(
+            management::submit_workflow(&f.pool, &user, retry, None, "fixture").await,
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+    assert_eq!(f.count("workflow_runs").await, 1);
+    assert_eq!(
+        WorkflowHandoverEvent::list_pending(&f.pool)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn partial_rework_reuses_the_joined_execution_without_new_agent_work() {
     let f = Fixture::new(false).await;
     let fan_in = json!({"version":2,"nodes":[
         {"id":"start","type":"start","data":{}},
@@ -1520,7 +1891,31 @@ async fn partial_rework_projects_every_real_reused_iteration_without_new_executi
         .iter()
         .filter(|n| n.node_id == "review")
         .collect();
-    assert_eq!(source_review.len(), 2);
+    assert_eq!(source_review.len(), 1);
+    assert_eq!(source_review[0].iteration, 0);
+    {
+        let calls = agent.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "fan-in waits for both upstream deliveries");
+        assert_eq!(calls[0].node_id, "review");
+        for upstream_id in ["left", "right"] {
+            let upstream = completed
+                .nodes
+                .iter()
+                .find(|node| node.node_id == upstream_id)
+                .unwrap();
+            assert_eq!(upstream.status, NodeExecutionStatus::Succeeded);
+            assert!(calls[0].prompt.contains(&upstream.id.to_string()));
+            let handoff = completed
+                .handoffs
+                .iter()
+                .find(|handoff| handoff.node_execution_id == upstream.id)
+                .unwrap();
+            assert!(!handoff.files.is_empty());
+            for file in &handoff.files {
+                assert!(calls[0].prompt.contains(&file.path));
+            }
+        }
+    }
     let mut request = submission(
         "end-only",
         WorkflowSubmissionAction::Rework,
@@ -1544,8 +1939,8 @@ async fn partial_rework_projects_every_real_reused_iteration_without_new_executi
         .iter()
         .find(|n| n.node_id == "review")
         .unwrap();
-    assert_eq!(review.reused_results.len(), 2);
-    assert_eq!(review.iteration, 1);
+    assert_eq!(review.reused_results.len(), 1);
+    assert_eq!(review.iteration, 0);
     for result in &review.reused_results {
         assert_eq!(result.source_run_id, source.run_id);
         assert!(source_review.iter().any(|n|n.id==result.source_node_execution_id && n.iteration==result.iteration));
@@ -1556,7 +1951,12 @@ async fn partial_rework_projects_every_real_reused_iteration_without_new_executi
             && review.active_agent_run_id.is_none()
     );
     assert!(!review.can_retry && !review.can_open_session && !review.can_cancel_node);
-    assert_eq!(agent.calls.lock().unwrap().len(), 2);
+    f.dispatch(accepted.run_id, &agent).await;
+    let rerun = f.finish(accepted.run_id, &agent).await;
+    assert_eq!(rerun.status, WorkflowRunStatus::Succeeded);
+    assert_eq!(rerun.nodes.len(), 1);
+    assert!(rerun.nodes.iter().all(|node| node.node_id == "end"));
+    assert_eq!(agent.calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

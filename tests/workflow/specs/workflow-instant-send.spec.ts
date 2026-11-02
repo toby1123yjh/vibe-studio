@@ -122,9 +122,88 @@ function deferred() {
   return { promise, resolve: () => resolve() };
 }
 
-test("an empty history echoes Enter immediately and keeps the message through HTTP acknowledgement until canonical history arrives", async ({
+test("history feedback follows canonical activity, respects reading position and supports reduced motion", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const api = await mockWorkflowConversations(page, {
+    initialRunStatus: "running",
+    initialHistorySize: 100,
+  });
+  const { panel } = await openConversation(page);
+  const activity = panel.locator("[data-conversation-activity]");
+  await expect(activity).toHaveAttribute(
+    "data-conversation-activity",
+    "running",
+  );
+  await expect(activity).toBeInViewport();
+  await expect(
+    panel.locator("[data-chat-composer] [data-conversation-activity]"),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      activity
+        .locator("svg")
+        .evaluate((element) =>
+          element
+            .getAnimations()
+            .some(
+              (animation) =>
+                animation.effect!.getTiming().iterations === Infinity,
+            ),
+        ),
+    )
+    .toBe(true);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(activity).toContainText("Agent is working");
+  await expect
+    .poll(() =>
+      activity
+        .locator("svg")
+        .evaluate((element) => getComputedStyle(element).animationName),
+    )
+    .toBe("none");
+
+  // The footer scrolls with the transcript; it cannot cover older messages.
+  const scroll = panel.locator('[style*="overflow-anchor: none"]');
+  await scroll.evaluate((element) => {
+    element.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -300, bubbles: true }),
+    );
+    element.scrollTop = Math.max(0, element.scrollTop - 300);
+    element.dispatchEvent(new Event("scroll"));
+  });
+  const readingTop = await scroll.evaluate((element) => element.scrollTop);
+  for (const status of ["awaiting_approval", "awaiting_input"] as const) {
+    api.setRunStatus("analysis-session", status);
+    await expect(activity).toHaveCount(0);
+  }
+  api.setRunStatus("analysis-session", "running");
+  await expect(activity).toHaveAttribute(
+    "data-conversation-activity",
+    "running",
+  );
+  await expect
+    .poll(() =>
+      scroll.evaluate(
+        (element, top) => Math.abs(element.scrollTop - top),
+        readingTop,
+      ),
+    )
+    .toBeLessThan(2);
+  api.setRunStatus("analysis-session", "cancelling");
+  await expect(activity).toHaveAttribute(
+    "data-conversation-activity",
+    "stopping",
+  );
+  await expect(activity).toHaveText("Stopping");
+  api.setRunStatus("analysis-session", "cancelled");
+  await expect(activity).toHaveCount(0);
+});
+
+test("an empty history echoes Enter immediately and keeps the message through HTTP acknowledgement until canonical history arrives", async ({
+  page,
+}, testInfo) => {
   const api = await mockWorkflowConversations(page, { initialHistory: false });
   const acknowledgement = deferred();
   const submissions: string[] = [];
@@ -153,6 +232,27 @@ test("an empty history echoes Enter immediately and keeps the message through HT
   // The request remains held: this must be real history, not the editor text.
   await expect(historyRows(panel, text)).toHaveCount(1);
   await expect(historyRows(panel, text)).toBeVisible();
+  const activity = panel.locator("[data-conversation-activity]");
+  await expect(activity).toHaveAttribute(
+    "data-conversation-activity",
+    "sending",
+  );
+  await expect(activity).toBeVisible();
+  const activityElement = await activity.elementHandle();
+  const composer = panel.locator("[data-chat-composer='true']");
+  await expect(composer.locator("[data-conversation-activity]")).toHaveCount(0);
+  const messageBounds = await historyRows(panel, text).boundingBox();
+  const activityBounds = await activity.boundingBox();
+  const composerBounds = await composer.boundingBox();
+  expect(activityBounds!.y).toBeGreaterThanOrEqual(
+    messageBounds!.y + messageBounds!.height,
+  );
+  expect(activityBounds!.y + activityBounds!.height).toBeLessThanOrEqual(
+    composerBounds!.y,
+  );
+  await panel.screenshot({
+    path: testInfo.outputPath("conversation-sending.png"),
+  });
   const echoElement = await historyRows(panel, text).elementHandle();
   await expect(editor).toHaveText("");
   await expect(editor).toBeFocused();
@@ -180,8 +280,14 @@ test("an empty history echoes Enter immediately and keeps the message through HT
     panel.getByRole("button", { name: "Stop", exact: true }),
   ).toBeVisible();
   await expect(
-    panel.locator("[data-composer-activity='running']"),
+    panel.locator("[data-conversation-activity='running']"),
   ).toBeVisible();
+  expect(
+    await activityElement!.evaluate((element) => element.isConnected),
+  ).toBe(true);
+  await panel.screenshot({
+    path: testInfo.outputPath("conversation-running.png"),
+  });
   await expect(
     panel.getByRole("button", { name: "Send", exact: true }),
   ).toHaveCount(0);
@@ -292,6 +398,7 @@ test("failed sends release the echo, preserve newer typing and restore an untouc
   firstFailure.resolve();
   await expect(panel).toContainText("The fixture rejected this send");
   await expect(historyRows(panel, first)).toHaveCount(0);
+  await expect(panel.locator("[data-conversation-activity]")).toHaveCount(0);
   await expect(editor).toHaveText(newer);
 
   await panel.getByRole("button", { name: "Send", exact: true }).click();

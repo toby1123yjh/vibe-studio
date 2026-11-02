@@ -394,7 +394,7 @@ html {
       transform var(--vk-duration-fast) var(--vk-ease-standard);
   }
 
-  .vk-chat-activity {
+  .vk-conversation-activity {
     display: inline-flex;
     align-items: center;
     gap: var(--vk-space-2);
@@ -406,7 +406,7 @@ html {
     line-height: 20px;
   }
 
-  .vk-chat-activity__icon {
+  .vk-conversation-activity__icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -417,21 +417,14 @@ html {
     background: var(--vk-status-running-subtle);
   }
 
-  .vk-chat-activity[data-composer-activity='stopping'] .vk-chat-activity__icon {
+  .vk-conversation-activity[data-conversation-activity='stopping']
+    .vk-conversation-activity__icon {
     color: var(--vk-status-cancelled-text);
     background: var(--vk-status-cancelled-subtle);
   }
 
-  .vk-chat-activity__label {
+  .vk-conversation-activity__label {
     flex-shrink: 0;
-    white-space: nowrap;
-  }
-
-  .vk-chat-activity__detail {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--vk-text-low);
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -449,12 +442,12 @@ html {
         var(--vk-ease-standard);
     }
 
-    .vk-chat-activity__icon > svg {
-      animation: vk-composer-activity 1.2s linear infinite;
+    .vk-conversation-activity__icon > svg {
+      animation: vk-conversation-activity 1.2s linear infinite;
     }
   }
 
-  @keyframes vk-composer-activity {
+  @keyframes vk-conversation-activity {
     to {
       transform: rotate(360deg);
     }

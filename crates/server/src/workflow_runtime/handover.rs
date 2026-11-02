@@ -1,5 +1,5 @@
-//! The only automatic main-Agent turn is a durable accepted-split handover.
-//! Notifications, reads, and ordinary node completion never call this path.
+//! Durable main-Agent handovers for accepted splits and actual node exceptions.
+//! Ordinary successful completion and page reads never create Agent turns.
 use std::{
     collections::HashSet,
     path::Path,
@@ -16,12 +16,15 @@ use executors::runtime::{
     ORCHESTRATION_COMMAND_SCHEMA_VERSION, RunAttemptMode, RunAttemptRequest,
 };
 use services::services::container::ContainerService;
-use sqlx::{FromRow, SqliteConnection, SqlitePool, types::Json};
+use sqlx::{FromRow, Row, SqliteConnection, SqlitePool, types::Json};
 use uuid::Uuid;
 use workflow::{
     WorkflowGraph,
     dispatch::{DispatchScope, dispatch_scope},
-    files::{SplitTaskManifest, WorkflowFileRef, validate_manifest},
+    files::{
+        SplitTaskManifest, WorkflowFileRef, control_file_path, sha256_bytes, validate_manifest,
+        write_json_atomic,
+    },
 };
 
 use super::{management::read_workflow_context, runner::file_handoff::read_bound_file};
@@ -52,16 +55,28 @@ struct HandoverSource {
     failure_requested: bool,
     stop_requested: bool,
     project_slot_held: bool,
+    #[sqlx(default)]
+    source_error: Option<String>,
+    #[sqlx(default)]
+    latest_run_id: Option<Uuid>,
 }
 
 impl HandoverSource {
-    fn accepts_work(&self) -> bool {
+    fn accepts_work(&self, exception: bool) -> bool {
         !self.stop_requested
-            && !self.failure_requested
-            && matches!(
-                self.run_status.as_str(),
-                "running" | "awaiting_human" | "awaiting_arena"
-            )
+            && if exception {
+                self.source_status == "failed"
+                    && matches!(
+                        self.run_status.as_str(),
+                        "running" | "awaiting_human" | "awaiting_arena" | "failed"
+                    )
+            } else {
+                !self.failure_requested
+                    && matches!(
+                        self.run_status.as_str(),
+                        "running" | "awaiting_human" | "awaiting_arena"
+                    )
+            }
     }
 }
 
@@ -69,9 +84,57 @@ async fn source(
     pool: &SqlitePool,
     event: &WorkflowHandoverEvent,
 ) -> Result<HandoverSource, ApiError> {
+    if let Some(node_execution_id) = event.source_node_execution_id {
+        return sqlx::query_as("SELECT r.attempt_id,r.workspace_id,a.main_session_id,r.status AS run_status,'exception' AS batch_state,n.status AS source_status,n.id AS node_execution_id,n.node_id,r.graph_snapshot,'' AS manifest_path,'' AS manifest_sha256,NULL AS dispatch_sha256,r.error_text IS NOT NULL AS failure_requested,EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=r.id) AS stop_requested,EXISTS(SELECT 1 FROM workflow_project_slots p WHERE p.run_id=r.id) AS project_slot_held,n.error_text AS source_error,a.latest_run_id FROM node_executions n JOIN workflow_runs r ON r.id=n.run_id LEFT JOIN workflow_attempts a ON a.id=r.attempt_id WHERE n.id=? AND r.id=?")
+            .bind(node_execution_id).bind(event.run_id).fetch_optional(pool).await?
+            .ok_or_else(|| ApiError::Conflict("Workflow exception source is unavailable".into()));
+    }
     sqlx::query_as("SELECT r.attempt_id,r.workspace_id,a.main_session_id,r.status AS run_status,b.state AS batch_state,n.status AS source_status,b.node_execution_id,n.node_id,r.graph_snapshot,b.manifest_path,b.manifest_sha256,b.dispatch_sha256,r.error_text IS NOT NULL AS failure_requested,EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=r.id) AS stop_requested,EXISTS(SELECT 1 FROM workflow_project_slots p WHERE p.run_id=r.id) AS project_slot_held FROM workflow_split_batches b JOIN workflow_runs r ON r.id=b.run_id JOIN node_executions n ON n.id=b.node_execution_id AND n.run_id=b.run_id LEFT JOIN workflow_attempts a ON a.id=r.attempt_id WHERE b.id=? AND b.run_id=?")
         .bind(event.batch_id).bind(event.run_id).fetch_optional(pool).await?
         .ok_or_else(|| ApiError::Conflict("Accepted workflow handover source is unavailable".into()))
+}
+
+pub async fn record_node_exception(
+    pool: &SqlitePool,
+    run_id: Uuid,
+    node_execution_id: Uuid,
+    kind: &str,
+    error: &str,
+) -> Result<bool, ApiError> {
+    Ok(
+        WorkflowHandoverEvent::create_exception(pool, run_id, node_execution_id, kind, error)
+            .await?,
+    )
+}
+
+pub async fn list_views(
+    pool: &SqlitePool,
+    run_id: Uuid,
+) -> Result<Vec<super::management::WorkflowCoordinationEventView>, ApiError> {
+    let events: Vec<WorkflowHandoverEvent> = sqlx::query_as(
+        "SELECT * FROM workflow_handover_events WHERE run_id=? ORDER BY created_at,id",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(events
+        .into_iter()
+        .map(|event| super::management::WorkflowCoordinationEventView {
+            id: event.id,
+            run_id: event.run_id,
+            node_execution_id: event.source_node_execution_id,
+            kind: if event.source_node_execution_id.is_some() {
+                "node_exception"
+            } else {
+                "split_dispatch"
+            }
+            .into(),
+            state: event.state,
+            session_id: event.session_id,
+            error_text: event.error_text,
+            evidence_path: event.evidence_path,
+        })
+        .collect())
 }
 
 fn in_flight() -> &'static Mutex<HashSet<Uuid>> {
@@ -124,6 +187,13 @@ pub async fn has_unsettled(pool: &SqlitePool, run_id: Uuid) -> Result<bool, ApiE
     has_unsettled_in(&mut conn, run_id).await
 }
 
+/// A queued exception awaits the source's failed outcome. It retains project
+/// occupancy but cannot itself prevent that outcome from being recorded.
+pub async fn has_unsettled_children(pool: &SqlitePool, run_id: Uuid) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_handover_events h WHERE h.run_id=? AND ((h.state IN ('pending','claimed') AND NOT (h.state='pending' AND h.source_node_execution_id IS NOT NULL)) OR EXISTS(SELECT 1 FROM agent_runs r LEFT JOIN agent_run_attempts a ON a.agent_run_id=r.id LEFT JOIN agent_process_registry p ON p.run_attempt_id=a.id WHERE r.id=h.agent_run_id AND (a.id IS NULL OR a.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed') OR p.run_attempt_id IS NULL OR p.registry_status<>'exited'))))")
+        .bind(run_id).fetch_one(pool).await?)
+}
+
 pub(crate) async fn has_unsettled_in(
     conn: &mut SqliteConnection,
     run_id: Uuid,
@@ -147,7 +217,8 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
         return Ok(());
     };
     let origin = source(pool, &event).await?;
-    if !origin.accepts_work() {
+    let exception = event.source_node_execution_id.is_some();
+    if !origin.accepts_work(exception) {
         return cancel_one(deployment, &event).await;
     }
     let existing = owned_turn(pool, &event).await?;
@@ -185,7 +256,9 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
     }
     // A user may already have submitted a valid dispatch while this event was
     // waiting. No automatic Agent is needed, even across service restart.
-    if origin.dispatch_sha256.is_some() {
+    if origin.dispatch_sha256.is_some()
+        || (exception && origin.latest_run_id.is_some_and(|id| id != event.run_id))
+    {
         if existing.is_none() {
             WorkflowHandoverEvent::finish(pool, event.id, "completed", None).await?;
         } else {
@@ -195,7 +268,7 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
                 .agent_run_port()
                 .fail_reserved(
                     event.agent_run_id.unwrap(),
-                    "Dispatch already accepted before automatic launch".into(),
+                    "Workflow handling already accepted before automatic launch".into(),
                 )
                 .await
                 .map_err(port_error)?;
@@ -203,10 +276,10 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
         }
         return Ok(());
     }
-    if origin.batch_state != "accepted" {
+    if !exception && origin.batch_state != "accepted" {
         return fail_handover(pool, &event, "Split batch is no longer awaiting dispatch").await;
     }
-    if origin.source_status != "succeeded" {
+    if !exception && origin.source_status != "succeeded" {
         return WorkflowHandoverEvent::set_error(
             pool,
             event.id,
@@ -214,6 +287,12 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
         )
         .await
         .map_err(Into::into);
+    }
+    if exception
+        && (origin.run_status != "failed" || !source_work_settled(pool, event.run_id).await?)
+    {
+        return WorkflowHandoverEvent::set_error(pool,event.id,Some("Waiting for the original failed Run and its independent work to settle; accepted sibling results are retained"))
+            .await.map_err(Into::into);
     }
     if !origin.project_slot_held {
         return WorkflowHandoverEvent::set_error(
@@ -274,8 +353,17 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
         .container()
         .ensure_container_exists(&workspace)
         .await?;
-    let scope = match verify_files(pool, Path::new(&workspace_path), &event, &origin).await {
-        Ok(scope) => scope,
+    let root = super::runner::workflow_control_root(pool, context.workspace_id).await?;
+    let prompt_result = if exception {
+        exception_prompt(pool, &root, &event, &origin).await
+    } else {
+        let directory = super::runner::file_handoff::run_directory(pool, event.run_id).await?;
+        verify_files(pool, &root, &event, &origin)
+            .await
+            .map(|scope| handover_prompt(&event, &origin, &scope, &directory))
+    };
+    let prompt = match prompt_result {
+        Ok(prompt) => prompt,
         Err(error) => {
             if let Some(id) = event.agent_run_id {
                 if existing.is_some() {
@@ -348,7 +436,7 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
                 } else {
                     RunAttemptMode::Launch
                 },
-                prompt: handover_prompt(&event, &origin, &scope),
+                prompt,
                 selected_skills: None,
                 executor_config: context.main_agent_config,
                 provider_session,
@@ -382,10 +470,12 @@ async fn process_one(deployment: &DeploymentImpl, event_id: Uuid) -> Result<(), 
     // recheck durable stop/dispatch boundaries. Token issuance repeats these
     // checks transactionally inside the actual local AgentRunPort.
     let current = source(pool, &event).await?;
-    if !current.accepts_work() {
+    if !current.accepts_work(exception) {
         return cancel_one(deployment, &event).await;
     }
-    if current.dispatch_sha256.is_some() {
+    if current.dispatch_sha256.is_some()
+        || (exception && current.latest_run_id.is_some_and(|id| id != event.run_id))
+    {
         deployment
             .agent_run_port()
             .fail_reserved(
@@ -425,6 +515,111 @@ fn claimed_identity(event: &WorkflowHandoverEvent) -> Result<(Uuid, Uuid, Uuid),
         (Some(run), Some(attempt), Some(turn)) => Ok((run, attempt, turn)),
         _ => Err(ApiError::Conflict("Claimed handover has an incomplete canonical identity; replacement launch is forbidden".into())),
     }
+}
+
+async fn source_work_settled(pool: &SqlitePool, run_id: Uuid) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(r#"
+        WITH owned_runs(id) AS (SELECT orchestration_run_id FROM workflow_runs WHERE id=?1
+          UNION SELECT o.id FROM orchestration_runs o JOIN node_executions n ON n.arena_group_id=o.source_definition_id
+            WHERE n.run_id=?1 AND o.product_kind='arena')
+        SELECT NOT EXISTS(SELECT 1 FROM node_executions WHERE run_id=?1 AND status IN ('running','cancelling','awaiting_human','awaiting_arena'))
+          AND NOT EXISTS(SELECT 1 FROM orchestration_agent_run_links l LEFT JOIN agent_run_state s ON s.agent_run_id=l.agent_run_id WHERE l.orchestration_run_id IN (SELECT id FROM owned_runs) AND (s.agent_run_id IS NULL OR s.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed')))
+          AND NOT EXISTS(SELECT 1 FROM orchestration_agent_run_links l LEFT JOIN agent_run_attempts a ON a.agent_run_id=l.agent_run_id LEFT JOIN agent_process_registry p ON p.run_attempt_id=a.id WHERE l.orchestration_run_id IN (SELECT id FROM owned_runs) AND (a.id IS NULL OR a.status NOT IN ('succeeded','failed','cancelled','crashed','audit_failed') OR p.run_attempt_id IS NULL OR p.registry_status<>'exited'))
+          AND NOT EXISTS(SELECT 1 FROM orchestration_outbox WHERE orchestration_run_id IN (SELECT id FROM owned_runs) AND delivery_status IN ('pending','delivering','failed'))
+    "#).bind(run_id).fetch_one(pool).await?)
+}
+
+async fn exception_prompt(
+    pool: &SqlitePool,
+    root: &Path,
+    event: &WorkflowHandoverEvent,
+    source: &HandoverSource,
+) -> Result<String, ApiError> {
+    let directory = super::runner::file_handoff::run_directory(pool, event.run_id).await?;
+    let reference = if let (Some(path), Some(sha256)) =
+        (&event.evidence_path, &event.evidence_sha256)
+    {
+        let reference = WorkflowFileRef {
+            path: path.clone(),
+            sha256: sha256.clone(),
+        };
+        read_bound_file(root, &reference).await?;
+        reference
+    } else {
+        let graph: WorkflowGraph = serde_json::from_str(&source.graph_snapshot)
+            .map_err(|_| ApiError::Conflict("Exception source has no valid frozen graph".into()))?;
+        let mut descendants = HashSet::from([source.node_id.clone()]);
+        loop {
+            let before = descendants.len();
+            for edge in &graph.edges {
+                if descendants.contains(&edge.source) {
+                    descendants.insert(edge.target.clone());
+                }
+            }
+            if descendants.len() == before {
+                break;
+            }
+        }
+        descendants.remove(&source.node_id);
+        let rows = sqlx::query("SELECT id,node_id,status,session_id,error_text FROM node_executions WHERE run_id=? ORDER BY node_id,iteration")
+            .bind(event.run_id).fetch_all(pool).await?;
+        let blocked = rows.iter().filter(|row| descendants.contains(row.get::<String,_>("node_id").as_str()))
+            .map(|row| serde_json::json!({"node_execution_id":row.get::<Uuid,_>("id"),"node_id":row.get::<String,_>("node_id"),"status":row.get::<String,_>("status"),"error":row.get::<Option<String>,_>("error_text")})).collect::<Vec<_>>();
+        let accepted = sqlx::query("SELECT node_execution_id,handoff_path,handoff_sha256,files_json FROM workflow_node_handoffs WHERE run_id=? ORDER BY created_at,node_execution_id")
+            .bind(event.run_id).fetch_all(pool).await?.into_iter().map(|row| {
+                Ok(serde_json::json!({"node_execution_id":row.get::<Uuid,_>("node_execution_id"),"path":row.get::<String,_>("handoff_path"),"sha256":row.get::<String,_>("handoff_sha256"),"files":serde_json::from_str::<serde_json::Value>(&row.get::<String,_>("files_json")).map_err(|_|ApiError::Conflict("Accepted handoff contains invalid file references".into()))?}))
+            }).collect::<Result<Vec<_>,ApiError>>()?;
+        let handoff = format!("{directory}/handoffs/{}.json", source.node_execution_id);
+        let handoff_exists = workflow::files::readable_file(root, &handoff).await.is_ok();
+        let evidence = serde_json::json!({
+            "schema_version":1,"run_id":event.run_id,"node_execution_id":source.node_execution_id,
+            "node_id":source.node_id,"failure_kind":event.failure_kind,"error":source.source_error,
+            "request_path":format!("{directory}/request.md"),
+            "expected_handoff_path":handoff,"handoff_file_readable":handoff_exists,
+            "accepted_deliveries":accepted,"blocked_downstream":blocked,
+            "source_run_status":source.run_status,
+            "note":"File readability is not acceptance or semantic quality. Failed execution history remains unchanged."
+        });
+        let relative = format!("{directory}/exceptions/{}.json", source.node_execution_id);
+        let path = control_file_path(root, &relative).await.map_err(|error| {
+            ApiError::BadRequest(format!("Exception evidence path is invalid: {error}"))
+        })?;
+        let bytes = serde_json::to_vec_pretty(&evidence)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        match tokio::fs::read(&path).await {
+            Ok(existing) if existing != bytes => {
+                return Err(ApiError::Conflict(
+                    "Previously written workflow exception evidence was modified".into(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                write_json_atomic(&path, &evidence)
+                    .await
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?
+            }
+            Err(error) => return Err(ApiError::BadRequest(error.to_string())),
+        }
+        let reference = WorkflowFileRef {
+            path: relative,
+            sha256: sha256_bytes(&bytes),
+        };
+        sqlx::query("UPDATE workflow_handover_events SET evidence_path=?,evidence_sha256=?,updated_at=datetime('now','subsec') WHERE id=? AND evidence_path IS NULL AND state IN ('pending','claimed')")
+            .bind(&reference.path).bind(&reference.sha256).bind(event.id).execute(pool).await?;
+        reference
+    };
+    let instruction_path = format!("{directory}/instructions/{}.md", event.id);
+    Ok(format!(
+        "System workflow node-exception handover, not a user message. The original Run {} has a failed execution {} (Node {}). Read the real evidence file `{}` (SHA-256 {}) and query workflow_get for current facts. Inspect referenced files as needed; readability alone does not prove accepted delivery or business completion.\n\nDecide from the actual situation: supplement the original Node's missing/invalid delivery, continue unfinished work, redo the necessary work, or explain the issue and ask the user in this original main Session. No fixed repair action is mandatory. Keep accepted independent sibling deliveries. Do not edit the frozen graph, create a new workflow instance/business Task, mark failures successful, or launch Agents yourself.\n\nWhen execution is needed, write concrete instructions to `{instruction_path}` first and call workflow_submit with a stable request_id `exception:{}`, source_run_id `{}`, source_node_execution_id `{}`, instruction_path as above, and action `retry` (same failed Node and its required downstream) or `rework` (explicit scope from_nodes including the failed Node). Runtime validates and executes; acceptance is not completion. New execution uses the original Node Session and a new execution/Run identity; the failed record remains. Query the accepted result. If the correct next step is asking the user, explain the concrete error and available files and wait; do not pretend a retry was accepted. A stopped/superseded Run must not be restarted.",
+        event.run_id,
+        source.node_execution_id,
+        source.node_id,
+        reference.path,
+        reference.sha256,
+        event.id,
+        event.run_id,
+        source.node_execution_id
+    ))
 }
 
 /// Query canonical authority, never the legacy execution-process projection.
@@ -573,21 +768,23 @@ fn handover_prompt(
     event: &WorkflowHandoverEvent,
     source: &HandoverSource,
     scope: &DispatchScope,
+    directory: &str,
 ) -> String {
     let candidates = serde_json::to_string(&scope.candidate_node_ids).expect("Node IDs serialize");
+    let batch_id = event.batch_id.expect("Split dispatch has a batch identity");
     let dispatch_path = format!(
-        ".vibe-kanban/workflows/{}/splits/{}/dispatch.json",
-        event.run_id, source.node_execution_id
+        "{directory}/splits/{}/dispatch.json",
+        source.node_execution_id
     );
     format!(
         "System workflow dispatch handover, not a user message.\nRun: {}\nBatch: {}\nSplit execution: {}\nAccepted manifest: {}\nManifest SHA-256: {}\nFixed candidate Node IDs: {candidates}\nFixed summary exit: {}\n\nCall workflow_get for this Run to inspect its frozen nodes and their responsibilities. Actually read the manifest, each instruction_path and the necessary referenced material files from the project directory. Decide task assignments and serial/parallel stages within the fixed candidate nodes. Do not copy task bodies or upstream results into tool parameters.\n\nWrite {dispatch_path} as JSON: schema_version=1, run_id and split_execution_id exactly as above, manifest_sha256 as above, stages=[{{\"assignments\":[{{\"subtask_id\":\"manifest-task-id\",\"node_id\":\"fixed-candidate-id\"}}]}}]. Stages execute serially; assignments inside a stage execute in parallel. Assign each task exactly once and put dependent tasks in later stages.\n\nExplicitly call workflow_dispatch with batch_id={}, request_id=\"handover:{}\", and dispatch_path=\"{dispatch_path}\". Check its accepted result. Writing the file alone is not submission. Dispatch advances this existing Run; do not call workflow_submit to create another Run, create business Tasks, add Nodes, change the graph, or launch Agents directly. If dispatch cannot be accepted, report the actual reason and leave the failed work visible.",
         event.run_id,
-        event.batch_id,
+        batch_id,
         source.node_execution_id,
         source.manifest_path,
         source.manifest_sha256,
         scope.summary_node_id,
-        event.batch_id,
+        batch_id,
         event.id
     )
 }
@@ -597,6 +794,34 @@ async fn finish_terminal(
     event: &WorkflowHandoverEvent,
     status: AgentRunStatus,
 ) -> Result<(), ApiError> {
+    if event.source_node_execution_id.is_some() {
+        let stopped: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_stop_intents WHERE run_id=?)")
+                .bind(event.run_id)
+                .fetch_one(pool)
+                .await?;
+        let error = if status == AgentRunStatus::Succeeded || stopped {
+            None
+        } else {
+            Some(format!(
+                "Main Agent exception handling ended ({status:?}); original failed work remains unchanged"
+            ))
+        };
+        WorkflowHandoverEvent::finish(
+            pool,
+            event.id,
+            if stopped {
+                "cancelled"
+            } else if status == AgentRunStatus::Succeeded {
+                "completed"
+            } else {
+                "failed"
+            },
+            error.as_deref(),
+        )
+        .await?;
+        return Ok(());
+    }
     fail_handover(pool, event, &format!("Main Agent dispatch turn ended ({status:?}) without an accepted workflow_dispatch; dispatch was not completed")).await
 }
 
@@ -607,6 +832,10 @@ async fn fail_handover(
     event: &WorkflowHandoverEvent,
     reason: &str,
 ) -> Result<(), ApiError> {
+    if event.source_node_execution_id.is_some() {
+        WorkflowHandoverEvent::finish(pool, event.id, "failed", Some(reason)).await?;
+        return Ok(());
+    }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (dispatched, stopped): (bool, bool) = sqlx::query_as("SELECT b.dispatch_sha256 IS NOT NULL,r.status IN ('cancelling','canceled') OR EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=r.id) FROM workflow_split_batches b JOIN workflow_runs r ON r.id=b.run_id WHERE b.id=?")
         .bind(event.batch_id).fetch_one(&mut *tx).await?;
@@ -733,7 +962,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::raw_sql("CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,status TEXT NOT NULL); CREATE TABLE workflow_split_batches(id BLOB PRIMARY KEY,run_id BLOB,dispatch_sha256 TEXT,state TEXT,error_text TEXT,updated_at TEXT); CREATE TABLE workflow_handover_events(id BLOB PRIMARY KEY,run_id BLOB,session_id BLOB,agent_run_id BLOB,run_attempt_id BLOB,turn_id BLOB,state TEXT,error_text TEXT,updated_at TEXT); CREATE TABLE workflow_split_subtasks(batch_id BLOB,state TEXT,error_text TEXT,updated_at TEXT); CREATE TABLE workflow_stop_intents(run_id BLOB); CREATE TABLE agent_runs(id BLOB PRIMARY KEY,session_id BLOB,status TEXT,request_envelope TEXT); CREATE TABLE agent_run_attempts(id BLOB PRIMARY KEY,agent_run_id BLOB,attempt_number INTEGER,status TEXT,request_envelope TEXT); CREATE TABLE agent_process_registry(run_attempt_id BLOB PRIMARY KEY,registry_status TEXT,pid INTEGER,host_pid INTEGER,host_endpoint TEXT,host_token TEXT,process_started_at TEXT); CREATE TABLE workflow_main_session_bindings(session_id BLOB PRIMARY KEY,actual_main_run_attempt_id BLOB);")
+        sqlx::raw_sql("CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,status TEXT NOT NULL); CREATE TABLE workflow_split_batches(id BLOB PRIMARY KEY,run_id BLOB,dispatch_sha256 TEXT,state TEXT,error_text TEXT,updated_at TEXT); CREATE TABLE workflow_handover_events(id BLOB PRIMARY KEY,run_id BLOB,source_node_execution_id BLOB,session_id BLOB,agent_run_id BLOB,run_attempt_id BLOB,turn_id BLOB,state TEXT,error_text TEXT,updated_at TEXT); CREATE TABLE workflow_split_subtasks(batch_id BLOB,state TEXT,error_text TEXT,updated_at TEXT); CREATE TABLE workflow_stop_intents(run_id BLOB); CREATE TABLE agent_runs(id BLOB PRIMARY KEY,session_id BLOB,status TEXT,request_envelope TEXT); CREATE TABLE agent_run_attempts(id BLOB PRIMARY KEY,agent_run_id BLOB,attempt_number INTEGER,status TEXT,request_envelope TEXT); CREATE TABLE agent_process_registry(run_attempt_id BLOB PRIMARY KEY,registry_status TEXT,pid INTEGER,host_pid INTEGER,host_endpoint TEXT,host_token TEXT,process_started_at TEXT); CREATE TABLE workflow_main_session_bindings(session_id BLOB PRIMARY KEY,actual_main_run_attempt_id BLOB);")
             .execute(&pool).await.unwrap();
         pool
     }
@@ -741,7 +970,11 @@ mod tests {
     fn event() -> WorkflowHandoverEvent {
         WorkflowHandoverEvent {
             id: Uuid::new_v4(),
-            batch_id: Uuid::new_v4(),
+            batch_id: Some(Uuid::new_v4()),
+            source_node_execution_id: None,
+            failure_kind: None,
+            evidence_path: None,
+            evidence_sha256: None,
             run_id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
             state: "claimed".into(),
@@ -809,6 +1042,150 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(replay, error);
+    }
+
+    #[tokio::test]
+    async fn pending_exception_retains_occupancy_without_preventing_source_failure() {
+        let pool = pool().await;
+        let run_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO workflow_handover_events(id,run_id,source_node_execution_id,state) VALUES (?,?,?,'pending')")
+            .bind(Uuid::new_v4()).bind(run_id).bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+        assert!(has_unsettled(&pool, run_id).await.unwrap());
+        assert!(!has_unsettled_children(&pool, run_id).await.unwrap());
+        sqlx::query("UPDATE workflow_handover_events SET state='claimed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(has_unsettled_children(&pool, run_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn exception_reply_preserves_failed_history_including_when_it_only_asks_user() {
+        for (terminal, expected) in [
+            (AgentRunStatus::Succeeded, "completed"),
+            (AgentRunStatus::Failed, "failed"),
+        ] {
+            let pool = pool().await;
+            let mut event = event();
+            event.batch_id = None;
+            event.source_node_execution_id = Some(Uuid::new_v4());
+            event.failure_kind = Some("delivery_invalid".into());
+            sqlx::query("INSERT INTO workflow_runs VALUES (?,'failed')")
+                .bind(event.run_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO workflow_handover_events(id,run_id,source_node_execution_id,state) VALUES (?,?,?,'claimed')")
+                .bind(event.id).bind(event.run_id).bind(event.source_node_execution_id).execute(&pool).await.unwrap();
+            finish_terminal(&pool, &event, terminal).await.unwrap();
+            let state: String =
+                sqlx::query_scalar("SELECT state FROM workflow_handover_events WHERE id=?")
+                    .bind(event.id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(state, expected);
+            let status: String = sqlx::query_scalar("SELECT status FROM workflow_runs WHERE id=?")
+                .bind(event.run_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(status, "failed");
+            let batches: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_split_batches")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(batches, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn exception_evidence_binds_real_error_and_paths_and_cannot_be_reinterpreted() {
+        let pool = pool().await;
+        sqlx::raw_sql("ALTER TABLE workflow_runs ADD COLUMN workflow_id BLOB; ALTER TABLE workflow_handover_events ADD COLUMN evidence_path TEXT; ALTER TABLE workflow_handover_events ADD COLUMN evidence_sha256 TEXT; CREATE TABLE node_executions(id BLOB,node_id TEXT,run_id BLOB,iteration INTEGER,status TEXT,session_id BLOB,error_text TEXT); CREATE TABLE workflow_node_handoffs(node_execution_id BLOB,run_id BLOB,handoff_path TEXT,handoff_sha256 TEXT,files_json TEXT,created_at TEXT);")
+            .execute(&pool).await.unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut event = event();
+        event.batch_id = None;
+        let failed = Uuid::new_v4();
+        event.source_node_execution_id = Some(failed);
+        event.failure_kind = Some("delivery_invalid".into());
+        let workflow_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO workflow_runs(id,status,workflow_id) VALUES (?,'failed',?)")
+            .bind(event.run_id)
+            .bind(workflow_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO workflow_handover_events(id,run_id,source_node_execution_id,state) VALUES (?,?,?,'pending')")
+            .bind(event.id).bind(event.run_id).bind(failed).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO node_executions VALUES (?,'b',?,0,'failed',NULL,'handoff was missing')",
+        )
+        .bind(failed)
+        .bind(event.run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO node_executions VALUES (?,'c',?,0,'pending',NULL,NULL)")
+            .bind(Uuid::new_v4())
+            .bind(event.run_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut source=HandoverSource {
+            attempt_id:Some(Uuid::new_v4()),workspace_id:Some(Uuid::new_v4()),main_session_id:Some(event.session_id),
+            run_status:"failed".into(),batch_state:"exception".into(),source_status:"failed".into(),node_execution_id:failed,node_id:"b".into(),
+            graph_snapshot:serde_json::json!({"version":2,"nodes":[{"id":"start","type":"start","data":{}},{"id":"b","type":"agent","data":{"prompt_template":"B"}},{"id":"c","type":"agent","data":{"prompt_template":"C"}},{"id":"end","type":"end","data":{}}],"edges":[{"id":"sb","source":"start","target":"b","type":"default"},{"id":"bc","source":"b","target":"c","type":"default"},{"id":"ce","source":"c","target":"end","type":"default"}]}).to_string(),
+            manifest_path:String::new(),manifest_sha256:String::new(),dispatch_sha256:None,failure_requested:true,stop_requested:false,project_slot_held:true,
+            source_error:Some("handoff was missing".into()),latest_run_id:Some(event.run_id),
+        };
+        let prompt = exception_prompt(&pool, root.path(), &event, &source)
+            .await
+            .unwrap();
+        let (path, hash): (String, String) = sqlx::query_as(
+            "SELECT evidence_path,evidence_sha256 FROM workflow_handover_events WHERE id=?",
+        )
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(path.starts_with(&format!(
+            ".vibe-studio/workflows/{workflow_id}/runs/{}/exceptions/",
+            event.run_id
+        )));
+        let bytes = read_bound_file(
+            root.path(),
+            &WorkflowFileRef {
+                path: path.clone(),
+                sha256: hash.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let evidence: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(evidence["error"], "handoff was missing");
+        assert_eq!(evidence["failure_kind"], "delivery_invalid");
+        assert_eq!(evidence["blocked_downstream"][0]["node_id"], "c");
+        assert_eq!(evidence["handoff_file_readable"], false);
+        assert!(prompt.contains("instruction_path"));
+        assert!(prompt.contains(&format!("exception:{}", event.id)));
+        event.evidence_path = Some(path.clone());
+        event.evidence_sha256 = Some(hash);
+        source.source_error = Some("a later interpretation".into());
+        assert_eq!(
+            exception_prompt(&pool, root.path(), &event, &source)
+                .await
+                .unwrap(),
+            prompt
+        );
+        workflow::files::write_text_atomic(&root.path().join(path), "changed evidence")
+            .await
+            .unwrap();
+        assert!(matches!(
+            exception_prompt(&pool, root.path(), &event, &source).await,
+            Err(ApiError::Conflict(_))
+        ));
     }
 
     #[tokio::test]
@@ -995,13 +1372,20 @@ mod tests {
             failure_requested: false,
             stop_requested: false,
             project_slot_held: true,
+            source_error: None,
+            latest_run_id: Some(event.run_id),
         };
         let scope = DispatchScope {
             splitter_node_id: "split".into(),
             candidate_node_ids: vec!["research".into(), "review".into()],
             summary_node_id: "summary".into(),
         };
-        let prompt = handover_prompt(&event, &source, &scope);
+        let prompt = handover_prompt(
+            &event,
+            &source,
+            &scope,
+            ".vibe-studio/workflows/workflow/runs/run",
+        );
         assert!(prompt.contains("System workflow dispatch handover, not a user message"));
         assert!(prompt.contains("Actually read the manifest"));
         assert!(prompt.contains("materials/tasks.json"));

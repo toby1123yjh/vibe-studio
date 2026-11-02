@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 use uuid::Uuid;
-use workflow::WorkflowGraph;
+use workflow::{
+    WorkflowGraph,
+    planner::{NodeExecutionSnapshot, RunSnapshot},
+};
 
 use crate::error::ApiError;
 
@@ -55,8 +58,10 @@ pub struct WorkflowFileContextView {
 
 struct RunFiles {
     workspace_id: Uuid,
+    directory: String,
     graph: WorkflowGraph,
     effective: Vec<Uuid>,
+    scheduling: RunSnapshot,
     materials: Vec<String>,
     retry_source: Option<Uuid>,
     missing: Vec<WorkflowMissingSubtaskView>,
@@ -67,10 +72,9 @@ struct ExecutionFiles {
     run_id: Uuid,
     node_id: String,
     node_type: String,
+    iteration: i64,
     session_id: Option<Uuid>,
     status: String,
-    started_at: Option<f64>,
-    finished_at: Option<f64>,
     handoff: Option<(String, String, Vec<WorkflowFileReferenceView>)>,
 }
 
@@ -115,7 +119,7 @@ impl FileSnapshot {
             if snapshot.runs.contains_key(&id) {
                 continue;
             }
-            let row = sqlx::query("SELECT r.workspace_id,r.graph_snapshot,s.action,s.material_paths_json,s.source_run_id,d.missing_subtasks_json FROM workflow_runs r LEFT JOIN workflow_run_submissions s ON s.run_id=r.id LEFT JOIN workflow_run_deliveries d ON d.run_id=r.id WHERE r.id=?")
+            let row = sqlx::query("SELECT r.workflow_id,r.workspace_id,r.graph_snapshot,s.action,s.material_paths_json,s.source_run_id,d.missing_subtasks_json FROM workflow_runs r LEFT JOIN workflow_run_submissions s ON s.run_id=r.id LEFT JOIN workflow_run_deliveries d ON d.run_id=r.id WHERE r.id=?")
                 .bind(id).fetch_optional(&mut *conn).await?
                 .ok_or_else(|| ApiError::BadRequest("Workflow Run not found".into()))?;
             let workspace_id = row
@@ -133,19 +137,53 @@ impl FileSnapshot {
             pending.extend(retry_source);
             let material_json: Option<String> = row.try_get("material_paths_json")?;
             let missing_json: Option<String> = row.try_get("missing_subtasks_json")?;
-            let effective = sqlx::query("SELECT e.source_node_execution_id,n.run_id FROM workflow_effective_node_executions e JOIN node_executions n ON n.id=e.source_node_execution_id WHERE e.run_id=? ORDER BY e.node_id,e.iteration,e.source_node_execution_id")
+            let effective = sqlx::query("SELECT e.source_node_execution_id,e.node_id,e.iteration,e.status,e.output_text,e.error_text,n.run_id FROM workflow_effective_node_executions e JOIN node_executions n ON n.id=e.source_node_execution_id WHERE e.run_id=? ORDER BY e.node_id,e.iteration,e.source_node_execution_id")
                 .bind(id).fetch_all(&mut *conn).await?;
             let mut execution_ids = Vec::new();
+            let mut scheduling = RunSnapshot {
+                run_id: id.to_string(),
+                nodes: Vec::new(),
+            };
             for source in effective {
                 execution_ids.push(source.try_get("source_node_execution_id")?);
                 pending.push(source.try_get("run_id")?);
+                scheduling.nodes.push(NodeExecutionSnapshot {
+                    node_id: source.try_get("node_id")?,
+                    iteration: source.try_get("iteration")?,
+                    status: super::runner::planner_status_from_str(
+                        &source.try_get::<String, _>("status")?,
+                    )?,
+                    output_text: source.try_get("output_text")?,
+                    error_text: source.try_get("error_text")?,
+                });
+            }
+            for node_id in sqlx::query_scalar::<_, String>(
+                "SELECT node_id FROM workflow_node_dispositions WHERE run_id=?",
+            )
+            .bind(id)
+            .fetch_all(&mut *conn)
+            .await?
+            {
+                scheduling.nodes.push(NodeExecutionSnapshot {
+                    node_id,
+                    iteration: 0,
+                    status: workflow::planner::NodeExecutionStatus::Skipped,
+                    output_text: None,
+                    error_text: None,
+                });
             }
             snapshot.runs.insert(
                 id,
                 RunFiles {
                     workspace_id,
+                    directory: workflow::files::run_relative_dir(
+                        &row.try_get::<Uuid, _>("workflow_id")?.to_string(),
+                        &id.to_string(),
+                    )
+                    .map_err(|error| ApiError::Conflict(error.to_string()))?,
                     graph: decode(&graph)?,
                     effective: execution_ids,
+                    scheduling,
                     materials: material_json
                         .as_deref()
                         .map(decode)
@@ -159,7 +197,7 @@ impl FileSnapshot {
                         .unwrap_or_default(),
                 },
             );
-            let executions = sqlx::query("SELECT n.id,n.run_id,n.node_id,n.node_type,n.session_id,n.status,julianday(n.started_at) AS started_at,julianday(n.finished_at) AS finished_at,h.handoff_path,h.handoff_sha256,h.files_json FROM node_executions n LEFT JOIN workflow_node_handoffs h ON h.node_execution_id=n.id AND h.run_id=n.run_id WHERE n.run_id=? ORDER BY n.node_id,n.iteration,n.id")
+            let executions = sqlx::query("SELECT n.id,n.run_id,n.node_id,n.node_type,n.iteration,n.session_id,n.status,h.handoff_path,h.handoff_sha256,h.files_json FROM node_executions n LEFT JOIN workflow_node_handoffs h ON h.node_execution_id=n.id AND h.run_id=n.run_id WHERE n.run_id=? ORDER BY n.node_id,n.iteration,n.id")
                 .bind(id).fetch_all(&mut *conn).await?;
             for execution in executions {
                 let execution_id = execution.try_get("id")?;
@@ -180,10 +218,9 @@ impl FileSnapshot {
                         run_id: id,
                         node_id: execution.try_get("node_id")?,
                         node_type: execution.try_get("node_type")?,
+                        iteration: execution.try_get("iteration")?,
                         session_id: execution.try_get("session_id")?,
                         status: execution.try_get("status")?,
-                        started_at: execution.try_get("started_at")?,
-                        finished_at: execution.try_get("finished_at")?,
                         handoff,
                     },
                 );
@@ -258,7 +295,7 @@ impl FileSnapshot {
             run_id,
             None,
             WorkflowContextFileRole::Input,
-            &format!(".vibe-kanban/workflows/{run_id}/request.md"),
+            &format!("{}/request.md", self.runs[&run_id].directory),
             None,
         )];
         let source = self.material_source(run_id);
@@ -273,7 +310,7 @@ impl FileSnapshot {
                 run_id,
                 None,
                 WorkflowContextFileRole::Control,
-                &format!(".vibe-kanban/workflows/{run_id}/partial-delivery.json"),
+                &format!("{}/partial-delivery.json", self.runs[&run_id].directory),
                 None,
             ));
         }
@@ -393,18 +430,22 @@ impl FileSnapshot {
             }
         }
         let run = &self.runs[&execution.run_id];
-        let source_nodes: HashSet<_> = run
-            .graph
-            .edges
-            .iter()
-            .filter(|edge| edge.target == execution.node_id)
-            .map(|edge| edge.source.as_str())
-            .collect();
-        run.effective.iter().copied().filter(|id| {
-            let source = &self.executions[id];
-            source_nodes.contains(source.node_id.as_str()) && source.status == "succeeded"
-                && !matches!((source.finished_at, execution.started_at), (Some(finished), Some(started)) if finished > started)
-        }).collect()
+        workflow::planner::upstream_execution_rounds(
+            &run.graph,
+            &run.scheduling,
+            &execution.node_id,
+            execution.iteration,
+        )
+        .into_iter()
+        .filter_map(|(node_id, iteration)| {
+            run.effective.iter().copied().find(|id| {
+                let source = &self.executions[id];
+                source.node_id == node_id
+                    && source.iteration == iteration
+                    && source.status == "succeeded"
+            })
+        })
+        .collect()
     }
 
     fn protocol_file(
@@ -426,10 +467,8 @@ impl FileSnapshot {
                 Some(&reference.sha256),
             ));
         }
-        for id in self.runs.keys() {
-            if reference.path.replace('\\', "/")
-                == format!(".vibe-kanban/workflows/{id}/request.md")
-            {
+        for (id, run) in &self.runs {
+            if reference.path.replace('\\', "/") == format!("{}/request.md", run.directory) {
                 return Some(self.file(
                     *id,
                     None,
@@ -439,7 +478,7 @@ impl FileSnapshot {
                 ));
             }
             if reference.path.replace('\\', "/")
-                == format!(".vibe-kanban/workflows/{id}/partial-delivery.json")
+                == format!("{}/partial-delivery.json", run.directory)
             {
                 return Some(self.file(
                     *id,
@@ -729,12 +768,13 @@ mod tests {
             .await
             .unwrap();
         sqlx::raw_sql(r#"
-            CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,workspace_id BLOB,graph_snapshot TEXT);
-            CREATE TABLE node_executions(id BLOB PRIMARY KEY,run_id BLOB,node_id TEXT,node_type TEXT,iteration INTEGER,status TEXT,session_id BLOB,started_at TEXT,finished_at TEXT);
+            CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,workflow_id BLOB,workspace_id BLOB,graph_snapshot TEXT);
+            CREATE TABLE node_executions(id BLOB PRIMARY KEY,run_id BLOB,node_id TEXT,node_type TEXT,iteration INTEGER,status TEXT,session_id BLOB,started_at TEXT,finished_at TEXT,output_text TEXT,error_text TEXT);
+            CREATE TABLE workflow_node_dispositions(run_id BLOB,node_id TEXT);
             CREATE TABLE workflow_result_reuse(run_id BLOB,node_id TEXT,iteration INTEGER,source_node_execution_id BLOB);
             CREATE VIEW workflow_effective_node_executions AS
-                SELECT run_id,id AS source_node_execution_id,node_id,iteration,status FROM node_executions
-                UNION ALL SELECT reuse.run_id,n.id,reuse.node_id,reuse.iteration,n.status FROM workflow_result_reuse reuse JOIN node_executions n ON n.id=reuse.source_node_execution_id;
+                SELECT run_id,id AS source_node_execution_id,node_id,iteration,status,output_text,error_text FROM node_executions
+                UNION ALL SELECT reuse.run_id,n.id,reuse.node_id,reuse.iteration,n.status,n.output_text,n.error_text FROM workflow_result_reuse reuse JOIN node_executions n ON n.id=reuse.source_node_execution_id;
             CREATE TABLE workflow_node_handoffs(node_execution_id BLOB PRIMARY KEY,run_id BLOB,handoff_path TEXT,handoff_sha256 TEXT,files_json TEXT);
             CREATE TABLE workflow_run_submissions(run_id BLOB,action TEXT,material_paths_json TEXT,source_run_id BLOB);
             CREATE TABLE workflow_run_deliveries(run_id BLOB,missing_subtasks_json TEXT);
@@ -746,15 +786,36 @@ mod tests {
 
     async fn run(pool: &SqlitePool, id: Uuid, edges: &[(&str, &str)]) -> Uuid {
         let workspace = Uuid::new_v4();
-        let graph = json!({"version":2,"nodes":[],"edges":edges.iter().enumerate().map(|(index,(source,target))|json!({"id":index.to_string(),"source":source,"target":target,"type":"default"})).collect::<Vec<_>>()});
-        sqlx::query("INSERT INTO workflow_runs VALUES (?,?,?)")
+        let node_ids: std::collections::BTreeSet<_> = edges
+            .iter()
+            .flat_map(|(source, target)| [*source, *target])
+            .collect();
+        let roots = node_ids
+            .iter()
+            .copied()
+            .filter(|id| !edges.iter().any(|(_, target)| target == id));
+        let mut graph_edges = edges.iter().copied().collect::<Vec<_>>();
+        graph_edges.extend(roots.map(|id| ("fixture-start", id)));
+        let mut nodes = node_ids
+            .into_iter()
+            .map(|id| json!({"id":id,"type":"agent","data":{}}))
+            .collect::<Vec<_>>();
+        nodes.push(json!({"id":"fixture-start","type":"start","data":{}}));
+        let graph = json!({"version":2,"nodes":nodes,"edges":graph_edges.iter().enumerate().map(|(index,(source,target))|json!({"id":index.to_string(),"source":source,"target":target,"type":"default"})).collect::<Vec<_>>()});
+        sqlx::query("INSERT INTO workflow_runs VALUES (?,?,?,?)")
             .bind(id)
+            .bind(Uuid::nil())
             .bind(workspace)
             .bind(graph.to_string())
             .execute(pool)
             .await
             .unwrap();
+        execution(pool, id, "fixture-start", "start", 0).await;
         workspace
+    }
+
+    fn run_directory(run: Uuid) -> String {
+        workflow::files::run_relative_dir(&Uuid::nil().to_string(), &run.to_string()).unwrap()
     }
 
     async fn execution(
@@ -766,7 +827,7 @@ mod tests {
     ) -> (Uuid, Uuid) {
         let id = Uuid::new_v4();
         let session = Uuid::new_v4();
-        sqlx::query("INSERT INTO node_executions VALUES (?,?,?,?,?,'succeeded',?,'2026-10-14 01:00:00','2026-10-14 01:00:01')")
+        sqlx::query("INSERT INTO node_executions(id,run_id,node_id,node_type,iteration,status,session_id,started_at,finished_at) VALUES (?,?,?,?,?,'succeeded',?,'2026-10-14 01:00:00','2026-10-14 01:00:01')")
             .bind(id).bind(run).bind(node).bind(kind).bind(iteration).bind(session).execute(pool).await.unwrap();
         (id, session)
     }
@@ -779,9 +840,7 @@ mod tests {
         sqlx::query("INSERT INTO workflow_node_handoffs VALUES (?,?,?,?,?)")
             .bind(execution)
             .bind(run)
-            .bind(format!(
-                ".vibe-kanban/workflows/{run}/handoffs/{execution}.json"
-            ))
+            .bind(format!("{}/handoffs/{execution}.json", run_directory(run)))
             .bind("accepted-index-hash")
             .bind(serde_json::to_string(&references).unwrap())
             .execute(pool)
@@ -793,8 +852,8 @@ mod tests {
         let id = Uuid::new_v4();
         sqlx::query("INSERT INTO workflow_split_batches VALUES (?,?,?,?,NULL,?,'manifest-hash',?,'dispatch-hash','2026-10-14')")
             .bind(id).bind(run).bind(split).bind(summary)
-            .bind(format!(".vibe-kanban/workflows/{run}/splits/{split}/tasks.json"))
-            .bind(format!(".vibe-kanban/workflows/{run}/splits/{split}/dispatch.json"))
+            .bind(format!("{}/splits/{split}/tasks.json", run_directory(run)))
+            .bind(format!("{}/splits/{split}/dispatch.json", run_directory(run)))
             .execute(pool).await.unwrap();
         id
     }
@@ -1088,7 +1147,7 @@ mod tests {
         let (end, _) = execution(&pool, run_id, "end", "end", 0).await;
         let batch = batch(&pool, run_id, split, report).await;
         item(&pool, batch, "alpha", None, "failed", &[]).await;
-        let manifest = format!(".vibe-kanban/workflows/{run_id}/splits/{split}/tasks.json");
+        let manifest = format!("{}/splits/{split}/tasks.json", run_directory(run_id));
         let instruction = format!("instructions/{batch}/alpha.md");
         handoff(&pool, run_id, split, &[&manifest, &instruction]).await;
         handoff(&pool, run_id, report, &["report.md"]).await;
@@ -1206,5 +1265,61 @@ mod tests {
             .unwrap();
         assert!(view.files.iter().any(|file| file.path == "early.md"));
         assert!(!view.files.iter().any(|file| file.path == "future.md"));
+    }
+
+    #[tokio::test]
+    async fn each_ordinary_round_shows_only_its_selected_upstream_delivery() {
+        let pool = fixture().await;
+        let run_id = Uuid::new_v4();
+        run(&pool, run_id, &[("research", "report")]).await;
+        let (first, _) = execution(&pool, run_id, "research", "agent", 0).await;
+        let (second, _) = execution(&pool, run_id, "research", "agent", 1).await;
+        let (first_report, _) = execution(&pool, run_id, "report", "agent", 0).await;
+        let (second_report, _) = execution(&pool, run_id, "report", "agent", 1).await;
+        handoff(&pool, run_id, first, &["first.md"]).await;
+        handoff(&pool, run_id, second, &["second.md"]).await;
+        for (report, included, excluded) in [
+            (first_report, "first.md", "second.md"),
+            (second_report, "second.md", "first.md"),
+        ] {
+            let view = read_workflow_file_context(&pool, run_id, Some(report))
+                .await
+                .unwrap();
+            assert!(
+                view.files.iter().any(
+                    |file| file.path == included && file.role == WorkflowContextFileRole::Input
+                )
+            );
+            assert!(!view.files.iter().any(|file| file.path == excluded));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_retry_input_retains_the_exact_reused_source_iteration() {
+        let pool = fixture().await;
+        let original = Uuid::new_v4();
+        run(&pool, original, &[("research", "report")]).await;
+        let (source, _) = execution(&pool, original, "research", "agent", 5).await;
+        handoff(&pool, original, source, &["kept-research.md"]).await;
+        let retry = Uuid::new_v4();
+        run(&pool, retry, &[("research", "report")]).await;
+        sqlx::query("INSERT INTO workflow_result_reuse VALUES (?,'research',5,?)")
+            .bind(retry)
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (report, _) = execution(&pool, retry, "report", "agent", 0).await;
+        let view = read_workflow_file_context(&pool, retry, Some(report))
+            .await
+            .unwrap();
+        let input = view
+            .files
+            .iter()
+            .find(|file| file.path == "kept-research.md")
+            .unwrap();
+        assert_eq!(input.role, WorkflowContextFileRole::Input);
+        assert_eq!(input.source_node_execution_id, Some(source));
+        assert_eq!(input.source_run_id, original);
     }
 }

@@ -73,6 +73,7 @@ fn generate_types_content() -> String {
         server::routes::integrations::workflows::WorkflowInteractionResponse::decl(),
         server::workflow_runtime::management::PrepareWorkflowMainSessionRequest::decl(),
         server::workflow_runtime::management::WorkflowContextView::decl(),
+        server::workflow_runtime::management::WorkflowCoordinationEventView::decl(),
         server::workflow_runtime::management::WorkflowMainSessionView::decl(),
         server::workflow_runtime::management::WorkflowSubmissionScope::decl(),
         server::workflow_runtime::management::WorkflowSubmissionAction::decl(),

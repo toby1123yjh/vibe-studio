@@ -376,7 +376,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   const isInEditMode = editContext.isInEditMode;
 
   // Get todos from entries
-  const { todos, inProgressTodo } = useTodos(entries);
+  const { todos } = useTodos(entries);
 
   // Review comments context (optional - only available when ReviewProvider wraps this)
   const reviewContext = useReviewOptional();
@@ -1419,7 +1419,6 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
         getAgentBrandAttributes(effectiveExecutor)['data-agent-brand']
       }
       todos={todos}
-      inProgressTodo={inProgressTodo}
       executor={
         needsExecutorSelection
           ? {

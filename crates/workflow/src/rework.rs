@@ -29,7 +29,7 @@ pub struct ReworkPlan {
 
 /// None means all nodes. Explicit roots always include their potentially
 /// affected downstream closure, but actual dispatch still uses the runner's
-/// original Condition and per-incoming-iteration semantics.
+/// recorded Condition routes and complete effective inputs for each round.
 pub fn plan_rework(
     graph: &WorkflowGraph,
     roots: Option<&[String]>,

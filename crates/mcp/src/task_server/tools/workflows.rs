@@ -65,6 +65,10 @@ struct WorkflowSubmission {
     request_id: String,
     action: WorkflowAction,
     input_text: Option<String>,
+    #[schemars(
+        description = "Project-relative UTF-8 file with concrete retry/rework instructions. Runtime captures the content before accepting the new Run. Required for an automatic failed-node exception handover."
+    )]
+    instruction_path: Option<String>,
     #[serde(default)]
     material_paths: Vec<String>,
     #[schemars(
@@ -188,7 +192,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Accept an explicit user execution request asynchronously: initial start, exact failed-Node retry, or full/partial delivery rework. Runtime validates and schedules affected downstream Nodes. Return is acceptance, not completion. Preserve request_id on uncertain replies."
+        description = "Accept execution asynchronously: user-requested start/retry/rework, or exact failed-source retry/rework during a scoped node-exception handover. Use instruction_path for file-backed recovery instructions. Runtime validates and schedules affected downstream Nodes. Return is acceptance, not completion. Preserve request_id on uncertain replies."
     )]
     async fn workflow_submit(
         &self,
@@ -334,6 +338,34 @@ mod tests {
         assert_eq!(
             serde_json::to_value(request).unwrap()["scope"]["node_ids"][0],
             "report"
+        );
+    }
+
+    #[test]
+    fn exception_submission_preserves_instruction_file_and_exact_source_identity() {
+        let source_run = Uuid::new_v4();
+        let execution = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "request_id":"exception:one", "action":"retry",
+            "source_run_id":source_run,"source_node_execution_id":execution,
+            "instruction_path":".vibe-studio/workflows/flow/runs/run/instructions/one.md"
+        });
+        let request: WorkflowSubmission = serde_json::from_value(payload.clone()).unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        for key in [
+            "instruction_path",
+            "source_run_id",
+            "source_node_execution_id",
+        ] {
+            assert_eq!(serialized[key], payload[key]);
+        }
+        let schema = schemars::schema_for!(WorkflowSubmission);
+        let schema = serde_json::to_value(schema).unwrap();
+        assert!(
+            schema["properties"]["instruction_path"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("captures")
         );
     }
 

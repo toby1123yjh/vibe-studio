@@ -1961,6 +1961,7 @@ mod tests {
                 nodes: Vec::new(),
                 split_batches: Vec::new(),
                 handoffs: Vec::new(),
+                handover_events: Vec::new(),
                 delivery: None,
                 request_path: None,
                 runtime_view: None,

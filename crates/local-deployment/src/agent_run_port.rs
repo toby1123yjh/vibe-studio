@@ -1006,7 +1006,7 @@ impl LocalAgentRunPort {
             .map_err(port_database)?;
         if request.input.role != AgentRuntimeMessageRole::User {
             let authorized_handover: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM workflow_handover_events e JOIN workflow_runs r ON r.id=e.run_id JOIN workflow_attempts w ON w.id=r.attempt_id JOIN workflow_project_slots p ON p.run_id=r.id JOIN workflow_split_batches b ON b.id=e.batch_id JOIN node_executions n ON n.id=b.node_execution_id WHERE e.session_id=? AND e.agent_run_id=? AND e.run_attempt_id=? AND e.turn_id=? AND e.state='claimed' AND w.main_session_id=e.session_id AND r.status IN ('running','awaiting_human','awaiting_arena') AND b.state='accepted' AND b.dispatch_sha256 IS NULL AND n.status='succeeded' AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=r.id))",
+                "SELECT EXISTS(SELECT 1 FROM workflow_handover_events e JOIN workflow_runs r ON r.id=e.run_id JOIN workflow_attempts w ON w.id=r.attempt_id JOIN workflow_project_slots p ON p.run_id=r.id LEFT JOIN workflow_split_batches b ON b.id=e.batch_id LEFT JOIN node_executions n ON n.id=COALESCE(e.source_node_execution_id,b.node_execution_id) WHERE e.session_id=? AND e.agent_run_id=? AND e.run_attempt_id=? AND e.turn_id=? AND e.state='claimed' AND w.main_session_id=e.session_id AND n.run_id=r.id AND ((e.source_node_execution_id IS NULL AND b.run_id=r.id AND r.status IN ('running','awaiting_human','awaiting_arena') AND r.error_text IS NULL AND b.state='accepted' AND b.dispatch_sha256 IS NULL AND n.status='succeeded') OR (e.source_node_execution_id IS NOT NULL AND n.status='failed' AND r.status='failed' AND w.latest_run_id=r.id)) AND NOT EXISTS(SELECT 1 FROM workflow_stop_intents i WHERE i.run_id=r.id))",
             ).bind(request.session_id).bind(request.agent_run_id).bind(attempt.run_attempt_id).bind(request.turn_id)
                 .fetch_one(&mut *tx).await.map_err(port_database)?;
             if request.input.role != AgentRuntimeMessageRole::System || !authorized_handover {
@@ -4354,7 +4354,7 @@ mod tests {
             CREATE TABLE session_project_memberships (session_id BLOB PRIMARY KEY, project_id BLOB NOT NULL);
             CREATE TABLE workflows (id BLOB PRIMARY KEY, project_id BLOB);
             CREATE TABLE tasks (id BLOB PRIMARY KEY, project_id BLOB NOT NULL);
-            CREATE TABLE workflow_attempts (id BLOB PRIMARY KEY,workflow_id BLOB,workspace_id BLOB,main_session_id BLOB,task_id BLOB);
+            CREATE TABLE workflow_attempts (id BLOB PRIMARY KEY,workflow_id BLOB,workspace_id BLOB,main_session_id BLOB,task_id BLOB,latest_run_id BLOB);
             CREATE TABLE workflow_attempt_sources (attempt_id BLOB PRIMARY KEY,template_id BLOB);
             CREATE TABLE workflow_main_session_bindings (
                 session_id BLOB PRIMARY KEY,workflow_id BLOB NOT NULL,prepared_issue_id BLOB,
@@ -5031,6 +5031,114 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!(binding.token_hash, Some(workflow_mcp::token_hash(&token)));
+        assert_eq!(
+            binding.actual_main_run_attempt_id,
+            Some(attempt.run_attempt_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_exception_token_requires_exact_failed_source_and_current_unstopped_run() {
+        let port = LocalAgentRunPort::new(setup_runtime_db().await);
+        let (mut request, attempt) = persisted_codex_run(&port.db).await;
+        bind_workflow_main(&port, &request, &attempt).await;
+        request.input.role = AgentRuntimeMessageRole::System;
+        sqlx::query("UPDATE agent_turns SET input_message=? WHERE id=?")
+            .bind(Json(&request.input))
+            .bind(request.turn_id)
+            .execute(&port.db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE agent_runs SET request_envelope=? WHERE id=?")
+            .bind(Json(&request))
+            .bind(request.agent_run_id)
+            .execute(&port.db.pool)
+            .await
+            .unwrap();
+        sqlx::raw_sql("CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,attempt_id BLOB,status TEXT,error_text TEXT); CREATE TABLE workflow_project_slots(run_id BLOB); CREATE TABLE workflow_split_batches(id BLOB PRIMARY KEY,run_id BLOB,node_execution_id BLOB,state TEXT,dispatch_sha256 TEXT); CREATE TABLE node_executions(id BLOB PRIMARY KEY,run_id BLOB,status TEXT); CREATE TABLE workflow_handover_events(session_id BLOB,agent_run_id BLOB,run_attempt_id BLOB,turn_id BLOB,state TEXT,run_id BLOB,batch_id BLOB,source_node_execution_id BLOB); CREATE TABLE workflow_stop_intents(run_id BLOB);")
+            .execute(&port.db.pool).await.unwrap();
+        let (workflow_id,project_id):(Uuid,Uuid)=sqlx::query_as("SELECT w.id,w.project_id FROM workflows w JOIN workflow_main_session_bindings b ON b.workflow_id=w.id WHERE b.session_id=?")
+            .bind(request.session_id).fetch_one(&port.db.pool).await.unwrap();
+        let task_id = Uuid::new_v4();
+        let instance_id = Uuid::new_v4();
+        let source = Uuid::new_v4();
+        let node = Uuid::new_v4();
+        sqlx::query("INSERT INTO tasks VALUES (?,?)")
+            .bind(task_id)
+            .bind(project_id)
+            .execute(&port.db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO workflow_attempts(id,workflow_id,workspace_id,main_session_id,task_id,latest_run_id) VALUES (?,?,?,?,?,?)")
+            .bind(instance_id).bind(workflow_id).bind(request.workspace.workspace_id).bind(request.session_id).bind(task_id).bind(source).execute(&port.db.pool).await.unwrap();
+        sqlx::query("INSERT INTO workflow_runs(id,attempt_id,status) VALUES (?,?,'failed')")
+            .bind(source)
+            .bind(instance_id)
+            .execute(&port.db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO workflow_project_slots VALUES (?)")
+            .bind(source)
+            .execute(&port.db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO node_executions VALUES (?,?,'failed')")
+            .bind(node)
+            .bind(source)
+            .execute(&port.db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO workflow_handover_events(session_id,agent_run_id,run_attempt_id,turn_id,state,run_id,source_node_execution_id) VALUES (?,?,?,?,'claimed',?,?)")
+            .bind(request.session_id).bind(request.agent_run_id).bind(attempt.run_attempt_id).bind(request.turn_id).bind(source).bind(node).execute(&port.db.pool).await.unwrap();
+        for mutation in [
+            "UPDATE workflow_runs SET status='running'",
+            "UPDATE node_executions SET status='succeeded'",
+            "UPDATE workflow_attempts SET latest_run_id=NULL",
+            "UPDATE workflow_handover_events SET turn_id=NULL",
+            "INSERT INTO workflow_stop_intents SELECT id FROM workflow_runs",
+        ] {
+            sqlx::query(mutation).execute(&port.db.pool).await.unwrap();
+            assert!(
+                port.issue_workflow_mcp_token(&request, &attempt)
+                    .await
+                    .is_err(),
+                "{mutation}"
+            );
+            sqlx::query("UPDATE workflow_runs SET status='failed'")
+                .execute(&port.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE node_executions SET status='failed'")
+                .execute(&port.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE workflow_attempts SET latest_run_id=?")
+                .bind(source)
+                .execute(&port.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE workflow_handover_events SET turn_id=?")
+                .bind(request.turn_id)
+                .execute(&port.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("DELETE FROM workflow_stop_intents")
+                .execute(&port.db.pool)
+                .await
+                .unwrap();
+        }
+        let (token, _) = port
+            .issue_workflow_mcp_token(&request, &attempt)
+            .await
+            .unwrap()
+            .unwrap();
+        let binding =
+            WorkflowMainSessionBinding::find_by_session_id(&port.db.pool, request.session_id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(binding.token_hash, Some(workflow_mcp::token_hash(&token)));
+        assert_eq!(binding.source_message_id, None);
         assert_eq!(
             binding.actual_main_run_attempt_id,
             Some(attempt.run_attempt_id)

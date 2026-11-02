@@ -1454,6 +1454,16 @@
         "attemptB": "Attempt B"
       }
     },
+    "coordination": {
+      "pending": "En attente de l’Agent principal",
+      "claimed": "L’Agent principal a pris le relais",
+      "completed": "Exception traitée par l’Agent principal",
+      "failed": "L’Agent principal n’a pas pu terminer",
+      "cancelled": "Relais vers l’Agent principal arrêté",
+      "unknown": "Coordination de l’Agent principal",
+      "outcomeHint": "Le résultat d’origine est conservé. Suivez les exécutions suivantes pour la livraison.",
+      "openMainSession": "Ouvrir la conversation principale d’origine"
+    },
     "split": {
       "output": "Sortie",
       "defaultPrompt": "Divisez le travail entrant en sous-tâches indépendantes. Écrivez tasks.json et un fichier de consignes par sous-tâche dans le répertoire de contrôle du workflow. Indiquez les dépendances et les fichiers sources concernés.",

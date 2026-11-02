@@ -281,6 +281,7 @@ async function mockManagement(page: Page, options: MockOptions = {}) {
         nodes: [],
         split_batches: [],
         handoffs: [],
+        handover_events: [],
         delivery: null,
         request_path: null,
       } satisfies WorkflowRunResponse);

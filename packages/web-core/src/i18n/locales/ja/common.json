@@ -1454,6 +1454,16 @@
         "attemptB": "Attempt B"
       }
     },
+    "coordination": {
+      "pending": "メイン Agent を待機中",
+      "claimed": "メイン Agent が引き継ぎました",
+      "completed": "メイン Agent が例外を処理しました",
+      "failed": "メイン Agent が処理を完了できませんでした",
+      "cancelled": "メイン Agent への引き継ぎを停止しました",
+      "unknown": "メイン Agent の調整",
+      "outcomeHint": "元の実行結果は保持されます。納品の進捗は後続の実行で確認してください。",
+      "openMainSession": "元のメイン会話を開く"
+    },
     "split": {
       "output": "出力",
       "defaultPrompt": "入力作業を独立したサブタスクに分割してください。ワークフロー制御ディレクトリに tasks.json と各サブタスクの指示ファイルを作成し、依存関係と関連するソースファイルを記載してください。",

@@ -445,6 +445,7 @@ async fn submit_run(
                 WorkflowSubmissionAction::Start
             },
             input_text: Some(request.input_text),
+            instruction_path: None,
             material_paths: request.material_paths,
             source_run_id: attempt.latest_run_id,
             source_node_execution_id: None,

@@ -644,6 +644,12 @@ async fn setup_workflow_pool() -> SqlitePool {
     .execute(&pool)
     .await
     .expect("apply file-driven workflow fixture schema");
+    sqlx::raw_sql(include_str!(
+        "../../db/migrations/20261102000000_workflow_node_coordination.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("apply workflow node coordination fixture schema");
     sqlx::query("INSERT INTO fixture_project_root(directory_path) VALUES (?)")
         .bind(project_directories.path().to_string_lossy().as_ref())
         .execute(&pool)
@@ -1238,6 +1244,15 @@ async fn write_fake_agent_delivery(
     Ok(())
 }
 
+async fn fixture_run_directory(pool: &SqlitePool, run_id: Uuid) -> Result<String, ApiError> {
+    let workflow_id: Uuid = sqlx::query_scalar("SELECT workflow_id FROM workflow_runs WHERE id=?")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await?;
+    workflow::files::run_relative_dir(&workflow_id.to_string(), &run_id.to_string())
+        .map_err(|error| ApiError::BadRequest(error.to_string()))
+}
+
 async fn write_fake_delivery(
     pool: &SqlitePool,
     run_id: Uuid,
@@ -1246,8 +1261,9 @@ async fn write_fake_delivery(
     output: &str,
 ) -> Result<(WorkflowFileRef, WorkflowFileRef), ApiError> {
     let root = fixture_workspace_root(pool, workspace_id).await?;
-    let summary_path = format!(".vibe-kanban/workflows/{run_id}/results/{execution_id}.md");
-    let index_path = format!(".vibe-kanban/workflows/{run_id}/handoffs/{execution_id}.json");
+    let directory = fixture_run_directory(pool, run_id).await?;
+    let summary_path = format!("{directory}/results/{execution_id}.md");
+    let index_path = format!("{directory}/handoffs/{execution_id}.json");
     let handoff = WorkflowHandoff {
         schema_version: 1,
         run_id: run_id.to_string(),
@@ -1297,10 +1313,8 @@ async fn accepted_delivery_contents(
     .await
     .expect("successful execution has an accepted handoff");
     assert_eq!(accepted_run_id, run_id);
-    assert_eq!(
-        path,
-        format!(".vibe-kanban/workflows/{run_id}/handoffs/{execution_id}.json")
-    );
+    let directory = fixture_run_directory(pool, run_id).await.unwrap();
+    assert_eq!(path, format!("{directory}/handoffs/{execution_id}.json"));
     let workspace_id: Uuid =
         sqlx::query_scalar("SELECT workspace_id FROM workflow_runs WHERE id=?")
             .bind(run_id)
@@ -1347,8 +1361,8 @@ async fn assert_run_delivery(pool: &SqlitePool, run: &WorkflowRunResponse, expec
         .min_by_key(|node| node.iteration)
         .expect("successful workflow has a completed End execution");
     let handoff = format!(
-        "Read workflow handoff: `.vibe-kanban/workflows/{}/handoffs/{}.json`",
-        run.id, end.id
+        "Read workflow handoff: `.vibe-studio/workflows/{}/runs/{}/handoffs/{}.json`",
+        run.workflow_id, run.id, end.id
     );
     assert_eq!(run.output_text.as_deref(), Some(handoff.as_str()));
     assert_eq!(
@@ -3822,14 +3836,13 @@ async fn workflow_runner_agent_node_uses_main_workspace_and_stores_session_outpu
         .find(|node| node.node_id == "start")
         .unwrap();
     assert!(agent_requests[0].prompt.contains(&format!(
-        ".vibe-kanban/workflows/{}/handoffs/{}.json",
-        run.id, start.id
+        ".vibe-studio/workflows/{}/runs/{}/handoffs/{}.json",
+        run.workflow_id, run.id, start.id
     )));
-    assert!(
-        agent_requests[0]
-            .prompt
-            .contains(&format!(".vibe-kanban/workflows/{}/request.md", run.id))
-    );
+    assert!(agent_requests[0].prompt.contains(&format!(
+        ".vibe-studio/workflows/{}/runs/{}/request.md",
+        run.workflow_id, run.id
+    )));
     assert!(
         !agent_requests[0]
             .prompt
@@ -3857,8 +3870,8 @@ async fn workflow_runner_agent_node_uses_main_workspace_and_stores_session_outpu
         Some("implemented feature")
     );
     assert!(agent_requests[0].prompt.contains(&format!(
-        ".vibe-kanban/workflows/{}/handoffs/{}.json",
-        run.id, agent_node.id
+        ".vibe-studio/workflows/{}/runs/{}/handoffs/{}.json",
+        run.workflow_id, run.id, agent_node.id
     )));
     assert_ne!(agent_node.id, execution_process_id);
     assert_eq!(
@@ -3947,8 +3960,8 @@ async fn workflow_reconcile_completed_agent_process_resumes_downstream_nodes() {
         .find(|node| node.node_id == "agent-a")
         .unwrap();
     assert!(requests[1].prompt.contains(&format!(
-        ".vibe-kanban/workflows/{}/handoffs/{}.json",
-        running.id, first_node.id
+        ".vibe-studio/workflows/{}/runs/{}/handoffs/{}.json",
+        running.workflow_id, running.id, first_node.id
     )));
     assert!(!requests[1].prompt.contains("agent A done"));
     assert_eq!(
@@ -4034,7 +4047,7 @@ async fn workflow_reconcile_failed_agent_process_fails_run_and_skips_downstream(
 }
 
 #[tokio::test]
-async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
+async fn workflow_runner_fan_in_consumes_both_inputs_in_one_execution() {
     let pool = setup_workflow_pool().await;
     let project_id = Uuid::new_v4();
     let issue_id = Uuid::new_v4();
@@ -4066,7 +4079,7 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
             issue_id,
             workspace_id: None,
             trigger_source: "manual".to_string(),
-            input_text: "Fan-in should trigger twice".to_string(),
+            input_text: "Review both branch deliveries together".to_string(),
         },
         &workspace,
         &agent,
@@ -4075,10 +4088,9 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
     .expect("trigger workflow run");
 
     let agent_requests = agent.requests();
-    assert_eq!(agent_requests.len(), 2);
+    assert_eq!(run.status, WorkflowRunStatus::Succeeded);
+    assert_eq!(agent_requests.len(), 1);
     assert_eq!(agent_requests[0].node_id, "review");
-    assert_eq!(agent_requests[1].node_id, "review");
-    assert_eq!(agent_requests[0].session_id, agent_requests[1].session_id);
     assert!(
         agent_requests[0]
             .prompt
@@ -4089,17 +4101,20 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
             .prompt
             .contains("Review the current worktree.")
     );
-    assert_eq!(
-        agent_requests[0]
-            .prompt
-            .split("\n\n## Required file delivery\n")
-            .next(),
-        agent_requests[1]
-            .prompt
-            .split("\n\n## Required file delivery\n")
-            .next()
-    );
-    assert_ne!(agent_requests[0].prompt, agent_requests[1].prompt);
+    for source in ["scan", "summarize"] {
+        let execution = run
+            .nodes
+            .iter()
+            .find(|node| node.node_id == source)
+            .unwrap();
+        let handoff = run
+            .handoffs
+            .iter()
+            .find(|handoff| handoff.node_execution_id == execution.id)
+            .unwrap();
+        assert!(agent_requests[0].prompt.contains(&handoff.handoff_path));
+        assert!(agent_requests[0].prompt.contains(&execution.id.to_string()));
+    }
     for request in &agent_requests {
         let execution = run
             .nodes
@@ -4107,8 +4122,8 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
             .find(|node| node.node_id == "review" && node.iteration == request.iteration)
             .unwrap();
         assert!(request.prompt.contains(&format!(
-            ".vibe-kanban/workflows/{}/handoffs/{}.json",
-            run.id, execution.id
+            ".vibe-studio/workflows/{}/runs/{}/handoffs/{}.json",
+            workflow_id, run.id, execution.id
         )));
         assert_eq!(
             accepted_delivery_contents(&pool, run.id, execution.id).await,
@@ -4122,7 +4137,7 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
         .filter(|node| node.node_id == "review")
         .map(|node| node.iteration)
         .collect::<Vec<_>>();
-    assert_eq!(review_iterations, vec![0, 1]);
+    assert_eq!(review_iterations, vec![0]);
 
     let end_iterations = run
         .nodes
@@ -4130,7 +4145,162 @@ async fn workflow_runner_fan_in_triggers_same_agent_session_multiple_times() {
         .filter(|node| node.node_id == "end")
         .map(|node| node.iteration)
         .collect::<Vec<_>>();
-    assert_eq!(end_iterations, vec![0, 1]);
+    assert_eq!(end_iterations, vec![0]);
+}
+
+#[tokio::test]
+async fn workflow_runner_fan_in_waits_for_late_delivery_and_ignores_duplicate_completion() {
+    struct DelayedBranchExecutor {
+        pool: SqlitePool,
+        requests: Mutex<Vec<AgentNodeRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowAgentExecutor for DelayedBranchExecutor {
+        async fn run_agent(
+            &self,
+            request: AgentNodeRequest,
+        ) -> Result<AgentNodeExecution, ApiError> {
+            self.requests.lock().unwrap().push(request.clone());
+            let session_id = request
+                .session_id
+                .expect("each node has its stable session");
+            if request.node_id == "summarize" {
+                return Ok(AgentNodeExecution::Started {
+                    session_id,
+                    orchestration_node_execution_id: request.orchestration_node_execution_id,
+                    agent_run_id: Uuid::new_v4(),
+                    output_text: None,
+                });
+            }
+            let output = format!("{} delivered", request.node_id);
+            write_fake_agent_delivery(&self.pool, &request, &output).await?;
+            Ok(AgentNodeExecution::Completed {
+                session_id,
+                orchestration_node_execution_id: request.orchestration_node_execution_id,
+                agent_run_id: Uuid::new_v4(),
+                output_text: output,
+            })
+        }
+    }
+
+    let pool = setup_workflow_pool().await;
+    let project_id = Uuid::new_v4();
+    let workflow_id = Uuid::new_v4();
+    let workspace_id = Uuid::new_v4();
+    insert_project(&pool, project_id).await;
+    let mut graph: Value = serde_json::from_str(&fan_in_agent_graph_json()).unwrap();
+    for node in graph["nodes"].as_array_mut().unwrap() {
+        if matches!(node["id"].as_str(), Some("scan" | "summarize")) {
+            node["type"] = json!("agent");
+            node["data"] = json!({"display_name": node["id"], "prompt_template": "Save this branch's findings."});
+        }
+    }
+    sqlx::query("INSERT INTO workflows(id,source,project_id,name,graph_json) VALUES (?,'project',?,'Delayed fan-in',?)")
+        .bind(workflow_id).bind(project_id).bind(graph.to_string()).execute(&pool).await.unwrap();
+    let workspace = FakeWorkspaceResolver::new(&pool, workspace_id);
+    let agent = DelayedBranchExecutor {
+        pool: pool.clone(),
+        requests: Mutex::new(Vec::new()),
+    };
+    let running = trigger_workflow_run(
+        &pool,
+        workflow_id,
+        TriggerWorkflowRequest {
+            issue_id: Uuid::new_v4(),
+            workspace_id: None,
+            trigger_source: "manual".into(),
+            input_text: "Combine both branches".into(),
+        },
+        &workspace,
+        &agent,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(running.status, WorkflowRunStatus::Running);
+    assert_eq!(
+        node_status(&running.nodes, "scan"),
+        NodeExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        node_status(&running.nodes, "summarize"),
+        NodeExecutionStatus::Running
+    );
+    assert_eq!(
+        node_status(&running.nodes, "review"),
+        NodeExecutionStatus::Pending
+    );
+    assert_eq!(agent.requests.lock().unwrap().len(), 2);
+    let early = running
+        .handoffs
+        .iter()
+        .find(|handoff| {
+            running
+                .nodes
+                .iter()
+                .any(|node| node.node_id == "scan" && node.id == handoff.node_execution_id)
+        })
+        .unwrap();
+
+    let boundary = FakeCanonicalReconciliationBoundary::completed("late branch delivered");
+    let completed = reconcile_workflow_run_with_arena_and_boundary(
+        &pool,
+        running.id,
+        &agent,
+        &NoopWorkflowArenaCreator,
+        &boundary,
+    )
+    .await
+    .unwrap();
+    assert_eq!(completed.status, WorkflowRunStatus::Succeeded);
+    let requests = agent.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[2].node_id, "review");
+    assert!(requests[2].prompt.contains(&early.handoff_path));
+    let late = completed
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "summarize")
+        .unwrap();
+    let late_handoff = completed
+        .handoffs
+        .iter()
+        .find(|handoff| handoff.node_execution_id == late.id)
+        .unwrap();
+    assert!(requests[2].prompt.contains(&late_handoff.handoff_path));
+    assert_eq!(
+        accepted_delivery_contents(&pool, completed.id, early.node_execution_id).await,
+        vec!["scan delivered"]
+    );
+
+    let repeated = reconcile_workflow_run_with_arena_and_boundary(
+        &pool,
+        running.id,
+        &agent,
+        &NoopWorkflowArenaCreator,
+        &boundary,
+    )
+    .await
+    .unwrap();
+    assert_eq!(repeated.status, WorkflowRunStatus::Succeeded);
+    assert_eq!(agent.requests.lock().unwrap().len(), 3);
+    assert_eq!(
+        repeated
+            .nodes
+            .iter()
+            .filter(|node| node.node_id == "review")
+            .count(),
+        1
+    );
+    assert_eq!(
+        repeated
+            .nodes
+            .iter()
+            .filter(|node| node.node_id == "end")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -4254,8 +4424,8 @@ async fn workflow_arena_node_creates_group_and_waits_for_winner() {
         .find(|node| node.node_id == "plan")
         .unwrap();
     assert!(arena_input.contains(&format!(
-        ".vibe-kanban/workflows/{}/handoffs/{}.json",
-        run.id, plan.id
+        ".vibe-studio/workflows/{}/runs/{}/handoffs/{}.json",
+        run.workflow_id, run.id, plan.id
     )));
     assert!(!arena_input.contains("Plan: Build draw-more workflow"));
     assert_eq!(
@@ -4613,8 +4783,8 @@ async fn workflow_human_approve_resumes_downstream_nodes() {
         .find(|node| node.node_id == "gate")
         .unwrap();
     assert!(approved_prompt.contains(&format!(
-        ".vibe-kanban/workflows/{}/handoffs/{}.json",
-        resumed.id, gate.id
+        ".vibe-studio/workflows/{}/runs/{}/handoffs/{}.json",
+        resumed.workflow_id, resumed.id, gate.id
     )));
     assert!(!approved_prompt.contains("Ship the plan"));
     assert_eq!(

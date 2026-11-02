@@ -1,0 +1,105 @@
+---
+title: "工作流体验优化：流转与主子 Agent 协调"
+description: "基于 DynaFlow 及其参考工作流引擎，研究用户已创建工作流的自动推进、文件交接、结果反馈和异常接力。"
+---
+
+## 本次目标
+
+你先创建工作流、配置节点和执行者。Vibe Studio 负责让这些节点可靠接力，主 Agent 在工作流内部组织分工、检查成果和处理问题，用户能看懂当前进展、等待原因和下一步。
+
+本目录集中维护本轮工作流体验优化的研究、方案和实施记录。两个参考仓库的本地克隆、源码入口整理和[工作流引擎能力分析](./engine-analysis.mdx)已完成；依据已确认的[文件交接与目录设计](./file-handoff-design.mdx)完成了第一版代码，范围与验证记录见[实施文档](./implementation.mdx)。
+
+能力分析包括串并行与流水线、主 Agent 接收结果、文件交接、失败、停止和恢复，并对照当前 Vibe Studio 的触发规则与主 Agent 接力范围，提出下一轮优化顺序。
+
+本轮核心已收敛为：正常执行通过文件交付自动流转；执行或交付异常交给主 Agent 判断，再由 Runtime 执行决定。第一版已接入新目录、普通节点汇合、异常处理和原会话入口，并通过针对性的单元、集成和浏览器测试。检查结果、既存 lint 阻塞与真实 CLI 验证边界统一记录在[实施文档](./implementation.mdx)；跨服务重启自动接管后放。
+
+## 已确认的边界
+
+- 工作流由用户主动创建。普通业务任务和单智能体会话不获得生成、拼装或构造工作流的能力。
+- 主 Agent 的协调能力限定于当前工作流的执行上下文，遵守已配置节点、执行者和流程范围。
+- 参考论文中的分工、成果检查和后续处理机制；不把论文从普通对话动态生成任意工作流的入口引入产品。
+- Runtime 负责真实调度、依赖等待、启动、停止和恢复；主 Agent 提交处理决定，不能直接改数据库中的生命周期状态。
+- 需求、材料、工作说明、成果和交接继续以项目文件为载体。文件存在或被修改，不代表执行成功，也不自动触发执行。
+- 工作流控制文件放在项目内的 `.vibe-studio/workflows/<工作流ID>/runs/<运行ID>/` 下，按节点执行编号保存交付清单和交接说明。工作流多次运行、节点重试分别保留交付。
+- 执行或交付异常统一向主 Agent 提供真实现场，由它判断补交、继续工作、重做或询问用户，Runtime 受理执行。保留其他成功成果，依赖这些成果的下游在验收通过后继续。
+- 异常进入当前工作流的原主会话；主 Agent 通过已有工作流管理工具提交决定，Runtime 返回受理、等待或拒绝结果。正常成功的节点仍由 Runtime 自动接力。
+- 串行在上游交付验收通过后继续；并行汇总等齐本轮所需交付，条件分支只等待实际选择的路径，同一轮汇总只启动一次。
+- 拆分工作项属于工作流内部，沿用已有内部执行与会话关联，不额外创建看板业务任务。
+- 聊天、权限请求、工具记录和交付物查看复用现有会话能力。画布补充简短协调提示、异常材料和原主会话入口，点击未启动节点只查看配置与执行信息。
+- 沿用已有停止、会话等待和避免重复执行的基本约束，不为每种错误增加固定处理分支；跨服务重启自动接管不列入本轮核心范围。
+
+## 目录
+
+```text
+docs/future/workflow-experience/
+├─ README.mdx                 本轮研究入口、边界与源码索引
+├─ engine-analysis.mdx        两个引擎的源码能力、差异与改进建议
+├─ file-handoff-design.mdx    已确认的目录、文件接力、异常受理及交互建议
+├─ implementation.mdx         本轮实施范围、验收场景与验证记录
+├─ .gitignore                 忽略本地第三方源码
+└─ references/
+   ├─ dynaflow/               论文官方实现
+   └─ claude-code/            参考引擎所在的完整仓库
+      └─ packages/workflow-engine/
+```
+
+两个项目均采用 `--depth 1 --single-branch --no-tags` 克隆，未安装依赖或运行构建。`references/` 不提交到 Vibe Studio 仓库；本文记录来源和当前版本，便于后续复核。
+
+## 参考项目与版本
+
+克隆日期：2026-11-01。以下版本是本次研究快照，更新参考仓库后应同步记录新的提交。
+
+| 项目               | 仓库                                                                            | 分支   | 当前提交                                   |
+| ------------------ | ------------------------------------------------------------------------------- | ------ | ------------------------------------------ |
+| DynaFlow           | [amiya-special/Dynaflow](https://github.com/amiya-special/Dynaflow)             | `main` | `7451639d197ef844b4157cf40eadac68e9eba8ca` |
+| 工作流引擎所在项目 | [claude-code-best/claude-code](https://github.com/claude-code-best/claude-code) | `main` | `8d80e740f764be358e265eed4250606c78fca579` |
+
+论文：[DynaFlow: Learning Free-Form Multi-Agent Orchestration](https://arxiv.org/html/2610.34467v1)。
+
+第二个仓库是 `claude-code-best` 维护的项目，其工作流引擎包名为 `@claude-code-best/workflow-engine`。它不是 Anthropic 官方 Claude Code 仓库。DynaFlow 的 `workflow_runtime/src/LICENSE` 保留了 `claude-code-best` 的 MIT 版权声明，其核心引擎结构和实现可与第二个项目对应。后续如复用代码，需保留相应许可和归属。
+
+## DynaFlow 源码阅读入口
+
+| 文件                                                                               | 重点研究                                                       |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [工作流接口说明](./references/dynaflow/workflow_runtime/workflow_prompt.txt)       | 主 Agent 可以提交什么、怎样获取真实结果，以及完成和交付的区别  |
+| [hooks.ts](./references/dynaflow/workflow_runtime/src/engine/hooks.ts)             | `agent`、`parallel`、`pipeline` 的推进方式，失败与取消如何传递 |
+| [runWorkflow.ts](./references/dynaflow/workflow_runtime/src/engine/runWorkflow.ts) | 执行生命周期、阶段结束事件和最终交付校验                       |
+| [journal.ts](./references/dynaflow/workflow_runtime/src/engine/journal.ts)         | 并行结果记录、调用顺序和重放匹配                               |
+| [ports.ts](./references/dynaflow/workflow_runtime/src/ports.ts)                    | 引擎与实际 Agent 执行、日志和进度通知的边界                    |
+| [workflow.py](./references/dynaflow/src/dynaflow/workflow.py)                      | 主 Agent 工具循环、后台执行、结果查询与停止                    |
+
+研究时需要区分已实现机制与适用边界：同脚本重放会返回已记录的失败结果，修改脚本会使旧日志失效。日志重放不能直接证明项目文件和真实 CLI 操作具备可靠恢复或去重能力。
+
+## 参考引擎源码阅读入口
+
+| 文件                                                                                          | 重点研究                                           |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| [引擎包说明](./references/claude-code/packages/workflow-engine/README.md)                     | 独立引擎的职责和接入方式；具体行为以源码为准       |
+| [ports.ts](./references/claude-code/packages/workflow-engine/src/ports.ts)                    | Agent 执行接口、后台执行生命周期、停止和持久记录   |
+| [runWorkflow.ts](./references/claude-code/packages/workflow-engine/src/engine/runWorkflow.ts) | 串联执行、阶段收尾及执行完成事件                   |
+| [hooks.ts](./references/claude-code/packages/workflow-engine/src/engine/hooks.ts)             | 串并行、结果传递及异常处理                         |
+| [service.ts](./references/claude-code/src/workflow/service.ts)                                | 后台启动、恢复、状态存储与宿主集成                 |
+| [notifications.ts](./references/claude-code/src/workflow/notifications.ts)                    | 执行结果怎样通知主会话；区分通知和实际启动主 Agent |
+| [工作流使用说明](./references/claude-code/docs/features/workflow-scripts.md)                  | 用户怎样观察进度、读取结果和控制执行               |
+
+## 对照 Vibe Studio 的研究重点
+
+| 问题                         | 当前源码入口                                                                                                                                                                                             | 需要形成的结论                                                    |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 普通节点怎样自动接力         | [planner.rs](../../../crates/workflow/src/planner.rs)、[runner.rs](../../../crates/server/src/workflow_runtime/runner.rs)                                                                                | 依赖成功、交接有效后，谁受理并启动下一步                          |
+| 拆分工作怎样并行、串行和汇总 | [dispatch.rs](../../../crates/workflow/src/dispatch.rs)、[batch_runtime.rs](../../../crates/server/src/workflow_runtime/batch_runtime.rs)                                                                | 明确阶段屏障与逐项推进的差别，以及实际适用场景                    |
+| 什么时候请主 Agent 处理      | [handover.rs](../../../crates/server/src/workflow_runtime/handover.rs)                                                                                                                                   | 已受理拆分的分工与真实执行、交付异常；正常成功不增加主 Agent 调用 |
+| 主 Agent 的决定怎样真正执行  | [management.rs](../../../crates/server/src/workflow_runtime/management.rs)                                                                                                                               | 在既定流程范围内受理继续、重试、复核或等待用户等决定              |
+| 下游怎样读取准确成果         | [file_handoff.rs](../../../crates/server/src/workflow_runtime/file_handoff.rs)、[file_context.rs](../../../crates/server/src/workflow_runtime/file_context.rs)                                           | 成果文件与源执行绑定，缺失或无效成果不能被当作成功输入            |
+| 页面怎样解释正在发生什么     | [workflowRuntimeView.ts](../../../packages/web-core/src/features/workflow/model/workflowRuntimeView.ts)、[workflowRunView.ts](../../../packages/web-core/src/features/workflow/model/workflowRunView.ts) | 用户能看懂当前步骤、等待原因、失败影响、主 Agent 的处理和交付物   |
+
+优先走通一个具体场景：A、B 并行执行，A 成功而 B 失败；保留 A 成果，C 汇总等待；主 Agent 获得 B 的真实错误和材料，在允许范围内决定后续处理；B 成功且交接有效后，C 自动读取 A、B 的成果继续。
+
+需要同时核对用户停止、服务重启、重复结果通知、主会话忙碌和成果文件失效时的行为。研究结论应分别注明源码证据、建议改动和实际验证范围。
+
+## 与已有文档的关系
+
+- [文件驱动工作流 P0](../ai-workflow/p0-file-driven-workflow/README.mdx)：已实现的文件交接、拆分分工、批次调度与验收基线。
+- [多 Agent 工作流交互](../multi-agent-workflow-ux/README.mdx)：已有画布、共享会话浮框及交付物查看设计。
+- 本目录集中维护新一轮流转和体验优化，不把此前讨论的新增 Node、替换引擎或开放动态构造工作流当作已批准实施方案。

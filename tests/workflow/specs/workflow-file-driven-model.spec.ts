@@ -1,11 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from '@playwright/test';
 import type {
   WorkflowRunResponse,
   WorkflowSplitBatchView,
   WorkflowSplitSubtaskView,
-} from "../../../shared/types";
-import type { WorkflowGraph } from "../../../packages/web-core/src/features/workflow/model/workflowGraph";
-import { getWorkflowSplitScopes } from "../../../packages/web-core/src/features/workflow/model/workflowSplitScope";
+} from '../../../shared/types';
+import type { WorkflowGraph } from '../../../packages/web-core/src/features/workflow/model/workflowGraph';
+import { getWorkflowSplitScopes } from '../../../packages/web-core/src/features/workflow/model/workflowSplitScope';
 import {
   buildWorkflowPartialSummarySubmission,
   canRequestWorkflowPartialSummary,
@@ -13,43 +13,43 @@ import {
   getWorkflowSplitNodeProgress,
   getWorkflowSplitProgress,
   getWorkflowSplitStages,
-} from "../../../packages/web-core/src/features/workflow/model/workflowRuntimeView";
-import { getWorkflowNodeCatalogSections } from "../../../packages/web-core/src/features/workflow/model/workflowNodeCatalog";
+} from '../../../packages/web-core/src/features/workflow/model/workflowRuntimeView';
+import { getWorkflowNodeCatalogSections } from '../../../packages/web-core/src/features/workflow/model/workflowNodeCatalog';
 
 function graph(): WorkflowGraph {
   return {
     version: 2,
     nodes: [
-      { id: "start", type: "start", data: {} },
-      { id: "split", type: "task_splitter", data: {} },
-      { id: "writer", type: "agent", data: {} },
-      { id: "reviewer", type: "agent", data: {} },
-      { id: "summary", type: "agent", data: {} },
-      { id: "end", type: "end", data: {} },
+      { id: 'start', type: 'start', data: {} },
+      { id: 'split', type: 'task_splitter', data: {} },
+      { id: 'writer', type: 'agent', data: {} },
+      { id: 'reviewer', type: 'agent', data: {} },
+      { id: 'summary', type: 'agent', data: {} },
+      { id: 'end', type: 'end', data: {} },
     ],
     edges: [
-      { id: "s", source: "start", target: "split", type: "default" },
-      { id: "w", source: "split", target: "writer", type: "default" },
-      { id: "r", source: "split", target: "reviewer", type: "default" },
-      { id: "ws", source: "writer", target: "summary", type: "default" },
-      { id: "rs", source: "reviewer", target: "summary", type: "default" },
-      { id: "e", source: "summary", target: "end", type: "default" },
+      { id: 's', source: 'start', target: 'split', type: 'default' },
+      { id: 'w', source: 'split', target: 'writer', type: 'default' },
+      { id: 'r', source: 'split', target: 'reviewer', type: 'default' },
+      { id: 'ws', source: 'writer', target: 'summary', type: 'default' },
+      { id: 'rs', source: 'reviewer', target: 'summary', type: 'default' },
+      { id: 'e', source: 'summary', target: 'end', type: 'default' },
     ],
   };
 }
 
 function subtask(
   id: string,
-  overrides: Partial<WorkflowSplitSubtaskView> = {},
+  overrides: Partial<WorkflowSplitSubtaskView> = {}
 ): WorkflowSplitSubtaskView {
   return {
     id: `record-${id}`,
     subtask_id: id,
     title: `Task ${id}`,
-    instruction_path: `.vibe-kanban/workflows/run/instructions/${id}.md`,
-    node_id: "writer",
+    instruction_path: `.vibe-studio/workflows/workflow/runs/run/instructions/${id}.md`,
+    node_id: 'writer',
     stage_index: 0,
-    state: "pending",
+    state: 'pending',
     depends_on: [],
     node_execution_id: null,
     session_id: null,
@@ -62,35 +62,35 @@ function subtask(
 
 function batch(): WorkflowSplitBatchView {
   return {
-    id: "batch",
-    run_id: "run",
-    node_execution_id: "split-execution",
-    splitter_node_id: "split",
-    summary_node_id: "summary",
-    manifest_path: ".vibe-kanban/workflows/run/tasks.json",
-    manifest_sha256: "a".repeat(64),
-    dispatch_path: ".vibe-kanban/workflows/run/dispatch.json",
-    state: "partial",
+    id: 'batch',
+    run_id: 'run',
+    node_execution_id: 'split-execution',
+    splitter_node_id: 'split',
+    summary_node_id: 'summary',
+    manifest_path: '.vibe-studio/workflows/workflow/runs/run/tasks.json',
+    manifest_sha256: 'a'.repeat(64),
+    dispatch_path: '.vibe-studio/workflows/workflow/runs/run/dispatch.json',
+    state: 'partial',
     error_text: null,
     source_batch_id: null,
     summary_node_execution_id: null,
     handover: null,
     subtasks: [
-      subtask("done", {
-        state: "succeeded",
-        handoff_path: "done/handoff.json",
-        session_id: "session-a",
+      subtask('done', {
+        state: 'succeeded',
+        handoff_path: 'done/handoff.json',
+        session_id: 'session-a',
       }),
-      subtask("failed", {
-        state: "failed",
-        node_id: "reviewer",
-        error_text: "instructions missing",
-        session_id: "session-b",
+      subtask('failed', {
+        state: 'failed',
+        node_id: 'reviewer',
+        error_text: 'instructions missing',
+        session_id: 'session-b',
       }),
-      subtask("later", {
-        state: "blocked",
+      subtask('later', {
+        state: 'blocked',
         stage_index: 1,
-        depends_on: ["failed"],
+        depends_on: ['failed'],
       }),
     ],
   };
@@ -98,52 +98,53 @@ function batch(): WorkflowSplitBatchView {
 
 function run(): WorkflowRunResponse {
   return {
-    id: "run",
+    id: 'run',
     orchestration_run_id: null,
-    workflow_id: "workflow",
-    attempt_id: "instance",
-    task_id: "business-task",
-    workspace_id: "workspace",
-    trigger_source: "manual",
-    input_text: "Original request",
+    workflow_id: 'workflow',
+    attempt_id: 'instance',
+    task_id: 'business-task',
+    workspace_id: 'workspace',
+    trigger_source: 'manual',
+    input_text: 'Original request',
     output_text: null,
-    status: "failed",
+    status: 'failed',
     started_at: null,
     finished_at: null,
     error_text: null,
-    created_at: "2026-10-13T00:00:00Z",
-    updated_at: "2026-10-13T00:00:00Z",
+    created_at: '2026-10-13T00:00:00Z',
+    updated_at: '2026-10-13T00:00:00Z',
     nodes: [],
     split_batches: [batch()],
     handoffs: [],
+    handover_events: [],
     delivery: null,
     request_path: null,
   };
 }
 
-test("splitters are available without exposing structural nodes or internal task entries", () => {
+test('splitters are available without exposing structural nodes or internal task entries', () => {
   const types = getWorkflowNodeCatalogSections().flatMap((section) =>
-    section.entries.map((entry) => entry.type),
+    section.entries.map((entry) => entry.type)
   );
   expect(types).toEqual([
-    "agent",
-    "task_splitter",
-    "arena",
-    "condition",
-    "human_gate",
-    "transform",
+    'agent',
+    'task_splitter',
+    'arena',
+    'condition',
+    'human_gate',
+    'transform',
   ]);
 });
 
-test("the frozen dispatch scope comes only from the existing executor connections", () => {
+test('the frozen dispatch scope comes only from the existing executor connections', () => {
   const value = graph();
   const before = structuredClone(value);
   expect(getWorkflowSplitScopes(value)).toEqual({
     scopes: [
       {
-        splitterNodeId: "split",
-        candidateNodeIds: ["writer", "reviewer"],
-        summaryNodeId: "summary",
+        splitterNodeId: 'split',
+        candidateNodeIds: ['writer', 'reviewer'],
+        summaryNodeId: 'summary',
       },
     ],
     issues: [],
@@ -151,10 +152,10 @@ test("the frozen dispatch scope comes only from the existing executor connection
   expect(value).toEqual(before);
 });
 
-for (const type of ["agent", "transform", "end"] as const) {
+for (const type of ['agent', 'transform', 'end'] as const) {
   test(`a ${type} may serve as the fixed summary exit`, () => {
     const value = graph();
-    value.nodes.find((node) => node.id === "summary")!.type = type;
+    value.nodes.find((node) => node.id === 'summary')!.type = type;
     expect(getWorkflowSplitScopes(value).issues).toEqual([]);
   });
 }
@@ -165,81 +166,81 @@ const invalidScopes: {
   change: (value: WorkflowGraph) => void;
 }[] = [
   {
-    name: "no candidates",
-    expected: "missingExecutors",
+    name: 'no candidates',
+    expected: 'missingExecutors',
     change: (value) => {
-      value.edges = value.edges.filter((edge) => edge.source !== "split");
+      value.edges = value.edges.filter((edge) => edge.source !== 'split');
     },
   },
   {
-    name: "non-Agent executor",
-    expected: "invalidExecutor",
+    name: 'non-Agent executor',
+    expected: 'invalidExecutor',
     change: (value) => {
-      value.nodes.find((node) => node.id === "writer")!.type = "condition";
+      value.nodes.find((node) => node.id === 'writer')!.type = 'condition';
     },
   },
   {
-    name: "duplicate candidate",
-    expected: "competingExecutorInputs",
+    name: 'duplicate candidate',
+    expected: 'competingExecutorInputs',
     change: (value) => {
       value.edges.push({
-        id: "duplicate",
-        source: "split",
-        target: "writer",
-        type: "default",
+        id: 'duplicate',
+        source: 'split',
+        target: 'writer',
+        type: 'default',
       });
     },
   },
   {
-    name: "non-default executor edge",
-    expected: "invalidExecutor",
+    name: 'non-default executor edge',
+    expected: 'invalidExecutor',
     change: (value) => {
-      value.edges.find((edge) => edge.id === "w")!.type = "approval";
+      value.edges.find((edge) => edge.id === 'w')!.type = 'approval';
     },
   },
   {
-    name: "competing candidate input",
-    expected: "competingExecutorInputs",
+    name: 'competing candidate input',
+    expected: 'competingExecutorInputs',
     change: (value) => {
       value.edges.push({
-        id: "other",
-        source: "start",
-        target: "writer",
-        type: "default",
+        id: 'other',
+        source: 'start',
+        target: 'writer',
+        type: 'default',
       });
     },
   },
   {
-    name: "missing summary",
-    expected: "missingSummary",
+    name: 'missing summary',
+    expected: 'missingSummary',
     change: (value) => {
-      value.edges = value.edges.filter((edge) => edge.id !== "ws");
+      value.edges = value.edges.filter((edge) => edge.id !== 'ws');
     },
   },
   {
-    name: "different summaries",
-    expected: "differentSummaries",
+    name: 'different summaries',
+    expected: 'differentSummaries',
     change: (value) => {
-      value.edges.find((edge) => edge.id === "rs")!.target = "end";
+      value.edges.find((edge) => edge.id === 'rs')!.target = 'end';
     },
   },
   {
-    name: "summary with an outside input",
-    expected: "competingSummaryInputs",
+    name: 'summary with an outside input',
+    expected: 'competingSummaryInputs',
     change: (value) => {
       value.edges.push({
-        id: "outside",
-        source: "start",
-        target: "summary",
-        type: "default",
+        id: 'outside',
+        source: 'start',
+        target: 'summary',
+        type: 'default',
       });
     },
   },
   {
-    name: "unsupported summary",
-    expected: "invalidSummary",
+    name: 'unsupported summary',
+    expected: 'invalidSummary',
     change: (value) => {
-      value.nodes.find((node) => node.id === "summary")!.type = "human_gate";
+      value.nodes.find((node) => node.id === 'summary')!.type = 'human_gate';
     },
   },
 ];
@@ -248,41 +249,41 @@ for (const scenario of invalidScopes) {
     const value = graph();
     scenario.change(value);
     expect(getWorkflowSplitScopes(value).issues).toEqual([
-      { nodeId: "split", code: scenario.expected },
+      { nodeId: 'split', code: scenario.expected },
     ]);
     expect(getWorkflowSplitScopes(value).scopes).toEqual([]);
   });
 }
 
-test("parallel subtasks keep separate sessions and serial stages retain failed dependencies", () => {
+test('parallel subtasks keep separate sessions and serial stages retain failed dependencies', () => {
   const value = batch();
   value.subtasks.reverse();
   const stages = getWorkflowSplitStages(value);
   expect(stages.map((stage) => stage.index)).toEqual([0, 1]);
   expect(stages[0].subtasks.map((task) => task.session_id).sort()).toEqual([
-    "session-a",
-    "session-b",
+    'session-a',
+    'session-b',
   ]);
   expect(stages[1].subtasks[0]).toMatchObject({
-    state: "blocked",
-    depends_on: ["failed"],
+    state: 'blocked',
+    depends_on: ['failed'],
   });
-  expect(value.subtasks[1].error_text).toBe("instructions missing");
+  expect(value.subtasks[1].error_text).toBe('instructions missing');
 });
 
-test("a successful partial summary cannot inflate original subtask completion", () => {
+test('a successful partial summary cannot inflate original subtask completion', () => {
   const value = run();
-  value.status = "succeeded";
+  value.status = 'succeeded';
   value.delivery = {
-    completeness: "partial",
-    source_run_id: "previous-run",
-    source_batch_id: "batch",
+    completeness: 'partial',
+    source_run_id: 'previous-run',
+    source_batch_id: 'batch',
     missing_subtasks: [
       {
-        subtask_id: "failed",
-        title: "Task failed",
-        state: "failed",
-        reason: "instructions missing",
+        subtask_id: 'failed',
+        title: 'Task failed',
+        state: 'failed',
+        reason: 'instructions missing',
       },
     ],
   };
@@ -292,82 +293,82 @@ test("a successful partial summary cannot inflate original subtask completion", 
     failed: 1,
     running: 0,
   });
-  expect(getWorkflowSplitNodeProgress(value, "writer")).toEqual({
+  expect(getWorkflowSplitNodeProgress(value, 'writer')).toEqual({
     total: 2,
     completed: 1,
     failed: 0,
     running: 0,
   });
-  expect(getWorkflowSplitNodeProgress(value, "reviewer")).toEqual({
+  expect(getWorkflowSplitNodeProgress(value, 'reviewer')).toEqual({
     total: 1,
     completed: 0,
     failed: 1,
     running: 0,
   });
-  expect(getWorkflowSplitNodeProgress(value, "unrelated")).toBeNull();
-  expect(getWorkflowSplitBatchesForNode(value, "summary")).toHaveLength(1);
-  expect(value.delivery.missing_subtasks[0].state).toBe("failed");
+  expect(getWorkflowSplitNodeProgress(value, 'unrelated')).toBeNull();
+  expect(getWorkflowSplitBatchesForNode(value, 'summary')).toHaveLength(1);
+  expect(value.delivery.missing_subtasks[0].state).toBe('failed');
 });
 
-test("an explicit partial request preserves source identity and waits for ongoing work", () => {
+test('an explicit partial request preserves source identity and waits for ongoing work', () => {
   const value = run();
-  value.status = "running";
+  value.status = 'running';
   const payload = buildWorkflowPartialSummarySubmission(
     value,
     value.split_batches[0],
-    "request-1",
-    "Read the accepted manifest",
+    'request-1',
+    'Read the accepted manifest'
   );
   expect(payload).toEqual({
-    request_id: "request-1",
-    action: "rework",
+    request_id: 'request-1',
+    action: 'rework',
     source_run_id: value.id,
-    source_batch_id: "batch",
-    delivery_intent: "partial",
-    scope: { type: "from_nodes", node_ids: ["summary"] },
-    active_policy: "after_current",
-    input_text: "Read the accepted manifest",
-    material_paths: [".vibe-kanban/workflows/run/tasks.json"],
+    source_batch_id: 'batch',
+    delivery_intent: 'partial',
+    scope: { type: 'from_nodes', node_ids: ['summary'] },
+    active_policy: 'after_current',
+    input_text: 'Read the accepted manifest',
+    material_paths: ['.vibe-studio/workflows/workflow/runs/run/tasks.json'],
   });
   expect(
     buildWorkflowPartialSummarySubmission(
       value,
       value.split_batches[0],
-      "request-1",
-      "Read the accepted manifest",
-    ),
+      'request-1',
+      'Read the accepted manifest'
+    )
   ).toEqual(payload);
-  expect(value.split_batches[0].subtasks[1].state).toBe("failed");
+  expect(value.split_batches[0].subtasks[1].state).toBe('failed');
 });
 
 for (const scenario of [
-  "empty",
-  "no-files",
-  "all-succeeded",
-  "foreign-run",
-  "stopping",
-  "no-instance",
+  'empty',
+  'no-files',
+  'all-succeeded',
+  'foreign-run',
+  'stopping',
+  'no-instance',
 ] as const) {
   test(`partial summary is unavailable for ${scenario}`, () => {
     const value = run();
     const split = value.split_batches[0];
-    if (scenario === "empty") split.subtasks = [];
-    if (scenario === "no-files") split.subtasks[0].handoff_path = null;
-    if (scenario === "all-succeeded")
+    if (scenario === 'empty') split.subtasks = [];
+    if (scenario === 'no-files') split.subtasks[0].handoff_path = null;
+    if (scenario === 'all-succeeded')
       split.subtasks.forEach((task) => {
-        task.state = "succeeded";
+        task.state = 'succeeded';
       });
-    if (scenario === "foreign-run") split.run_id = "other-run";
-    if (scenario === "stopping") value.status = "cancelling";
-    if (scenario === "no-instance") value.attempt_id = null;
+    if (scenario === 'foreign-run') split.run_id = 'other-run';
+    if (scenario === 'stopping') value.status = 'cancelling';
+    if (scenario === 'no-instance') value.attempt_id = null;
     expect(canRequestWorkflowPartialSummary(value, split)).toBe(false);
     expect(
       buildWorkflowPartialSummarySubmission(
         value,
         split,
-        "request",
-        "No implicit submission",
-      ),
+        'request',
+        'No implicit submission'
+      )
     ).toBeNull();
   });
 }

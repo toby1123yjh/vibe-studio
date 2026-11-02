@@ -82,10 +82,14 @@ import {
   getWorkflowCanvasEdgeState,
   getWorkflowCanvasNodeState,
 } from '../model/workflowCanvasVisualState';
-import { getWorkflowNodeKindLabel } from '../model/workflowPresentation';
+import {
+  getWorkflowCoordinationLabel,
+  getWorkflowNodeKindLabel,
+} from '../model/workflowPresentation';
 import { consumeWorkflowRunNodeFocus } from '../model/workflowRunNodeFocus';
 import {
   getWorkflowNodeActionGate,
+  getWorkflowExecutionCoordination,
   getWorkflowNodeExecutionForWork,
   getWorkflowNodeExecutionTarget,
   getWorkflowNodeWork,
@@ -113,6 +117,7 @@ import { workflowNodeStatusKey } from './workflowI18n';
 import { getWorkflowNodeIcon } from './workflowNodeIcons';
 import { WorkflowSplitBatchDetails } from './WorkflowSplitBatchDetails';
 import { WorkflowFileReferences } from './WorkflowFileReferences';
+import { WorkflowCoordinationNotice } from './WorkflowCoordinationNotice';
 import { WorkflowArenaWinnerPanel } from './WorkflowArenaWinnerPanel';
 import {
   WorkflowConversationPanel,
@@ -121,6 +126,7 @@ import {
 import {
   buildWorkflowConversationHref,
   getWorkflowNodeConversations,
+  getWorkflowCoordinationConversation,
   selectWorkflowConversation,
   workflowCandidateConversation,
   workflowSourceConversation,
@@ -149,6 +155,7 @@ interface RunNodeData extends WorkflowNodeData {
   nodeType: WorkflowNodeKind;
   splitProgress?: WorkflowSplitProgress | null;
   awaitingDispatch?: boolean;
+  coordinationState?: string;
 }
 
 interface ConditionBranchOption {
@@ -193,11 +200,14 @@ function RunNode({ data }: { data: RunNodeData }) {
         executionStatus: data.runtimeStatus,
         nodeType: type,
       });
-  const stateLabel = data.awaitingDispatch
+  const runtimeLabel = data.awaitingDispatch
     ? t('workflow.split.waitingDispatch')
     : data.runtimeStatus
       ? t(`workflow.nodeStatus.${workflowNodeStatusKey(data.runtimeStatus)}`)
       : t('workflow.runCanvas.notExecutedYet');
+  const stateLabel = data.coordinationState
+    ? `${runtimeLabel} · ${getWorkflowCoordinationLabel(data.coordinationState, t)}`
+    : runtimeLabel;
   const agentDisplay =
     type === 'agent' || type === 'task_splitter'
       ? getWorkflowAgentDisplay(data)
@@ -314,11 +324,13 @@ function RunNode({ data }: { data: RunNodeData }) {
       <div className="border-t border-secondary/60 px-3 py-2 pl-4">
         <span
           className={cn(
-            'inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-medium leading-none',
+            'inline-flex max-w-full items-center rounded border px-1.5 py-0.5 text-xs font-medium leading-none',
             WORKFLOW_RUN_NODE_STATE_CHIP_CLASSES[nodeState]
           )}
         >
-          {stateLabel}
+          <span className="truncate" title={stateLabel}>
+            {stateLabel}
+          </span>
         </span>
         {data.splitProgress ? (
           <p className="mt-half text-xs text-low">
@@ -583,6 +595,10 @@ export function WorkflowRunCanvasTab({
         ? { ...conversation.target, status: run.status }
         : conversation.target
     : null;
+  const conversationCoordination = getWorkflowExecutionCoordination(
+    run,
+    conversationTarget?.nodeExecutionId
+  );
   const openSubtask = (
     batchId: string,
     task: WorkflowSplitSubtaskView,
@@ -601,6 +617,19 @@ export function WorkflowRunCanvasTab({
     )
       return;
     openConversation(source, detailsNodeId, conversation ?? undefined);
+  };
+  const openCoordination = (eventId: string) => {
+    const target = getWorkflowCoordinationConversation(
+      run,
+      eventId,
+      t('workflow.management.mainAgent')
+    );
+    if (target)
+      openConversation(
+        target,
+        detailsNodeId ?? conversation?.returnNodeId ?? null,
+        conversation ?? undefined
+      );
   };
 
   useEffect(() => {
@@ -661,6 +690,8 @@ export function WorkflowRunCanvasTab({
     if (!graph) return [];
     return toReactFlowNodes(graph, getDefaultPositions(graph)).map((node) => {
       const work = workMap.get(node.id);
+      const execution = getWorkflowNodeExecutionForWork(run, work);
+      const coordination = getWorkflowExecutionCoordination(run, execution?.id);
       return {
         ...node,
         selected: node.id === selectedNodeId,
@@ -668,6 +699,10 @@ export function WorkflowRunCanvasTab({
           ...node.data,
           runtimeStatus: work?.status,
           runtimeAuthority: work?.runtime_authority,
+          coordinationState:
+            coordination && ['pending', 'claimed'].includes(coordination.state)
+              ? coordination.state
+              : undefined,
           nodeId: node.id,
           nodeType: node.type,
           splitProgress: getWorkflowSplitNodeProgress(run, node.id),
@@ -924,6 +959,7 @@ export function WorkflowRunCanvasTab({
         onOpenSubtask={(batchId, task) =>
           detailsNodeId && openSubtask(batchId, task, detailsNodeId)
         }
+        onOpenCoordination={openCoordination}
         onOpenSource={(source) =>
           openSource(
             workflowSourceConversation(
@@ -995,45 +1031,60 @@ export function WorkflowRunCanvasTab({
               conversationTarget.kind === 'subtask') &&
             conversationTarget.runId === run.id &&
             conversationTarget.nodeId
-              ? (openFile) =>
-                  getWorkflowSplitBatchesForNode(
-                    run,
-                    conversationTarget.nodeId!
-                  ).map((batch) => (
-                    <WorkflowSplitBatchDetails
-                      key={batch.id}
-                      batch={batch}
-                      graph={graph}
-                      projectId={projectId}
-                      run={run}
-                      workspaceHref={buildRunWorkspaceHref(projectId, run)}
-                      onOpenFile={openFile}
-                      onOpenSubtask={(task) =>
-                        openSubtask(batch.id, task, batch.splitter_node_id)
-                      }
-                      onOpenMainSession={
-                        batch.handover && run.workspace_id
-                          ? () =>
-                              openConversation(
-                                {
-                                  key: `main:${batch.handover!.session_id}`,
-                                  kind: 'main',
-                                  runId: run.id,
-                                  nodeId: null,
-                                  nodeExecutionId: null,
-                                  workspaceId: run.workspace_id,
-                                  sessionId: batch.handover!.session_id,
-                                  title: t('workflow.management.mainAgent'),
-                                  status: run.status,
-                                  readOnly: false,
-                                },
-                                batch.splitter_node_id,
-                                conversation ?? undefined
-                              )
-                          : undefined
-                      }
-                    />
-                  ))
+              ? (openFile) => (
+                  <>
+                    {conversationCoordination ? (
+                      <WorkflowCoordinationNotice
+                        event={conversationCoordination}
+                        onOpenFile={openFile}
+                        onOpenMainSession={
+                          run.workspace_id
+                            ? () =>
+                                openCoordination(conversationCoordination.id)
+                            : undefined
+                        }
+                      />
+                    ) : null}
+                    {getWorkflowSplitBatchesForNode(
+                      run,
+                      conversationTarget.nodeId!
+                    ).map((batch) => (
+                      <WorkflowSplitBatchDetails
+                        key={batch.id}
+                        batch={batch}
+                        graph={graph}
+                        projectId={projectId}
+                        run={run}
+                        workspaceHref={buildRunWorkspaceHref(projectId, run)}
+                        onOpenFile={openFile}
+                        onOpenSubtask={(task) =>
+                          openSubtask(batch.id, task, batch.splitter_node_id)
+                        }
+                        onOpenMainSession={
+                          batch.handover && run.workspace_id
+                            ? () =>
+                                openConversation(
+                                  {
+                                    key: `main:${batch.handover!.session_id}`,
+                                    kind: 'main',
+                                    runId: run.id,
+                                    nodeId: null,
+                                    nodeExecutionId: null,
+                                    workspaceId: run.workspace_id,
+                                    sessionId: batch.handover!.session_id,
+                                    title: t('workflow.management.mainAgent'),
+                                    status: run.status,
+                                    readOnly: false,
+                                  },
+                                  batch.splitter_node_id,
+                                  conversation ?? undefined
+                                )
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </>
+                )
               : undefined
           }
         />
@@ -1127,6 +1178,7 @@ interface WorkflowRunNodeDetailsDialogProps {
   onOpenSubtask: (batchId: string, task: WorkflowSplitSubtaskView) => void;
   onOpenSource: (source: WorkflowReuseView) => void;
   onOpenCandidate: (candidate: ArenaComparisonCandidate) => void;
+  onOpenCoordination: (eventId: string) => void;
 }
 
 function WorkflowRunNodeDetailsDialog({
@@ -1149,6 +1201,7 @@ function WorkflowRunNodeDetailsDialog({
   onOpenSubtask,
   onOpenSource,
   onOpenCandidate,
+  onOpenCoordination,
 }: WorkflowRunNodeDetailsDialogProps) {
   const { t } = useTranslation('common');
   const hostId = useHostId();
@@ -1176,6 +1229,7 @@ function WorkflowRunNodeDetailsDialog({
   const output = execution?.output_text?.trim();
   const error = execution?.error_text?.trim();
   const splitBatches = getWorkflowSplitBatchesForNode(run, node.id);
+  const coordination = getWorkflowExecutionCoordination(run, execution?.id);
   const executionIds = new Set(
     run.nodes.filter((item) => item.node_id === node.id).map((item) => item.id)
   );
@@ -1226,6 +1280,17 @@ function WorkflowRunNodeDetailsDialog({
             <span>{statusLabel}</span>
           </div>
         </section>
+
+        {coordination ? (
+          <WorkflowCoordinationNotice
+            event={coordination}
+            onOpenMainSession={
+              run.workspace_id
+                ? () => onOpenCoordination(coordination.id)
+                : undefined
+            }
+          />
+        ) : null}
 
         {splitBatches.map((batch) => (
           <WorkflowSplitBatchDetails

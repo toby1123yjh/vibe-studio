@@ -611,6 +611,16 @@
         "attemptB": "執行 B"
       }
     },
+    "coordination": {
+      "pending": "等待主 Agent",
+      "claimed": "主 Agent 已接手",
+      "completed": "主 Agent 已處理異常",
+      "failed": "主 Agent 處理未完成",
+      "cancelled": "主 Agent 接力已停止",
+      "unknown": "主 Agent 協調",
+      "outcomeHint": "保留原執行結果，交付進展以後續實際執行為準。",
+      "openMainSession": "開啟原主對話"
+    },
     "split": {
       "output": "輸出",
       "defaultPrompt": "將輸入工作拆成獨立子任務，在工作流程控制目錄中寫入 tasks.json 和每項子任務的說明檔案。記錄依賴關係，並引用相關來源檔案。",

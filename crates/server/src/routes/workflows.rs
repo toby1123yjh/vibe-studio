@@ -245,6 +245,8 @@ pub struct WorkflowRunResponse {
     pub split_batches: Vec<WorkflowSplitBatchView>,
     #[serde(default)]
     pub handoffs: Vec<WorkflowHandoffView>,
+    #[serde(default)]
+    pub handover_events: Vec<crate::workflow_runtime::management::WorkflowCoordinationEventView>,
     pub delivery: Option<WorkflowDeliveryView>,
     pub request_path: Option<String>,
     #[serde(default)]
@@ -1457,6 +1459,7 @@ pub async fn accept_workflow_attempt<W: WorkflowWorkspaceResolver>(
                 WorkflowSubmissionAction::Start
             },
             input_text: Some(request.input_text),
+            instruction_path: None,
             material_paths: Vec::new(),
             source_run_id: attempt.latest_run_id,
             source_node_execution_id: None,

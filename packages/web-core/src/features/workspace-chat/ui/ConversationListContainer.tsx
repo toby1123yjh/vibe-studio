@@ -58,6 +58,10 @@ import type { WorkspaceWithSession } from '@/shared/types/attempt';
 import type { RepoWithTargetBranch } from 'shared/types';
 import { ChatEmptyState } from '@vibe/ui/components/ChatEmptyState';
 import { ChatUserMessage } from '@vibe/ui/components/ChatUserMessage';
+import {
+  ChatConversationActivity,
+  type ChatConversationActivityState,
+} from '@vibe/ui/components/ChatConversationActivity';
 import { AppChatMarkdown } from './AppChatMarkdown';
 import { useWorkflowNotifications } from '@/shared/hooks/useWorkflowManagement';
 import { workflowNotificationEntries } from '@/features/workflow/model/workflowNotifications';
@@ -282,6 +286,27 @@ export const ConversationList = forwardRef<
     [hostId, attempt.id, sessionScopeId, attempt.session?.id]
   );
   const pendingSends = usePendingConversationSend(conversationSendScope);
+  const runtimeRun =
+    sessionConversation.timeline?.activeRun ??
+    sessionConversation.timeline?.latestRun;
+  const runtimeStatus = (
+    runtimeRun?.timeline?.state ?? runtimeRun?.summary.state
+  )?.status;
+  const activityState: ChatConversationActivityState | null =
+    readOnly || sessionConversation.hasNewer
+      ? null
+      : runtimeStatus === 'cancelling'
+        ? 'stopping'
+        : runtimeStatus === 'awaiting_input' ||
+            runtimeStatus === 'awaiting_approval'
+          ? null
+          : runtimeStatus === 'pending' ||
+              runtimeStatus === 'starting' ||
+              runtimeStatus === 'running'
+            ? 'running'
+            : pendingSends.sends.some((send) => send.phase === 'sending')
+              ? 'sending'
+              : null;
   const savedViewRef = useRef(initialViewState);
   const reportViewRef = useRef(onViewStateChange);
   reportViewRef.current = onViewStateChange;
@@ -668,6 +693,7 @@ export const ConversationList = forwardRef<
   // and changes scroll estimates when a turn starts, settles or gains a row.
   const conversationVirtualizer = useConversationVirtualizer({
     rows: conversationRows,
+    hasFooter: activityState !== null,
     pinnedTailCount: PINNED_TAIL_ROWS,
     scrollContainerRef: tanstackScrollRef,
     onAtBottomChange,
@@ -1050,8 +1076,9 @@ export const ConversationList = forwardRef<
     ]
   );
 
-  const showLoader = loading && conversationRows.length === 0;
-  const showEmptyState = !loading && conversationRows.length === 0;
+  const showLoader = loading && conversationRows.length === 0 && !activityState;
+  const showEmptyState =
+    !loading && conversationRows.length === 0 && !activityState;
 
   const { virtualItems, totalSize, measureElement } = conversationVirtualizer;
 
@@ -1249,6 +1276,19 @@ export const ConversationList = forwardRef<
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {activityState && (
+            <div className="px-double py-base">
+              <ChatConversationActivity
+                state={activityState}
+                label={
+                  activityState === 'running'
+                    ? agentWorkbenchTimelineCopy.working
+                    : t(`tasks:conversation.actions.${activityState}`)
+                }
+              />
             </div>
           )}
 

@@ -470,19 +470,19 @@ export async function mockWorkflowFileContext(page: Page) {
               },
               {
                 role: "input",
-                path: ".vibe-kanban/workflows/visual-run/request.md",
+                path: ".vibe-studio/workflows/visual-template/runs/visual-run/request.md",
                 sha256: null,
                 source_node_execution_id: null,
               },
               {
                 role: "control",
-                path: ".vibe-kanban/workflows/visual-run/tasks.json",
+                path: ".vibe-studio/workflows/visual-template/runs/visual-run/tasks.json",
                 sha256: "a".repeat(64),
                 source_node_execution_id: "split-execution",
               },
               {
                 role: "control",
-                path: ".vibe-kanban/workflows/visual-run/dispatch.json",
+                path: ".vibe-studio/workflows/visual-template/runs/visual-run/dispatch.json",
                 sha256: null,
                 source_node_execution_id: "split-execution",
               },

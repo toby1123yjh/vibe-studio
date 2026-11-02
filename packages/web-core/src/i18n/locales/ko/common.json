@@ -1454,6 +1454,16 @@
         "attemptB": "Attempt B"
       }
     },
+    "coordination": {
+      "pending": "메인 Agent 대기 중",
+      "claimed": "메인 Agent가 인계받음",
+      "completed": "메인 Agent가 예외를 처리함",
+      "failed": "메인 Agent가 처리를 완료하지 못함",
+      "cancelled": "메인 Agent 인계 중지됨",
+      "unknown": "메인 Agent 조정",
+      "outcomeHint": "원래 실행 결과는 유지됩니다. 결과물 진행 상황은 후속 실행에서 확인하세요.",
+      "openMainSession": "원래 메인 대화 열기"
+    },
     "split": {
       "output": "출력",
       "defaultPrompt": "입력 작업을 독립된 하위 작업으로 나누세요. 워크플로 제어 디렉터리에 tasks.json과 각 하위 작업의 지시 파일을 작성하고, 의존 관계와 관련 원본 파일을 명시하세요.",

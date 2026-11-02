@@ -30,7 +30,6 @@ import {
   DropdownMenuTrigger,
 } from './Dropdown';
 import { PrimaryButton } from './PrimaryButton';
-import { ChatComposerActivity } from './ChatComposerActivity';
 import type { LocalAttachmentMetadata } from './WorkspaceContext';
 import { ToolbarDropdown, ToolbarIconButton } from './Toolbar';
 import { ContextUsageGauge, type ContextUsageInfo } from './ContextUsageGauge';
@@ -291,7 +290,6 @@ interface SessionChatBoxProps<TExecutor extends string = string> {
   ) => ReactNode;
   formatSessionDate?: (createdAt: string | Date) => string;
   todos?: TodoProgressItem[];
-  inProgressTodo?: TodoProgressItem | null;
   localAttachments?: LocalAttachmentMetadata[];
   onPrCommentClick?: () => void;
   onViewCode?: () => void;
@@ -374,7 +372,6 @@ export function SessionChatBox<TExecutor extends string = string>({
   renderAgentIcon,
   formatSessionDate = defaultFormatSessionDate,
   todos,
-  inProgressTodo,
   localAttachments,
   onPrCommentClick,
   onViewCode,
@@ -476,14 +473,6 @@ export function SessionChatBox<TExecutor extends string = string>({
       : sendFollowUpDecision;
   const isQueued = status === 'queued';
   const isRunning = status === 'running' || status === 'queued';
-  const activityState =
-    isInFeedbackMode || isInEditMode || isInApprovalMode || isInAskQuestionMode
-      ? null
-      : status === 'sending' || status === 'stopping'
-        ? status
-        : isRunning
-          ? 'running'
-          : null;
   const areContentInsertActionsDisabled = isDisabled || isQueued;
   const sendActionLabel = t('conversation.actions.send');
   const queueActionLabel = t('conversation.actions.queue');
@@ -1032,98 +1021,76 @@ export function SessionChatBox<TExecutor extends string = string>({
       }
       status={
         <>
-          {activityState && (
-            <ChatComposerActivity
-              state={activityState}
-              label={
-                activityState === 'running'
-                  ? t('conversation.inProgress')
-                  : t(`conversation.actions.${activityState}`)
-              }
-              detail={isRunning ? inProgressTodo?.content : undefined}
-            />
-          )}
-          {/* Existing session mode: show in-progress todo when running, otherwise file stats */}
+          {/* Existing session context; runtime feedback belongs to the history. */}
           {!isInitialSendMode && (
             <>
-              {!(isRunning && inProgressTodo) && (
-                <>
-                  {stats?.hasConflicts && (
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-warning text-sm min-w-0 cursor-pointer hover:underline"
-                      title={t('conversation.approval.conflictWarning')}
-                      onClick={stats.onResolveConflicts}
-                    >
-                      <WarningIcon className="size-icon-sm flex-shrink-0" />
-                      <span className="truncate">
-                        {t('conversation.approval.conflicts', {
-                          count: stats.conflictedFilesCount,
-                        })}
-                      </span>
-                    </button>
-                  )}
-                  {hasDiffStats && onOpenWorkspace ? (
-                    <PrimaryButton
-                      variant="secondary"
-                      onClick={onOpenWorkspace}
-                      value="Open Workspace"
-                      actionIcon={ArrowsOutIcon}
-                      className="min-w-0"
-                    />
-                  ) : hasDiffStats && onViewCode ? (
-                    <PrimaryButton
-                      variant="tertiary"
-                      onClick={onViewCode}
-                      className="min-w-0"
-                    >
-                      <span className="text-sm space-x-half whitespace-nowrap truncate">
-                        <span>
-                          {t('diff.filesChanged', { count: filesChanged })}
-                        </span>
-                        {(linesAdded !== undefined ||
-                          linesRemoved !== undefined) && (
-                          <span className="space-x-half">
-                            {linesAdded !== undefined && (
-                              <span className="text-success">
-                                +{linesAdded}
-                              </span>
-                            )}
-                            {linesRemoved !== undefined && (
-                              <span className="text-error">
-                                -{linesRemoved}
-                              </span>
-                            )}
-                          </span>
+              {stats?.hasConflicts && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-warning text-sm min-w-0 cursor-pointer hover:underline"
+                  title={t('conversation.approval.conflictWarning')}
+                  onClick={stats.onResolveConflicts}
+                >
+                  <WarningIcon className="size-icon-sm flex-shrink-0" />
+                  <span className="truncate">
+                    {t('conversation.approval.conflicts', {
+                      count: stats.conflictedFilesCount,
+                    })}
+                  </span>
+                </button>
+              )}
+              {hasDiffStats && onOpenWorkspace ? (
+                <PrimaryButton
+                  variant="secondary"
+                  onClick={onOpenWorkspace}
+                  value="Open Workspace"
+                  actionIcon={ArrowsOutIcon}
+                  className="min-w-0"
+                />
+              ) : hasDiffStats && onViewCode ? (
+                <PrimaryButton
+                  variant="tertiary"
+                  onClick={onViewCode}
+                  className="min-w-0"
+                >
+                  <span className="text-sm space-x-half whitespace-nowrap truncate">
+                    <span>
+                      {t('diff.filesChanged', { count: filesChanged })}
+                    </span>
+                    {(linesAdded !== undefined ||
+                      linesRemoved !== undefined) && (
+                      <span className="space-x-half">
+                        {linesAdded !== undefined && (
+                          <span className="text-success">+{linesAdded}</span>
+                        )}
+                        {linesRemoved !== undefined && (
+                          <span className="text-error">-{linesRemoved}</span>
                         )}
                       </span>
-                    </PrimaryButton>
-                  ) : stats?.diffStatsUnavailable ? (
-                    <span className="text-sm text-low min-w-0 truncate">
-                      {t('diff.unavailable', {
-                        defaultValue: 'Changes unavailable',
-                      })}
-                    </span>
-                  ) : hasDiffStats ? (
-                    <span className="text-sm text-low space-x-half whitespace-nowrap truncate min-w-0">
-                      <span>
-                        {t('diff.filesChanged', { count: filesChanged })}
-                      </span>
-                      {(linesAdded !== undefined ||
-                        linesRemoved !== undefined) && (
-                        <span className="space-x-half">
-                          {linesAdded !== undefined && (
-                            <span className="text-success">+{linesAdded}</span>
-                          )}
-                          {linesRemoved !== undefined && (
-                            <span className="text-error">-{linesRemoved}</span>
-                          )}
-                        </span>
+                    )}
+                  </span>
+                </PrimaryButton>
+              ) : stats?.diffStatsUnavailable ? (
+                <span className="text-sm text-low min-w-0 truncate">
+                  {t('diff.unavailable', {
+                    defaultValue: 'Changes unavailable',
+                  })}
+                </span>
+              ) : hasDiffStats ? (
+                <span className="text-sm text-low space-x-half whitespace-nowrap truncate min-w-0">
+                  <span>{t('diff.filesChanged', { count: filesChanged })}</span>
+                  {(linesAdded !== undefined || linesRemoved !== undefined) && (
+                    <span className="space-x-half">
+                      {linesAdded !== undefined && (
+                        <span className="text-success">+{linesAdded}</span>
+                      )}
+                      {linesRemoved !== undefined && (
+                        <span className="text-error">-{linesRemoved}</span>
                       )}
                     </span>
-                  ) : null}
-                </>
-              )}
+                  )}
+                </span>
+              ) : null}
             </>
           )}
         </>

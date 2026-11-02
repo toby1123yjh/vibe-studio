@@ -19,7 +19,7 @@ pub(super) fn workflow_run_lock(run_id: Uuid) -> Arc<tokio::sync::Mutex<()>> {
 }
 
 pub(super) async fn children_settled(pool: &SqlitePool, run_id: Uuid) -> Result<bool, ApiError> {
-    if crate::workflow_runtime::handover::has_unsettled(pool, run_id).await? {
+    if crate::workflow_runtime::handover::has_unsettled_children(pool, run_id).await? {
         return Ok(false);
     }
     Ok(sqlx::query_scalar(r#"
@@ -313,6 +313,7 @@ pub(super) async fn recover_undispatched_nodes<
                                     orchestration_node_execution_id,
                                     agent_run_id,
                                     &error.to_string(),
+                                    "delivery_invalid",
                                 )
                                 .await?
                             }
@@ -359,11 +360,13 @@ mod tests {
             .await
             .unwrap();
         sqlx::raw_sql(r#"
-            CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,orchestration_run_id BLOB,status TEXT,output_text TEXT,error_text TEXT,finished_at TEXT,updated_at TEXT);
+            CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,orchestration_run_id BLOB,attempt_id BLOB,status TEXT,output_text TEXT,error_text TEXT,finished_at TEXT,updated_at TEXT);
+            CREATE TABLE workflow_attempts(id BLOB PRIMARY KEY,main_session_id BLOB);
             CREATE TABLE node_executions(id BLOB PRIMARY KEY,run_id BLOB,node_id TEXT,node_type TEXT NOT NULL DEFAULT 'agent',iteration INTEGER,status TEXT,orchestration_node_execution_id BLOB,agent_run_id BLOB,arena_group_id BLOB,error_text TEXT,finished_at TEXT,updated_at TEXT);
             CREATE TABLE workflow_run_queue(run_id BLOB PRIMARY KEY,phase TEXT);
             CREATE TABLE sessions(id BLOB PRIMARY KEY);
             CREATE TABLE workflow_run_submissions(run_id BLOB PRIMARY KEY);
+            CREATE TABLE workflow_stop_intents(run_id BLOB PRIMARY KEY);
             CREATE TABLE orchestration_runs(id BLOB PRIMARY KEY,product_kind TEXT,source_definition_id BLOB);
             CREATE TABLE orchestration_agent_run_links(orchestration_run_id BLOB,node_execution_id BLOB,agent_run_id BLOB);
             CREATE TABLE agent_run_state(agent_run_id BLOB PRIMARY KEY,status TEXT);
@@ -375,6 +378,12 @@ mod tests {
         "#).execute(&pool).await.unwrap();
         sqlx::raw_sql(include_str!(
             "../../../db/migrations/20261013000000_workflow_file_driven.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!(
+            "../../../db/migrations/20261102000000_workflow_node_coordination.sql"
         ))
         .execute(&pool)
         .await
@@ -396,6 +405,67 @@ mod tests {
         sqlx::query("INSERT INTO node_executions(id,run_id,node_id,iteration,status,orchestration_node_execution_id) VALUES (?,?,?,0,?,?)")
             .bind(id).bind(run).bind(name).bind(status).bind(id).execute(pool).await.unwrap();
         id
+    }
+
+    #[tokio::test]
+    async fn queued_exception_allows_failed_source_to_settle_without_releasing_coordination() {
+        let (pool, run) = fixture().await;
+        let failed = product_node(&pool, run, "needs-help", "failed").await;
+        let attempt = Uuid::new_v4();
+        let main_session = Uuid::new_v4();
+        sqlx::query("INSERT INTO sessions VALUES (?)")
+            .bind(main_session)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO workflow_attempts VALUES (?,?)")
+            .bind(attempt)
+            .bind(main_session)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE workflow_runs SET attempt_id=? WHERE id=?")
+            .bind(attempt)
+            .bind(run)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        fail_accepted_workflow_run(&pool, run, "Node needs main Agent handling")
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT status FROM workflow_runs WHERE id=?")
+                .bind(run)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            "failed"
+        );
+        let event: (Uuid, Uuid, String) = sqlx::query_as(
+            "SELECT source_node_execution_id,session_id,state FROM workflow_handover_events WHERE run_id=?",
+        ).bind(run).fetch_one(&pool).await.unwrap();
+        assert_eq!(event, (failed, main_session, "pending".into()));
+        assert!(children_settled(&pool, run).await.unwrap());
+        assert!(
+            crate::workflow_runtime::handover::has_unsettled(&pool, run)
+                .await
+                .unwrap()
+        );
+
+        fail_accepted_workflow_run(&pool, run, "Repeated observation")
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM workflow_handover_events WHERE run_id=?"
+            )
+            .bind(run)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
     }
 
     #[tokio::test]

@@ -1,8 +1,8 @@
 //! File content is consumed from disk. Durable bindings contain only identity,
 //! paths and content hashes; an Agent transcript is never a fallback input.
 use workflow::files::{
-    WorkflowFileRef, WorkflowHandoff, control_file_path, readable_file, sha256_bytes,
-    write_json_atomic, write_text_atomic,
+    WorkflowFileRef, WorkflowHandoff, control_file_path, readable_file, run_relative_dir,
+    sha256_bytes, write_json_atomic, write_text_atomic,
 };
 
 use super::*;
@@ -30,8 +30,24 @@ pub(super) async fn execution_id(
     .await?)
 }
 
-pub(super) fn index_path(run_id: Uuid, execution_id: Uuid) -> String {
-    format!(".vibe-kanban/workflows/{run_id}/handoffs/{execution_id}.json")
+pub(crate) async fn run_directory(pool: &SqlitePool, run_id: Uuid) -> Result<String, ApiError> {
+    let workflow_id: Uuid = sqlx::query_scalar("SELECT workflow_id FROM workflow_runs WHERE id=?")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await?;
+    run_relative_dir(&workflow_id.to_string(), &run_id.to_string())
+        .map_err(|error| file_error("workflow run directory", error))
+}
+
+pub(super) async fn index_path(
+    pool: &SqlitePool,
+    run_id: Uuid,
+    execution_id: Uuid,
+) -> Result<String, ApiError> {
+    Ok(format!(
+        "{}/handoffs/{execution_id}.json",
+        run_directory(pool, run_id).await?
+    ))
 }
 
 pub(crate) async fn read_bound_file(
@@ -79,7 +95,7 @@ pub(super) async fn request_reference(
             .fetch_one(pool)
             .await?;
     let root = workflow_control_root(pool, workspace_id).await?;
-    let relative = format!(".vibe-kanban/workflows/{run_id}/request.md");
+    let relative = format!("{}/request.md", run_directory(pool, run_id).await?);
     let path = control_file_path(&root, &relative)
         .await
         .map_err(|error| file_error(&relative, error))?;
@@ -117,7 +133,7 @@ pub(super) async fn accept(
             .fetch_one(pool)
             .await?;
     let root = workflow_control_root(pool, workspace_id).await?;
-    let relative = index_path(run_id, node_execution_id);
+    let relative = index_path(pool, run_id, node_execution_id).await?;
     let index = bind_file(&root, &relative).await?;
     let bytes = read_bound_file(&root, &index).await?;
     let handoff: WorkflowHandoff =
@@ -226,14 +242,20 @@ pub(super) async fn incoming(
         }
         return Ok(result);
     }
+    let snapshot = load_run_snapshot(pool, run_id).await?;
+    let sources =
+        workflow::planner::upstream_execution_rounds(graph, &snapshot, &node.id, iteration);
     let mut result = Vec::new();
-    for edge in graph.edges.iter().filter(|edge| edge.target == node.id) {
-        let executions: Vec<Uuid> = sqlx::query_scalar("SELECT source_node_execution_id FROM workflow_effective_node_executions WHERE run_id=? AND node_id=? AND status='succeeded' ORDER BY iteration")
-            .bind(run_id).bind(&edge.source).fetch_all(pool).await?;
-        for id in executions {
-            let (index, files) = verified(pool, &root, id).await?;
-            result.push((edge.source.clone(), id, index, files));
-        }
+    for (source_node, source_iteration) in sources {
+        let id: Uuid = sqlx::query_scalar("SELECT source_node_execution_id FROM workflow_effective_node_executions WHERE run_id=? AND node_id=? AND iteration=? AND status='succeeded'")
+            .bind(run_id)
+            .bind(&source_node)
+            .bind(source_iteration)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| ApiError::Conflict("Required upstream delivery is unavailable".into()))?;
+        let (index, files) = verified(pool, &root, id).await?;
+        result.push((source_node, id, index, files));
     }
     Ok(result)
 }
@@ -267,12 +289,15 @@ pub(super) async fn output_contract(
     iteration: i64,
 ) -> Result<String, ApiError> {
     let id = execution_id(pool, run_id, node_id, iteration).await?;
-    let path = index_path(run_id, id);
+    let path = index_path(pool, run_id, id).await?;
     let example = serde_json::to_string_pretty(&WorkflowHandoff {
         schema_version: 1,
         run_id: run_id.to_string(),
         node_execution_id: id.to_string(),
-        summary_path: Some(format!(".vibe-kanban/workflows/{run_id}/results/{id}.md")),
+        summary_path: Some(format!(
+            "{}/results/{id}.md",
+            run_directory(pool, run_id).await?
+        )),
         artifact_paths: vec![],
     })
     .map_err(|error| file_error(&path, error))?;
@@ -294,7 +319,7 @@ pub(super) async fn publish(
             .fetch_one(pool)
             .await?;
     let root = workflow_control_root(pool, workspace_id).await?;
-    let relative = index_path(run_id, execution_id);
+    let relative = index_path(pool, run_id, execution_id).await?;
     let path = control_file_path(&root, &relative)
         .await
         .map_err(|error| file_error(&relative, error))?;
@@ -357,7 +382,10 @@ pub(super) async fn partial_delivery_reference(
             .fetch_one(pool)
             .await?;
     let root = workflow_control_root(pool, workspace_id).await?;
-    let relative = format!(".vibe-kanban/workflows/{run_id}/partial-delivery.json");
+    let relative = format!(
+        "{}/partial-delivery.json",
+        run_directory(pool, run_id).await?
+    );
     let path = control_file_path(&root, &relative)
         .await
         .map_err(|error| file_error(&relative, error))?;
@@ -454,7 +482,7 @@ pub(super) async fn transform(
         artifacts.push(partial.path);
     }
     let id = execution_id(pool, run_id, &node.id, iteration).await?;
-    let relative = format!(".vibe-kanban/workflows/{run_id}/results/{id}.md");
+    let relative = format!("{}/results/{id}.md", run_directory(pool, run_id).await?);
     write_result_note(pool, id, &root, &relative, &output).await?;
     publish(pool, run_id, id, Some(relative), artifacts).await
 }
@@ -515,9 +543,10 @@ mod tests {
             CREATE TABLE workspaces(id BLOB PRIMARY KEY,container_ref TEXT,workspace_kind TEXT);
             CREATE TABLE repos(id BLOB PRIMARY KEY,name TEXT,display_name TEXT,default_working_dir TEXT);
             CREATE TABLE workspace_repos(workspace_id BLOB,repo_id BLOB);
-            CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,workspace_id BLOB,input_text TEXT,status TEXT);
-            CREATE TABLE node_executions(id BLOB PRIMARY KEY,run_id BLOB,node_id TEXT,iteration INTEGER,status TEXT,output_text TEXT);
-            CREATE VIEW workflow_effective_node_executions AS SELECT run_id,id AS source_node_execution_id,node_id,iteration,status FROM node_executions;
+            CREATE TABLE workflow_runs(id BLOB PRIMARY KEY,workspace_id BLOB,workflow_id BLOB NOT NULL,input_text TEXT,status TEXT);
+            CREATE TABLE node_executions(id BLOB PRIMARY KEY,run_id BLOB,node_id TEXT,iteration INTEGER,status TEXT,output_text TEXT,error_text TEXT);
+            CREATE VIEW workflow_effective_node_executions AS SELECT run_id,id AS source_node_execution_id,node_id,iteration,status,output_text,error_text FROM node_executions;
+            CREATE TABLE workflow_node_dispositions(run_id BLOB,node_id TEXT);
             CREATE TABLE workflow_node_handoffs(node_execution_id BLOB PRIMARY KEY,run_id BLOB,handoff_path TEXT,handoff_sha256 TEXT,files_json TEXT);
             CREATE TABLE workflow_split_batches(id BLOB PRIMARY KEY,run_id BLOB,summary_node_execution_id BLOB);
             CREATE TABLE workflow_split_subtasks(batch_id BLOB,subtask_id TEXT,state TEXT,node_execution_id BLOB,stage_index INTEGER);
@@ -532,9 +561,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO workflow_runs VALUES (?,?,'Write a research report','running')")
+        sqlx::query("INSERT INTO workflow_runs VALUES (?,?,?,'Write a research report','running')")
             .bind(run_id)
             .bind(workspace_id)
+            .bind(Uuid::new_v4())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO node_executions(id,run_id,node_id,iteration,status) VALUES (?,?,'start',0,'succeeded')")
+            .bind(Uuid::new_v4())
+            .bind(run_id)
             .execute(&pool)
             .await
             .unwrap();
@@ -543,7 +579,7 @@ mod tests {
 
     async fn execution(pool: &SqlitePool, run_id: Uuid, node: &str, iteration: i64) -> Uuid {
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO node_executions VALUES (?,?,?,?, 'running','TRANSCRIPT_MUST_NOT_BE_AN_INPUT')")
+        sqlx::query("INSERT INTO node_executions(id,run_id,node_id,iteration,status,output_text) VALUES (?,?,?,?, 'running','TRANSCRIPT_MUST_NOT_BE_AN_INPUT')")
             .bind(id).bind(run_id).bind(node).bind(iteration).execute(pool).await.unwrap();
         id
     }
@@ -562,7 +598,7 @@ mod tests {
             summary_path: Some(path.into()),
             artifact_paths: vec![],
         };
-        let index = control_file_path(root, &index_path(run_id, id))
+        let index = control_file_path(root, &index_path(pool, run_id, id).await.unwrap())
             .await
             .unwrap();
         write_json_atomic(&index, &document).await.unwrap();
@@ -576,10 +612,88 @@ mod tests {
 
     fn graph() -> WorkflowGraph {
         serde_json::from_value(json!({"version":2,"nodes":[
+            {"id":"start","type":"start","data":{}},
             {"id":"research","type":"agent","data":{}},
             {"id":"report","type":"agent","data":{}}
-        ],"edges":[{"id":"edge","source":"research","target":"report","type":"default"}]}))
+        ],"edges":[
+            {"id":"start-edge","source":"start","target":"research","type":"default"},
+            {"id":"edge","source":"research","target":"report","type":"default"}
+        ]}))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn repeated_runs_and_node_attempts_keep_their_original_files() {
+        let (pool, root, first_run) = fixture().await;
+        let (workflow_id, workspace_id): (Uuid, Uuid) =
+            sqlx::query_as("SELECT workflow_id,workspace_id FROM workflow_runs WHERE id=?")
+                .bind(first_run)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let second_run = Uuid::new_v4();
+        sqlx::query("INSERT INTO workflow_runs VALUES (?,?,?,'A separate request','running')")
+            .bind(second_run)
+            .bind(workspace_id)
+            .bind(workflow_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let first_request = request_reference(&pool, first_run).await.unwrap();
+        let second_request = request_reference(&pool, second_run).await.unwrap();
+        assert_ne!(first_request.path, second_request.path);
+        assert_eq!(
+            first_request.path,
+            format!(".vibe-studio/workflows/{workflow_id}/runs/{first_run}/request.md")
+        );
+        assert_eq!(
+            read_bound_file(root.path(), &first_request)
+                .await
+                .unwrap()
+                .as_slice(),
+            b"Write a research report"
+        );
+        assert_eq!(
+            read_bound_file(root.path(), &second_request)
+                .await
+                .unwrap()
+                .as_slice(),
+            b"A separate request"
+        );
+
+        let first_attempt = execution(&pool, first_run, "research", 0).await;
+        let second_attempt = execution(&pool, first_run, "research", 1).await;
+        let first_index = index_path(&pool, first_run, first_attempt).await.unwrap();
+        let second_index = index_path(&pool, first_run, second_attempt).await.unwrap();
+        assert_ne!(first_index, second_index);
+        for (id, text) in [
+            (first_attempt, "Original outcome"),
+            (second_attempt, "New outcome"),
+        ] {
+            let note = format!(
+                "{}/results/{id}.md",
+                run_directory(&pool, first_run).await.unwrap()
+            );
+            let path = control_file_path(root.path(), &note).await.unwrap();
+            write_text_atomic(&path, text).await.unwrap();
+            deliver(&pool, root.path(), first_run, id, &note).await;
+        }
+        let (first, files) = verified(&pool, root.path(), first_attempt).await.unwrap();
+        assert_eq!(first.path, first_index);
+        assert_eq!(
+            read_bound_file(root.path(), &files[0])
+                .await
+                .unwrap()
+                .as_slice(),
+            b"Original outcome"
+        );
+        assert!(
+            output_contract(&pool, first_run, "research", 1)
+                .await
+                .unwrap()
+                .contains(&second_index)
+        );
+        assert!(!root.path().join(".vibe-kanban/workflows").exists());
     }
 
     #[tokio::test]
@@ -610,7 +724,7 @@ mod tests {
             summary_path: Some("research.md".into()),
             artifact_paths: vec![],
         };
-        let path = control_file_path(root.path(), &index_path(run_id, id))
+        let path = control_file_path(root.path(), &index_path(&pool, run_id, id).await.unwrap())
             .await
             .unwrap();
         write_json_atomic(&path, &document).await.unwrap();
@@ -628,11 +742,14 @@ mod tests {
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
             }
             writer.commit().await.unwrap();
-            assert_eq!(acceptance.await.unwrap(), index_path(run_id, id));
+            assert_eq!(
+                acceptance.await.unwrap(),
+                index_path(&pool, run_id, id).await.unwrap()
+            );
         }
         assert_eq!(
             accept(&pool, run_id, id, true).await.unwrap(),
-            index_path(run_id, id)
+            index_path(&pool, run_id, id).await.unwrap()
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM workflow_node_handoffs")
@@ -656,7 +773,7 @@ mod tests {
         .unwrap();
         deliver(&pool, root.path(), run_id, id, "research.md").await;
         let graph = graph();
-        let context = context(&pool, &graph, run_id, &graph.nodes[1], 0)
+        let context = context(&pool, &graph, run_id, &graph.nodes[2], 0)
             .await
             .unwrap();
         let prompt = format!("{}{}", context.run_input_text, context.upstream_text());
@@ -668,7 +785,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            incoming(&pool, &graph, run_id, &graph.nodes[1], 0)
+            incoming(&pool, &graph, run_id, &graph.nodes[2], 0)
                 .await
                 .is_err()
         );
@@ -686,7 +803,7 @@ mod tests {
             summary_path: Some("missing.md".into()),
             artifact_paths: vec![],
         };
-        let path = control_file_path(root.path(), &index_path(run_id, id))
+        let path = control_file_path(root.path(), &index_path(&pool, run_id, id).await.unwrap())
             .await
             .unwrap();
         write_json_atomic(&path, &document).await.unwrap();
@@ -762,7 +879,7 @@ mod tests {
             sources.push(source);
         }
         let graph = graph();
-        let refs = incoming(&pool, &graph, run_id, &graph.nodes[1], 1)
+        let refs = incoming(&pool, &graph, run_id, &graph.nodes[2], 1)
             .await
             .unwrap();
         assert_eq!(refs.len(), 1);
@@ -788,14 +905,15 @@ mod tests {
             .await
             .unwrap();
         let mut graph = graph();
-        graph.nodes[1].kind = WorkflowNodeKind::Transform;
-        graph.nodes[1].data.mode = Some(workflow::graph::TransformMode::Template);
-        graph.nodes[1].data.template = Some("{{input}}".into());
-        transform(&pool, &graph, run_id, &graph.nodes[1], 0)
+        graph.nodes[2].kind = WorkflowNodeKind::Transform;
+        graph.nodes[2].data.mode = Some(workflow::graph::TransformMode::Template);
+        graph.nodes[2].data.template = Some("{{input}}".into());
+        transform(&pool, &graph, run_id, &graph.nodes[2], 0)
             .await
             .unwrap();
         let output = tokio::fs::read_to_string(root.path().join(format!(
-            ".vibe-kanban/workflows/{run_id}/results/{summary}.md"
+            "{}/results/{summary}.md",
+            run_directory(&pool, run_id).await.unwrap()
         )))
         .await
         .unwrap();

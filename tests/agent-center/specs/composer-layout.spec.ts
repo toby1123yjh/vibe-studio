@@ -193,17 +193,15 @@ test("sending, running, queued and approval controls remain reachable without re
   );
 });
 
-test("send feedback stays visible through request, run and stop without replacing the editor", async ({
+test("runtime changes keep the composer free of activity rows and preserve the editor", async ({
   page,
-}, testInfo) => {
-  await page.emulateMedia({ reducedMotion: "no-preference" });
+}) => {
   await openComposer(page, "&clearOnSend=true&pendingSend=true");
   await message(page).fill("Show immediate feedback");
   const editor = await message(page).elementHandle();
   await message(page).press("Enter");
-  const activity = preview(page).locator("[data-composer-activity]");
-  await expect(activity).toBeVisible();
-  await expect(activity).toHaveText("Sending");
+  const activity = preview(page).locator("[data-conversation-activity]");
+  await expect(activity).toHaveCount(0);
   await expect(
     preview(page).getByRole("button", { name: "Sending", exact: true }),
   ).toBeDisabled();
@@ -219,42 +217,12 @@ test("send feedback stays visible through request, run and stop without replacin
     await page
       .getByRole("spinbutton", { name: "Composer width", exact: true })
       .fill(String(width));
-    for (const mode of ["sending", "running", "queued"]) {
+    await state.selectOption("sending");
+    const initialEditorBounds = await message(page).boundingBox();
+    for (const mode of ["sending", "running", "queued", "stopping"]) {
       await state.selectOption(mode);
-      await expect(activity).toHaveCount(1);
-      await expect(activity).toBeVisible();
-      await expect(activity).toHaveAttribute(
-        "data-composer-activity",
-        mode === "sending" ? "sending" : "running",
-      );
-      await expect(activity).toHaveText(
-        mode === "sending" ? "Sending" : "in progress",
-      );
+      await expect(activity).toHaveCount(0);
       await expectContainedActions(page);
-      const indicator = activity.locator("svg");
-      await expect
-        .poll(() =>
-          indicator.evaluate((element) =>
-            element.getAnimations().some((animation) => {
-              const timing = animation.effect!.getTiming();
-              return (
-                animation.playState === "running" &&
-                timing.iterations === Infinity
-              );
-            }),
-          ),
-        )
-        .toBe(true);
-      const startedAt = await indicator.evaluate(
-        (element) => element.getAnimations()[0].currentTime as number,
-      );
-      await expect
-        .poll(() =>
-          indicator.evaluate(
-            (element) => element.getAnimations()[0].currentTime as number,
-          ),
-        )
-        .toBeGreaterThan(startedAt);
       expect(
         await message(page).evaluate(
           (element, original) => element === original,
@@ -262,26 +230,26 @@ test("send feedback stays visible through request, run and stop without replacin
         ),
       ).toBe(true);
       await expect(message(page)).toHaveText("Prepare the next message");
+      // Queued messages retain their existing cancel-queue banner.
+      if (mode !== "queued") {
+        const bounds = await message(page).boundingBox();
+        expect(Math.abs(bounds!.y - initialEditorBounds!.y)).toBeLessThan(1);
+        expect(bounds!.height).toBe(initialEditorBounds!.height);
+      }
       await expect(
         preview(page).locator(
           "[data-composer-primary-actions] [role='status']",
         ),
       ).toHaveCount(0);
-      if (mode === "sending" || mode === "running") {
-        await preview(page).screenshot({
-          path: testInfo.outputPath(`composer-${mode}-${width}.png`),
-          animations: "disabled",
-        });
-      }
     }
   }
+  await state.selectOption("running");
   await preview(page)
     .getByRole("button", { name: "Stop", exact: true })
     .click();
   await expect(page.getByTestId("composer-action")).toHaveText("stop");
   await state.selectOption("stopping");
-  await expect(activity).toHaveAttribute("data-composer-activity", "stopping");
-  await expect(activity).toHaveText("Stopping");
+  await expect(activity).toHaveCount(0);
   await expect(
     preview(page).getByRole("button", { name: "Stopping", exact: true }),
   ).toBeDisabled();
@@ -292,26 +260,17 @@ test("send feedback stays visible through request, run and stop without replacin
   await page.emulateMedia({ reducedMotion: "reduce" });
   for (const mode of ["sending", "running"]) {
     await state.selectOption(mode);
-    await expect(activity).toBeVisible();
+    await expect(activity).toHaveCount(0);
     await expect(
       preview(page).getByRole("button", {
         name: mode === "sending" ? "Sending" : "Stop",
         exact: true,
       }),
     ).toBeVisible();
-    expect(
-      await activity
-        .locator("svg")
-        .evaluateAll((elements) =>
-          elements.every(
-            (element) => getComputedStyle(element).animationName === "none",
-          ),
-        ),
-    ).toBe(true);
   }
 });
 
-test("new session creation uses the same ongoing send feedback", async ({
+test("new session creation keeps feedback outside the input", async ({
   page,
 }) => {
   await page.goto("/?signedOut=true&selectors=true&composerPreview=true");
@@ -320,9 +279,7 @@ test("new session creation uses the same ongoing send feedback", async ({
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Start a session");
   await box.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(box.locator("[data-composer-activity='sending']")).toHaveText(
-    "Sending",
-  );
+  await expect(box.locator("[data-conversation-activity]")).toHaveCount(0);
   await expect(
     box.getByRole("button", { name: "Creating...", exact: true }),
   ).toBeDisabled();

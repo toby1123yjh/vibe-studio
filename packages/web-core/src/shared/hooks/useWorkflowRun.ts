@@ -13,6 +13,7 @@ import {
   type SelectConditionBranchRequest,
 } from '@/shared/lib/workflowApi';
 import type { WorkflowRunResponse, TriggerWorkflowRequest } from 'shared/types';
+import { shouldRefreshWorkflowRun } from '@/features/workflow/model/workflowRuntimeView';
 
 export const workflowRunQueryKeys = {
   all: ['workflow-runs'] as const,
@@ -47,13 +48,7 @@ export function useWorkflowRun(
       if (refetchIntervalMs === false) return false;
       const data = query.state.data as WorkflowRunResponse | undefined;
       if (!data) return false;
-      const isActive =
-        data.status === 'pending' ||
-        data.status === 'running' ||
-        data.status === 'awaiting_human' ||
-        data.status === 'awaiting_arena' ||
-        data.status === 'cancelling';
-      return isActive ? refetchIntervalMs : false;
+      return shouldRefreshWorkflowRun(data) ? refetchIntervalMs : false;
     },
     refetchOnWindowFocus: false,
   });

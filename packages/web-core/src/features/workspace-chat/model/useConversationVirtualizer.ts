@@ -53,6 +53,9 @@ export interface ConversationVirtualizerOptions {
   /** Keep a bounded activity tail mounted in the same keyed row list. */
   pinnedTailCount: number;
 
+  /** A transient footer participates in bottom following without becoming a row. */
+  hasFooter?: boolean;
+
   /** Ref to the scrollable container element. */
   scrollContainerRef: RefObject<HTMLDivElement | null>;
 
@@ -143,6 +146,7 @@ export interface ConversationVirtualizerResult {
 export function useConversationVirtualizer({
   rows,
   pinnedTailCount,
+  hasFooter = false,
   scrollContainerRef,
   onAtBottomChange,
   shouldSuppressSizeAdjustment,
@@ -406,7 +410,7 @@ export function useConversationVirtualizer({
     if (maxScroll > 0 && Math.abs(maxScroll - el.scrollTop) > 1) {
       el.scrollTop = maxScroll;
     }
-  }, [rows.length, totalSize, syncIsAtBottom, scrollContainerRef]);
+  }, [rows.length, totalSize, hasFooter, syncIsAtBottom, scrollContainerRef]);
 
   // -------------------------------------------------------------------------
   // Imperative helpers

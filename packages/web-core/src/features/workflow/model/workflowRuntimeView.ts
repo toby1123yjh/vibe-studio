@@ -1,6 +1,7 @@
 import type {
   NodeExecutionStatus,
   ProjectionStatus,
+  WorkflowCoordinationEventView,
   WorkflowNodeExecutionResponse,
   WorkflowNodeWorkStatus,
   WorkflowNodeWorkView,
@@ -89,6 +90,61 @@ export type WorkflowNodeTaskTarget =
 export interface WorkflowRunActionGate {
   canCancel: boolean;
   cancellationPending: boolean;
+}
+
+/** Coordination is additional work, never a replacement for a failed outcome. */
+export function getWorkflowCoordinationEvents(
+  run: WorkflowRunResponse
+): WorkflowCoordinationEventView[] {
+  return (run.handover_events ?? []).filter(
+    (event) =>
+      event.run_id === run.id &&
+      Boolean(event.session_id) &&
+      (event.kind === 'split_dispatch' ||
+        (event.kind === 'node_exception' &&
+          run.nodes.some(
+            (node) =>
+              node.id === event.node_execution_id && node.run_id === run.id
+          )))
+  );
+}
+
+export function getWorkflowExecutionCoordination(
+  run: WorkflowRunResponse,
+  executionId: string | null | undefined
+): WorkflowCoordinationEventView | null {
+  if (!executionId) return null;
+  return (
+    getWorkflowCoordinationEvents(run).find(
+      (event) =>
+        event.kind === 'node_exception' &&
+        event.node_execution_id === executionId
+    ) ?? null
+  );
+}
+
+export function hasPendingWorkflowCoordination(
+  run: WorkflowRunResponse
+): boolean {
+  return (
+    run.status !== 'canceled' &&
+    run.status !== 'succeeded' &&
+    getWorkflowCoordinationEvents(run).some(
+      (event) => event.state === 'pending' || event.state === 'claimed'
+    )
+  );
+}
+
+export function shouldRefreshWorkflowRun(run: WorkflowRunResponse): boolean {
+  return (
+    [
+      'pending',
+      'running',
+      'awaiting_human',
+      'awaiting_arena',
+      'cancelling',
+    ].includes(run.status) || hasPendingWorkflowCoordination(run)
+  );
 }
 
 export interface WorkflowSplitProgress {
@@ -406,7 +462,8 @@ export function getWorkflowRunActionGate(
       run.status === 'pending' ||
       run.status === 'running' ||
       run.status === 'awaiting_human' ||
-      run.status === 'awaiting_arena',
+      run.status === 'awaiting_arena' ||
+      (run.status !== 'cancelling' && hasPendingWorkflowCoordination(run)),
     cancellationPending: run.status === 'cancelling',
   };
 }

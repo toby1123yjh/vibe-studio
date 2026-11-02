@@ -825,6 +825,16 @@
         "attemptB": "Attempt B"
       }
     },
+    "coordination": {
+      "pending": "Waiting for main Agent",
+      "claimed": "Main Agent has taken over",
+      "completed": "Main Agent processed the exception",
+      "failed": "Main Agent could not finish",
+      "cancelled": "Main Agent handoff stopped",
+      "unknown": "Main Agent coordination",
+      "outcomeHint": "The original execution result is retained. Follow subsequent runs for delivery progress.",
+      "openMainSession": "Open original main conversation"
+    },
     "split": {
       "output": "Output",
       "defaultPrompt": "Break the incoming work into independent subtasks. Write tasks.json and one instruction file per subtask under the workflow control directory. Include dependencies and point to the relevant source files.",

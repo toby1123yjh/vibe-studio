@@ -252,6 +252,14 @@ test('first creation echoes before the response and preserves the next draft', a
   await expect(page.locator('[data-creation-conversation]')).toContainText(
     'Hello agent'
   );
+  await expect(
+    page.locator(
+      '[data-creation-conversation] [data-conversation-activity="sending"]'
+    )
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-chat-composer] [data-conversation-activity]')
+  ).toHaveCount(0);
   await expect(editor).toHaveValue('');
   expect(await page.evaluate(() => window.managedFixture.created)).toEqual([]);
   await editor.fill('Next draft');
@@ -265,6 +273,9 @@ test('first creation echoes before the response and preserves the next draft', a
   await expect(page.locator('[data-creation-conversation]')).toContainText(
     'Hello agent'
   );
+  await expect(
+    page.locator('[data-creation-conversation] [data-conversation-activity]')
+  ).toBeVisible();
   await expect(send(page)).toBeDisabled();
   expect((await calls(page))[0].data.prompt).toBe('Hello agent');
   await page.evaluate(() =>

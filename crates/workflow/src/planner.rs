@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -57,32 +60,21 @@ pub struct ReadyPlan {
 pub fn plan_ready_nodes(graph: &WorkflowGraph, snapshot: &RunSnapshot) -> ReadyPlan {
     let batch_managed = crate::dispatch::batch_managed_nodes(graph);
     let executions = execution_snapshots(graph, snapshot);
-    let incoming = incoming_edges(graph);
-    let nodes_by_id = graph
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect::<HashMap<_, _>>();
-
-    let ready_nodes = executions
-        .iter()
-        .filter(|execution| execution.status == NodeExecutionStatus::Pending)
-        .filter(|execution| !batch_managed.contains(&execution.node_id))
-        .filter_map(|execution| {
-            let node = nodes_by_id.get(execution.node_id.as_str())?;
-            if execution_is_ready(
-                node,
-                execution.iteration,
-                incoming.get(node.id.as_str()).map(Vec::as_slice),
-                graph,
-                &executions,
-            ) {
-                Some(ready_node(node, execution.iteration))
-            } else {
-                None
+    let rounds = ExecutionRounds::new(graph, &executions);
+    let mut ready_nodes = Vec::new();
+    for node in &graph.nodes {
+        if batch_managed.contains(&node.id) {
+            continue;
+        }
+        for (round, execution) in rounds.node_executions(&node.id).enumerate() {
+            if execution.status == NodeExecutionStatus::Pending
+                && (node.kind == WorkflowNodeKind::Start && round == 0
+                    || matches!(rounds.dependencies(&node.id, round), Dependencies::Ready(_)))
+            {
+                ready_nodes.push(ready_node(node, execution.iteration));
             }
-        })
-        .collect::<Vec<_>>();
+        }
+    }
 
     ReadyPlan {
         ready_nodes,
@@ -125,79 +117,261 @@ pub fn triggered_execution_count(
         return 0;
     }
     let executions = execution_snapshots(graph, snapshot);
-    let incoming = incoming_edges(graph);
-    incoming
-        .get(target_node_id)
-        .map(|edges| {
-            edges
-                .iter()
-                .map(|edge| succeeded_trigger_count_for_edge(graph, edge, &executions))
-                .sum()
-        })
-        .unwrap_or_default()
-}
-
-fn incoming_edges(graph: &WorkflowGraph) -> HashMap<&str, Vec<&WorkflowEdge>> {
-    let mut incoming: HashMap<&str, Vec<&WorkflowEdge>> = graph
-        .nodes
+    let rounds = ExecutionRounds::new(graph, &executions);
+    let count = graph
+        .edges
         .iter()
-        .map(|node| (node.id.as_str(), Vec::new()))
-        .collect();
-
-    for edge in &graph.edges {
-        incoming.entry(edge.target.as_str()).or_default().push(edge);
-    }
-
-    incoming
-}
-
-fn execution_is_ready(
-    node: &WorkflowNode,
-    iteration: i64,
-    incoming: Option<&[&WorkflowEdge]>,
-    graph: &WorkflowGraph,
-    executions: &[NodeExecutionSnapshot],
-) -> bool {
-    let Some(incoming) = incoming else {
-        return node.kind == WorkflowNodeKind::Start && iteration == 0;
-    };
-    if incoming.is_empty() {
-        return node.kind == WorkflowNodeKind::Start && iteration == 0;
-    }
-
-    incoming
-        .iter()
-        .any(|edge| succeeded_trigger_count_for_edge(graph, edge, executions) > 0)
-}
-
-fn succeeded_trigger_count_for_edge(
-    graph: &WorkflowGraph,
-    edge: &WorkflowEdge,
-    executions: &[NodeExecutionSnapshot],
-) -> i64 {
-    executions
-        .iter()
-        .filter(|execution| {
-            execution.status == NodeExecutionStatus::Succeeded
-                && execution.node_id == edge.source
-                && execution_triggers_edge(graph, edge, execution)
+        .filter(|edge| edge.target == target_node_id)
+        .map(|edge| rounds.node_executions(&edge.source).count())
+        .max()
+        .unwrap_or_default();
+    // One completed set of required inputs consumes one round. Counting edges
+    // would run a join twice when its two parallel inputs finish together.
+    (0..count)
+        .take_while(|round| {
+            matches!(
+                rounds.dependencies(target_node_id, *round),
+                Dependencies::Ready(_)
+            )
         })
         .count() as i64
 }
 
-fn execution_triggers_edge(
+/// Select the exact effective input executions for this target's round. The
+/// runtime resolves these (node, iteration) pairs to immutable source IDs and
+/// verifies their accepted files before launch. Reused iteration numbers are
+/// intentionally not renumbered: their ordered position is the logical round.
+pub fn upstream_execution_rounds(
     graph: &WorkflowGraph,
-    edge: &WorkflowEdge,
-    execution: &NodeExecutionSnapshot,
-) -> bool {
-    let Some(source_node) = graph.nodes.iter().find(|node| node.id == edge.source) else {
-        return false;
+    snapshot: &RunSnapshot,
+    target_node_id: &str,
+    target_iteration: i64,
+) -> Vec<(String, i64)> {
+    let executions = execution_snapshots(graph, snapshot);
+    let rounds = ExecutionRounds::new(graph, &executions);
+    let Some(round) = rounds
+        .node_executions(target_node_id)
+        .position(|execution| execution.iteration == target_iteration)
+    else {
+        return Vec::new();
     };
-    if source_node.kind != WorkflowNodeKind::Condition {
-        return true;
+    match rounds.dependencies(target_node_id, round) {
+        Dependencies::Ready(inputs) => inputs
+            .into_iter()
+            .map(|execution| (execution.node_id.clone(), execution.iteration))
+            .collect(),
+        Dependencies::Inactive | Dependencies::Waiting => Vec::new(),
+    }
+}
+
+/// Only recorded Condition choices can exclude a path. A failed run may also
+/// contain `skipped` rows; those are not proof that a required input is optional.
+pub fn skipped_node_rounds(graph: &WorkflowGraph, snapshot: &RunSnapshot) -> Vec<(String, i64)> {
+    let executions = execution_snapshots(graph, snapshot);
+    let rounds = ExecutionRounds::new(graph, &executions);
+    let batch_managed = crate::dispatch::batch_managed_nodes(graph);
+    let mut skipped = Vec::new();
+    for node in &graph.nodes {
+        if node.kind == WorkflowNodeKind::Start || batch_managed.contains(&node.id) {
+            continue;
+        }
+        for (round, execution) in rounds.node_executions(&node.id).enumerate() {
+            if execution.status == NodeExecutionStatus::Pending
+                && rounds.activation(&node.id, round, &mut HashSet::new()) == Activation::Inactive
+            {
+                skipped.push((node.id.clone(), execution.iteration));
+            }
+        }
+    }
+    skipped
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Activation {
+    Active,
+    Inactive,
+    Unknown,
+}
+
+enum Dependencies<'a> {
+    Ready(Vec<&'a NodeExecutionSnapshot>),
+    Inactive,
+    Waiting,
+}
+
+struct ExecutionRounds<'a> {
+    graph: &'a WorkflowGraph,
+    executions: HashMap<&'a str, Vec<&'a NodeExecutionSnapshot>>,
+    activations: RefCell<HashMap<(String, usize), Activation>>,
+}
+
+impl<'a> ExecutionRounds<'a> {
+    fn new(graph: &'a WorkflowGraph, executions: &'a [NodeExecutionSnapshot]) -> Self {
+        let mut grouped: HashMap<&str, Vec<&NodeExecutionSnapshot>> = HashMap::new();
+        for execution in executions {
+            grouped
+                .entry(&execution.node_id)
+                .or_default()
+                .push(execution);
+        }
+        for executions in grouped.values_mut() {
+            executions.sort_by_key(|execution| execution.iteration);
+        }
+        Self {
+            graph,
+            executions: grouped,
+            activations: RefCell::default(),
+        }
     }
 
-    condition_output_selects_target(execution.output_text.as_deref(), &edge.target)
+    fn node_executions(
+        &self,
+        node_id: &str,
+    ) -> impl Iterator<Item = &'a NodeExecutionSnapshot> + '_ {
+        self.executions.get(node_id).into_iter().flatten().copied()
+    }
+
+    fn execution(&self, node_id: &str, round: usize) -> Option<&'a NodeExecutionSnapshot> {
+        self.executions.get(node_id)?.get(round).copied()
+    }
+
+    fn edge_activation(
+        &self,
+        edge: &WorkflowEdge,
+        round: usize,
+        visiting: &mut HashSet<String>,
+    ) -> Activation {
+        let source = self.activation(&edge.source, round, visiting);
+        if source != Activation::Active {
+            return source;
+        }
+        let Some(node) = self.graph.nodes.iter().find(|node| node.id == edge.source) else {
+            return Activation::Unknown;
+        };
+        if node.kind != WorkflowNodeKind::Condition {
+            return Activation::Active;
+        }
+        let Some(execution) = self.execution(&edge.source, round) else {
+            return Activation::Unknown;
+        };
+        if execution.status != NodeExecutionStatus::Succeeded {
+            return Activation::Unknown;
+        }
+        let Some(selected) = condition_selected_targets(execution.output_text.as_deref()) else {
+            return Activation::Unknown;
+        };
+        if selected.is_empty()
+            || selected.iter().any(|target| {
+                !self
+                    .graph
+                    .edges
+                    .iter()
+                    .any(|candidate| candidate.source == edge.source && candidate.target == *target)
+            })
+        {
+            return Activation::Unknown;
+        }
+        if selected.iter().any(|target| target == &edge.target) {
+            Activation::Active
+        } else {
+            Activation::Inactive
+        }
+    }
+
+    fn activation(
+        &self,
+        node_id: &str,
+        round: usize,
+        visiting: &mut HashSet<String>,
+    ) -> Activation {
+        let key = (node_id.to_string(), round);
+        if let Some(state) = self.activations.borrow().get(&key) {
+            return *state;
+        }
+        let Some(node) = self.graph.nodes.iter().find(|node| node.id == node_id) else {
+            return Activation::Unknown;
+        };
+        if node.kind == WorkflowNodeKind::Start {
+            return Activation::Active;
+        }
+        if !visiting.insert(node_id.to_string()) {
+            return Activation::Unknown;
+        }
+        let mut incoming = self
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.target == node_id)
+            .peekable();
+        let state = if incoming.peek().is_none() {
+            Activation::Unknown
+        } else {
+            let mut state = Activation::Inactive;
+            for edge in incoming {
+                match self.edge_activation(edge, round, visiting) {
+                    Activation::Active => {
+                        state = Activation::Active;
+                        break;
+                    }
+                    Activation::Unknown => state = Activation::Unknown,
+                    Activation::Inactive => {}
+                }
+            }
+            state
+        };
+        visiting.remove(node_id);
+        self.activations.borrow_mut().insert(key, state);
+        state
+    }
+
+    fn dependencies(&self, node_id: &str, round: usize) -> Dependencies<'a> {
+        let mut inputs = Vec::new();
+        let mut waiting = false;
+        for edge in self
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.target == node_id)
+        {
+            match self.edge_activation(edge, round, &mut HashSet::new()) {
+                Activation::Inactive => continue,
+                Activation::Unknown => {
+                    waiting = true;
+                    continue;
+                }
+                Activation::Active => {}
+            }
+            match self.execution(&edge.source, round) {
+                Some(execution) if execution.status == NodeExecutionStatus::Succeeded => {
+                    if !inputs.iter().any(|input: &&NodeExecutionSnapshot| {
+                        input.node_id == execution.node_id && input.iteration == execution.iteration
+                    }) {
+                        inputs.push(execution);
+                    }
+                }
+                _ => waiting = true,
+            }
+        }
+        if waiting {
+            Dependencies::Waiting
+        } else if inputs.is_empty() {
+            Dependencies::Inactive
+        } else {
+            Dependencies::Ready(inputs)
+        }
+    }
+}
+
+fn condition_selected_targets(output_text: Option<&str>) -> Option<Vec<String>> {
+    let output: serde_json::Value = serde_json::from_str(output_text?).ok()?;
+    let selected = output
+        .get("selected_target_node_ids")
+        .or_else(|| output.get("decision")?.get("selected_target_node_ids"))?
+        .as_array()?;
+    selected
+        .iter()
+        .map(|item| item.as_str().map(str::to_owned))
+        .collect()
 }
 
 pub(crate) fn condition_output_selects_target(
@@ -247,7 +421,7 @@ mod tests {
         },
         planner::{
             NodeExecutionSnapshot, NodeExecutionStatus, RunSnapshot, plan_ready_nodes,
-            triggered_execution_count,
+            skipped_node_rounds, triggered_execution_count, upstream_execution_rounds,
         },
     };
 
@@ -369,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn fan_in_is_ready_after_any_upstream_succeeds() {
+    fn fan_in_waits_for_all_required_upstream_deliveries_and_consumes_one_round() {
         let graph = graph(
             vec![
                 node("start", WorkflowNodeKind::Start),
@@ -395,7 +569,18 @@ mod tests {
             ]),
         );
         assert_eq!(ready_after_one.ready_nodes[0].node_id, "b");
-        assert_eq!(ready_after_one.ready_nodes[1].node_id, "join");
+        assert_eq!(ready_after_one.ready_nodes.len(), 1);
+        assert_eq!(
+            triggered_execution_count(
+                &graph,
+                &snapshot(&[
+                    ("start", NodeExecutionStatus::Succeeded),
+                    ("a", NodeExecutionStatus::Succeeded),
+                ]),
+                "join"
+            ),
+            0
+        );
 
         let ready = plan_ready_nodes(
             &graph,
@@ -413,10 +598,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["join"]
         );
+        assert_eq!(
+            triggered_execution_count(
+                &graph,
+                &snapshot(&[
+                    ("start", NodeExecutionStatus::Succeeded),
+                    ("a", NodeExecutionStatus::Succeeded),
+                    ("b", NodeExecutionStatus::Succeeded),
+                ]),
+                "join"
+            ),
+            1
+        );
     }
 
     #[test]
-    fn skipped_branch_unblocks_join_when_another_upstream_succeeded() {
+    fn failure_skip_does_not_make_a_required_input_optional() {
         let graph = graph(
             vec![
                 node("start", WorkflowNodeKind::Start),
@@ -443,7 +640,7 @@ mod tests {
             ]),
         );
 
-        assert_eq!(plan.ready_nodes[0].node_id, "join");
+        assert!(plan.ready_nodes.is_empty());
     }
 
     #[test]
@@ -571,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn fan_in_can_ready_later_iterations_for_same_node() {
+    fn completed_join_cannot_consume_the_same_inputs_a_second_time() {
         let graph = graph(
             vec![
                 node("start", WorkflowNodeKind::Start),
@@ -636,7 +833,213 @@ mod tests {
         assert!(
             plan.ready_nodes
                 .iter()
-                .any(|node| { node.node_id == "join" && node.iteration == 1 })
+                .all(|node| { node.node_id != "join" || node.iteration != 1 })
         );
+    }
+
+    #[test]
+    fn unselected_nested_branch_is_excluded_without_waiting_for_phantom_deliveries() {
+        let graph = graph(
+            vec![
+                node("start", WorkflowNodeKind::Start),
+                node("route", WorkflowNodeKind::Condition),
+                node("selected", WorkflowNodeKind::Agent),
+                node("unused", WorkflowNodeKind::Agent),
+                node("unused-child", WorkflowNodeKind::Agent),
+                node("join", WorkflowNodeKind::Agent),
+            ],
+            vec![
+                edge("s-r", "start", "route"),
+                condition_edge("r-s", "route", "selected"),
+                condition_edge("r-u", "route", "unused"),
+                edge("u-c", "unused", "unused-child"),
+                edge("s-j", "selected", "join"),
+                edge("c-j", "unused-child", "join"),
+            ],
+        );
+        let mut state = snapshot(&[
+            ("start", NodeExecutionStatus::Succeeded),
+            ("route", NodeExecutionStatus::Succeeded),
+            ("selected", NodeExecutionStatus::Succeeded),
+        ]);
+        state.nodes[1].output_text = Some(condition_output(&["selected"], &["unused"]));
+        let plan = plan_ready_nodes(&graph, &state);
+        assert_eq!(
+            plan.ready_nodes
+                .iter()
+                .map(|node| node.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["join"]
+        );
+        assert_eq!(
+            skipped_node_rounds(&graph, &state),
+            vec![("unused".into(), 0), ("unused-child".into(), 0)]
+        );
+        assert_eq!(
+            upstream_execution_rounds(&graph, &state, "join", 0),
+            vec![("selected".into(), 0)]
+        );
+    }
+
+    #[test]
+    fn unresolved_condition_blocks_a_join_even_when_an_independent_input_succeeded() {
+        let graph = graph(
+            vec![
+                node("start", WorkflowNodeKind::Start),
+                node("ready", WorkflowNodeKind::Agent),
+                node("route", WorkflowNodeKind::Condition),
+                node("possible", WorkflowNodeKind::Agent),
+                node("other", WorkflowNodeKind::Agent),
+                node("join", WorkflowNodeKind::Agent),
+            ],
+            vec![
+                edge("s-a", "start", "ready"),
+                edge("s-r", "start", "route"),
+                condition_edge("r-p", "route", "possible"),
+                condition_edge("r-o", "route", "other"),
+                edge("a-j", "ready", "join"),
+                edge("p-j", "possible", "join"),
+            ],
+        );
+        let mut state = snapshot(&[
+            ("start", NodeExecutionStatus::Succeeded),
+            ("ready", NodeExecutionStatus::Succeeded),
+            ("route", NodeExecutionStatus::Running),
+        ]);
+        assert!(plan_ready_nodes(&graph, &state).ready_nodes.is_empty());
+        assert!(skipped_node_rounds(&graph, &state).is_empty());
+        state.nodes[2].status = NodeExecutionStatus::Succeeded;
+        state.nodes[2].output_text = Some(condition_output(&["other"], &["possible"]));
+        let plan = plan_ready_nodes(&graph, &state);
+        assert!(plan.ready_nodes.iter().any(|node| node.node_id == "join"));
+        assert_eq!(
+            upstream_execution_rounds(&graph, &state, "join", 0),
+            vec![("ready".into(), 0)]
+        );
+    }
+
+    #[test]
+    fn all_selected_condition_branches_are_required_at_the_join() {
+        let graph = graph(
+            vec![
+                node("start", WorkflowNodeKind::Start),
+                node("route", WorkflowNodeKind::Condition),
+                node("a", WorkflowNodeKind::Agent),
+                node("b", WorkflowNodeKind::Agent),
+                node("join", WorkflowNodeKind::Agent),
+            ],
+            vec![
+                edge("s-r", "start", "route"),
+                condition_edge("r-a", "route", "a"),
+                condition_edge("r-b", "route", "b"),
+                edge("a-j", "a", "join"),
+                edge("b-j", "b", "join"),
+            ],
+        );
+        let mut state = snapshot(&[
+            ("start", NodeExecutionStatus::Succeeded),
+            ("route", NodeExecutionStatus::Succeeded),
+            ("a", NodeExecutionStatus::Succeeded),
+            ("b", NodeExecutionStatus::Failed),
+        ]);
+        state.nodes[1].output_text = Some(condition_output(&["a", "b"], &[]));
+        assert!(plan_ready_nodes(&graph, &state).ready_nodes.is_empty());
+        assert!(skipped_node_rounds(&graph, &state).is_empty());
+        assert_eq!(triggered_execution_count(&graph, &state, "join"), 0);
+    }
+
+    #[test]
+    fn inputs_bind_to_one_ordered_round_without_mixing_earlier_successes() {
+        let graph = graph(
+            vec![
+                node("start", WorkflowNodeKind::Start),
+                node("a", WorkflowNodeKind::Agent),
+                node("b", WorkflowNodeKind::Agent),
+                node("join", WorkflowNodeKind::Agent),
+            ],
+            vec![
+                edge("s-a", "start", "a"),
+                edge("s-b", "start", "b"),
+                edge("a-j", "a", "join"),
+                edge("b-j", "b", "join"),
+            ],
+        );
+        let mut state = snapshot(&[
+            ("start", NodeExecutionStatus::Succeeded),
+            ("a", NodeExecutionStatus::Succeeded),
+            ("b", NodeExecutionStatus::Succeeded),
+            ("join", NodeExecutionStatus::Succeeded),
+        ]);
+        for (node_id, iteration, status) in [
+            ("a", 4, NodeExecutionStatus::Succeeded),
+            ("b", 7, NodeExecutionStatus::Running),
+            ("join", 2, NodeExecutionStatus::Pending),
+        ] {
+            state.nodes.push(NodeExecutionSnapshot {
+                node_id: node_id.into(),
+                iteration,
+                status,
+                output_text: None,
+                error_text: None,
+            });
+        }
+        assert!(
+            plan_ready_nodes(&graph, &state)
+                .ready_nodes
+                .iter()
+                .all(|node| node.node_id != "join")
+        );
+        assert!(upstream_execution_rounds(&graph, &state, "join", 2).is_empty());
+        state
+            .nodes
+            .iter_mut()
+            .find(|node| node.node_id == "b" && node.iteration == 7)
+            .unwrap()
+            .status = NodeExecutionStatus::Succeeded;
+        assert_eq!(triggered_execution_count(&graph, &state, "join"), 2);
+        assert_eq!(
+            upstream_execution_rounds(&graph, &state, "join", 2),
+            vec![("a".into(), 4), ("b".into(), 7)]
+        );
+        assert_eq!(
+            plan_ready_nodes(&graph, &state)
+                .ready_nodes
+                .iter()
+                .filter(|node| node.node_id == "join")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn retry_run_reuses_the_verified_sibling_execution_without_replaying_its_round() {
+        let graph = graph(
+            vec![
+                node("start", WorkflowNodeKind::Start),
+                node("a", WorkflowNodeKind::Agent),
+                node("b", WorkflowNodeKind::Agent),
+                node("join", WorkflowNodeKind::Agent),
+            ],
+            vec![
+                edge("s-a", "start", "a"),
+                edge("s-b", "start", "b"),
+                edge("a-j", "a", "join"),
+                edge("b-j", "b", "join"),
+            ],
+        );
+        let mut state = snapshot(&[
+            ("start", NodeExecutionStatus::Succeeded),
+            ("a", NodeExecutionStatus::Succeeded),
+            ("b", NodeExecutionStatus::Running),
+        ]);
+        state.run_id = "retry-run".into();
+        state.nodes[1].iteration = 5; // Exact reused source iteration, not a new Agent execution.
+        assert!(plan_ready_nodes(&graph, &state).ready_nodes.is_empty());
+        state.nodes[2].status = NodeExecutionStatus::Succeeded;
+        assert_eq!(
+            upstream_execution_rounds(&graph, &state, "join", 0),
+            vec![("a".into(), 5), ("b".into(), 0)]
+        );
+        assert_eq!(triggered_execution_count(&graph, &state, "join"), 1);
     }
 }

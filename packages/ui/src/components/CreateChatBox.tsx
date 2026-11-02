@@ -5,7 +5,6 @@ import { Checkbox } from './Checkbox';
 import { ChatBoxBase, VisualVariant, type DropzoneProps } from './ChatBoxBase';
 import { DropdownMenuItem, DropdownMenuLabel } from './Dropdown';
 import { PrimaryButton } from './PrimaryButton';
-import { ChatComposerActivity } from './ChatComposerActivity';
 import type { LocalAttachmentMetadata } from './WorkspaceContext';
 import { ToolbarDropdown, ToolbarIconButton } from './Toolbar';
 
@@ -164,14 +163,6 @@ export function CreateChatBox<TExecutor extends string = string>({
       visualVariant={VisualVariant.NORMAL}
       dropzone={dropzone}
       modelSelector={modelSelector}
-      status={
-        isSending ? (
-          <ChatComposerActivity
-            state="sending"
-            label={t('tasks:conversation.actions.sending')}
-          />
-        ) : undefined
-      }
       headerLeft={
         <>
           <span

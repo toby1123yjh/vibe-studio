@@ -69,6 +69,7 @@ const baseRun = {
   nodes: [],
   split_batches: [],
   handoffs: [],
+  handover_events: [],
   delivery: null,
   request_path: null,
 } satisfies WorkflowRunResponse;

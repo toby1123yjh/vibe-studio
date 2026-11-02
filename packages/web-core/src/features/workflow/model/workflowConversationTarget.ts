@@ -11,6 +11,7 @@ import {
   getWorkflowNodeExecutionForWork,
   getWorkflowNodeExecutionTarget,
   getWorkflowNodeWork,
+  getWorkflowCoordinationEvents,
   type WorkflowRuntimeProjection,
 } from './workflowRuntimeView';
 
@@ -30,6 +31,30 @@ export interface WorkflowConversationTarget {
   resolveSource?: boolean;
   arenaGroupId?: string | null;
   candidateId?: string;
+}
+
+/** A coordination link opens its persisted original Session without preparing work. */
+export function getWorkflowCoordinationConversation(
+  run: WorkflowRunResponse,
+  eventId: string,
+  title: string
+): WorkflowConversationTarget | null {
+  const event = getWorkflowCoordinationEvents(run).find(
+    (item) => item.id === eventId
+  );
+  if (!event || !run.workspace_id) return null;
+  return {
+    key: `main:${event.session_id}`,
+    kind: 'main',
+    runId: run.id,
+    nodeId: null,
+    nodeExecutionId: null,
+    workspaceId: run.workspace_id,
+    sessionId: event.session_id,
+    title,
+    status: run.status,
+    readOnly: false,
+  };
 }
 
 export function workflowConversationScopeKey(

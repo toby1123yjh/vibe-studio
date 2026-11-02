@@ -35,6 +35,7 @@ import type {
 } from 'shared/types';
 import { CreateChatBox } from '@vibe/ui/components/CreateChatBox';
 import { ChatUserMessage } from '@vibe/ui/components/ChatUserMessage';
+import { ChatConversationActivity } from '@vibe/ui/components/ChatConversationActivity';
 import type { LinkedTask } from '@/shared/types/createMode';
 import { useSettingsNavigation } from '@/shared/hooks/useSettingsNavigation';
 import { WorkspaceTargetDialog } from '@/shared/dialogs/shared/WorkspaceTargetDialog';
@@ -721,6 +722,12 @@ export function CreateChatBoxContainer({
                         localAttachments={localAttachments}
                       />
                     )}
+                  />
+                )}
+                {isCreating && pendingCreation.sends.length > 0 && (
+                  <ChatConversationActivity
+                    state="sending"
+                    label={t('tasks:conversation.actions.sending')}
                   />
                 )}
               </div>
