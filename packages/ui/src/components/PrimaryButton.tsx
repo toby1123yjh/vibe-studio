@@ -1,6 +1,6 @@
-import { SpinnerIcon, type Icon } from '@phosphor-icons/react';
+import type { Icon } from '@phosphor-icons/react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
-import { cn } from '../lib/cn';
+import { Button } from './Button';
 
 interface PrimaryButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'value' | 'onClick'> {
@@ -23,40 +23,34 @@ export function PrimaryButton({
   className,
   ...props
 }: PrimaryButtonProps) {
-  const variantStyles = disabled
-    ? 'cursor-not-allowed bg-panel'
-    : variant === 'default'
-      ? 'bg-brand hover:bg-brand-hover text-on-brand'
-      : variant === 'secondary'
-        ? 'bg-brand-secondary hover:bg-brand-hover text-on-brand'
-        : 'bg-panel hover:bg-secondary text-normal';
-
   return (
-    <button
-      className={cn(
-        'rounded-sm px-base py-half text-cta min-h-cta flex gap-half items-center',
-        variantStyles,
-        className
-      )}
+    <Button
+      variant={
+        variant === 'tertiary'
+          ? 'ghost'
+          : variant === 'secondary'
+            ? 'secondary'
+            : 'default'
+      }
+      className={className}
       onClick={onClick}
       disabled={disabled}
+      loading={ActionIcon === 'spinner'}
       {...props}
     >
-      {value}
-      {children}
-      {ActionIcon ? (
+      <span className="min-w-0">
+        {value}
+        {children}
+      </span>
+      {ActionIcon && ActionIcon !== 'spinner' ? (
         <span
           className="inline-flex shrink-0 items-center justify-center"
           data-button-icon="true"
           aria-hidden="true"
         >
-          {ActionIcon === 'spinner' ? (
-            <SpinnerIcon className="size-icon-sm animate-spin" weight="bold" />
-          ) : (
-            <ActionIcon className="size-icon-xs" weight="bold" />
-          )}
+          <ActionIcon className="size-4" weight="bold" />
         </span>
       ) : null}
-    </button>
+    </Button>
   );
 }

@@ -83,6 +83,7 @@ import {
   WORKFLOW_CANVAS_NODE_SURFACE_CLASSES,
   WORKFLOW_CANVAS_NOTE_COLOR_CLASSES,
 } from './workflowCanvasTokens';
+import './workflow-annotations.css';
 
 export const WORKFLOW_CANVAS_NODE_ACTIONS = [
   'configure',
@@ -430,7 +431,7 @@ function WorkflowStickyNoteNode({ id, data, selected }: CanvasObjectNodeProps) {
       className={cn(
         WORKFLOW_CANVAS_NODE_SURFACE_CLASSES.note,
         WORKFLOW_CANVAS_NOTE_COLOR_CLASSES[color],
-        selected ? 'ring-2 ring-brand/35' : 'hover:border-white/25'
+        selected && 'ring-2 ring-brand/35'
       )}
     >
       <NodeResizer
@@ -458,7 +459,7 @@ function WorkflowStickyNoteNode({ id, data, selected }: CanvasObjectNodeProps) {
         />
         <button
           type="button"
-          className="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/10 bg-black/20 text-low transition-colors hover:border-error/50 hover:text-error disabled:cursor-not-allowed disabled:opacity-40"
+          className="workflow-annotation-action nodrag nopan"
           aria-label={t('workflow.canvas.deleteNote')}
           title={t('workflow.canvas.deleteNote')}
           disabled={readOnly}
@@ -497,7 +498,7 @@ function WorkflowStageGroupNode({ id, data, selected }: CanvasObjectNodeProps) {
       className={cn(
         WORKFLOW_CANVAS_NODE_SURFACE_CLASSES.stageGroup,
         WORKFLOW_CANVAS_GROUP_COLOR_CLASSES[color],
-        selected ? 'ring-2 ring-brand/25' : 'hover:border-white/18'
+        selected && 'ring-2 ring-brand/25'
       )}
     >
       <NodeResizer
@@ -526,7 +527,7 @@ function WorkflowStageGroupNode({ id, data, selected }: CanvasObjectNodeProps) {
           />
           <button
             type="button"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/10 bg-black/15 text-low transition-colors hover:border-error/50 hover:text-error disabled:cursor-not-allowed disabled:opacity-40"
+            className="workflow-annotation-action"
             aria-label={t('workflow.canvas.deleteStageGroup')}
             title={t('workflow.canvas.deleteStageGroup')}
             disabled={readOnly}
@@ -540,7 +541,7 @@ function WorkflowStageGroupNode({ id, data, selected }: CanvasObjectNodeProps) {
           </button>
         </div>
         <textarea
-          className="h-10 resize-none bg-transparent text-[11px] leading-4 text-low outline-none placeholder:text-low/70"
+          className="h-10 resize-none bg-transparent text-xs leading-4 text-low outline-none placeholder:text-low"
           value={data.description ?? ''}
           placeholder={t('workflow.canvas.stageDescriptionPlaceholder')}
           readOnly={readOnly}
@@ -838,8 +839,9 @@ const WorkflowEdge = ({
           >
             <span
               data-testid={`workflow-edge-chip-${id}`}
+              title={semanticLabel}
               className={cn(
-                'rounded border px-2 py-0.5 text-[10px] font-semibold shadow-sm',
+                'inline-block max-w-[180px] truncate rounded border px-2 py-0.5 text-[length:var(--vk-font-size-xs)] font-medium leading-4 shadow-sm',
                 visual.chipClass
               )}
             >

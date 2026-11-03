@@ -81,6 +81,12 @@ const graph: WorkflowGraph = migrateWorkflowGraph({
 const client = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 });
+// Transport tests explicitly refresh production queries without replacing their
+// hooks or making every fixture query poll/refetch on focus.
+Object.assign(window, {
+  refreshWorkflowFixtureQuery: (queryKey: readonly unknown[]) =>
+    client.invalidateQueries({ queryKey }),
+});
 const fileDriven =
   new URLSearchParams(location.search).get('mode') === 'file-run';
 const fixtureGraph: WorkflowGraph = fileDriven

@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { SidebarSimpleIcon, XIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@vibe/ui/components/Button';
 
 import { cn } from '@/shared/lib/utils';
 import {
@@ -243,12 +244,14 @@ export function AgentWorkbenchContainer({
       className="vk-agent-workbench flex h-full min-h-0 min-w-0"
     >
       <section className="vk-agent-workbench__conversation flex min-w-0 flex-1 flex-col bg-background">
-        <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-4">
+        <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-[var(--vk-border-subtle)] px-4 py-2">
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-medium">{title}</h1>
+            <h1 className="truncate text-[length:var(--vk-font-size-sm)] font-medium text-[var(--vk-text-high)]">
+              {title}
+            </h1>
             {subtitle && (
               <p
-                className="truncate text-xs text-muted-foreground"
+                className="truncate text-[length:var(--vk-font-size-2xs)] text-[var(--vk-text-low)]"
                 title={subtitle}
               >
                 {subtitle}
@@ -256,19 +259,21 @@ export function AgentWorkbenchContainer({
             )}
           </div>
           {inspectorAvailable && !visible && (
-            <button
+            <Button
               ref={openButtonRef}
               type="button"
+              variant="ghost"
+              size="sm"
               aria-controls={inspectorId}
               aria-expanded={false}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="shrink-0 text-[length:var(--vk-font-size-2xs)]"
               onClick={() => onInspectorVisibleChange(true)}
             >
               <SidebarSimpleIcon aria-hidden size={16} />
               {t('agentWorkbench.inspector.open', {
                 defaultValue: 'Inspector',
               })}
-            </button>
+            </Button>
           )}
         </header>
         <div className="flex min-h-0 flex-1 flex-col">{conversation}</div>
@@ -298,7 +303,7 @@ export function AgentWorkbenchContainer({
           aria-valuenow={width}
           aria-disabled={!resizable || undefined}
           tabIndex={resizable ? 0 : -1}
-          className="vk-agent-workbench__separator absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize touch-none select-none bg-transparent hover:bg-brand/50 focus-visible:bg-brand focus-visible:outline-none"
+          className="vk-agent-workbench__separator absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize touch-none select-none bg-transparent focus-visible:bg-brand focus-visible:outline-none"
           onPointerDown={startResize}
           onPointerMove={moveResize}
           onPointerUp={endResize}
@@ -306,21 +311,23 @@ export function AgentWorkbenchContainer({
           onLostPointerCapture={endResize}
           onKeyDown={resizeWithKeyboard}
         />
-        <header className="vk-agent-workbench__inspector-header flex min-h-12 shrink-0 items-center gap-2 border-b pl-4 pr-1">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
+        <header className="vk-agent-workbench__inspector-header flex min-h-12 shrink-0 items-center gap-2 border-b border-[var(--vk-border-subtle)] pl-4 pr-2">
+          <h2 className="min-w-0 flex-1 truncate text-[length:var(--vk-font-size-sm)] font-medium text-[var(--vk-text-high)]">
             {t('agentWorkbench.inspector.label', { defaultValue: 'Inspector' })}
           </h2>
-          <button
+          <Button
             ref={closeButtonRef}
             type="button"
+            variant="icon"
+            size="icon"
+            className="size-11"
             aria-label={t('agentWorkbench.inspector.close', {
               defaultValue: 'Close Inspector',
             })}
-            className="inline-flex size-[44px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             onClick={() => onInspectorVisibleChange(false)}
           >
             <XIcon aria-hidden size={16} />
-          </button>
+          </Button>
         </header>
         <div className="min-h-0 min-w-0 flex-1">
           <AgentWorkbenchInspectorVisibilityProvider visible={visible}>

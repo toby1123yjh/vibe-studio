@@ -166,45 +166,53 @@ test('picking up near the bottom of a tall, scrolled card keeps the preview unde
 });
 
 async function observeDrop(page: Page) {
-  return page.evaluate(
-    () =>
-      new Promise<
-        Array<{ duration: number | string; frames: ComputedKeyframe[] }>
-      >((resolve) => {
-        document.addEventListener(
-          'pointerup',
-          () => {
-            const observed = new Map<
-              Animation,
-              { duration: number | string; frames: ComputedKeyframe[] }
-            >();
-            const started = performance.now();
-            function sample() {
-              const preview = document.querySelector('.vk-kanban-drag-preview');
-              if (preview) {
-                for (const animation of document.getAnimations()) {
-                  const effect = animation.effect;
-                  if (
-                    effect instanceof KeyframeEffect &&
-                    effect.target?.contains(preview)
-                  ) {
-                    observed.set(animation, {
-                      duration: effect.getTiming().duration,
-                      frames: effect.getKeyframes(),
-                    });
-                  }
+  // Install the listener before releasing the pointer. Returning the Promise
+  // directly races page.evaluate against mouse.up and can miss the event.
+  const observation = await page.evaluateHandle(() => ({
+    animations: new Promise<
+      Array<{ duration: number | string; frames: ComputedKeyframe[] }>
+    >((resolve) => {
+      document.addEventListener(
+        'pointerup',
+        () => {
+          const observed = new Map<
+            Animation,
+            { duration: number | string; frames: ComputedKeyframe[] }
+          >();
+          const started = performance.now();
+          function sample() {
+            const preview = document.querySelector('.vk-kanban-drag-preview');
+            if (preview) {
+              for (const animation of document.getAnimations()) {
+                const effect = animation.effect;
+                if (
+                  effect instanceof KeyframeEffect &&
+                  effect.target?.contains(preview)
+                ) {
+                  observed.set(animation, {
+                    duration: effect.getTiming().duration,
+                    frames: effect.getKeyframes(),
+                  });
                 }
               }
-              if (performance.now() - started < 300)
-                requestAnimationFrame(sample);
-              else resolve([...observed.values()]);
             }
-            requestAnimationFrame(sample);
-          },
-          { once: true, capture: true }
-        );
-      })
-  );
+            if (performance.now() - started < 300)
+              requestAnimationFrame(sample);
+            else resolve([...observed.values()]);
+          }
+          requestAnimationFrame(sample);
+        },
+        { once: true, capture: true }
+      );
+    }),
+  }));
+  return async () => {
+    try {
+      return await observation.evaluate((sample) => sample.animations);
+    } finally {
+      await observation.dispose();
+    }
+  };
 }
 
 test('drop settles with a short translation and respects live reduced-motion changes', async ({
@@ -216,9 +224,9 @@ test('drop settles with a short translation and respects live reduced-motion cha
   await pickUp(page, card);
   const destination = await bounds(page.locator('.vk-kanban-column').nth(1));
   await page.mouse.move(destination.x + 90, destination.y + 120, { steps: 5 });
-  const sample = observeDrop(page);
+  const sample = await observeDrop(page);
   await page.mouse.up();
-  const animations = await sample;
+  const animations = await sample();
   expect(animations.length).toBeGreaterThan(0);
   for (const animation of animations) {
     expect(Number(animation.duration)).toBeGreaterThan(0);
@@ -234,9 +242,9 @@ test('drop settles with a short translation and respects live reduced-motion cha
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await pickUp(page, card);
   await page.mouse.move(4, 4, { steps: 3 });
-  const reducedSample = observeDrop(page);
+  const reducedSample = await observeDrop(page);
   await page.mouse.up();
-  expect(await reducedSample).toEqual([]);
+  expect(await reducedSample()).toEqual([]);
   await expect(page.locator('.vk-kanban-drag-preview')).toHaveCount(0);
   await expect(card).toHaveCSS('opacity', '1');
   await expect(page.getByTestId('move-count')).toHaveText('1');

@@ -227,7 +227,7 @@ test('Button loadingLabel only contributes to the accessible name while loading'
   await expect(idle.locator('.sr-only')).toHaveCount(0);
 
   const active = page.getByTestId('active-loading-label');
-  await expect(active).toHaveAccessibleName('SaveSaving');
+  await expect(active).toHaveAccessibleName('Saving');
   await expect(active).toHaveAttribute('aria-busy', 'true');
   await expect(active.locator('.sr-only')).toHaveText('Saving');
 });

@@ -1,16 +1,16 @@
-import * as React from "react";
-import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import * as React from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 
-import { cn } from "../lib/cn";
+import { cn } from '../lib/cn';
 import {
   FloatingPanelResizeHandle,
   useFloatingPanelResize,
   type FloatingPanelResizeOptions,
-} from "./FloatingPanelResize";
+} from './FloatingPanelResize';
 
 export interface FloatingPanelProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "aria-modal"> {
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, 'aria-modal'> {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   closeLabel?: string;
@@ -32,7 +32,7 @@ export const FloatingPanel = React.forwardRef<
     {
       open,
       onOpenChange,
-      closeLabel = "Close panel",
+      closeLabel = 'Close panel',
       hideCloseButton = false,
       autoFocus = false,
       initialFocusRef,
@@ -51,7 +51,7 @@ export const FloatingPanel = React.forwardRef<
       style,
       ...props
     },
-    ref,
+    ref
   ) => {
     const panelRef = React.useRef<HTMLDivElement | null>(null);
     const closeButtonRef = React.useRef<HTMLButtonElement | null>(null);
@@ -64,17 +64,17 @@ export const FloatingPanel = React.forwardRef<
     const setPanelRef = React.useCallback(
       (node: HTMLDivElement | null) => {
         panelRef.current = node;
-        if (typeof ref === "function") {
+        if (typeof ref === 'function') {
           ref(node);
         } else if (ref) {
           ref.current = node;
         }
       },
-      [ref],
+      [ref]
     );
 
     React.useLayoutEffect(() => {
-      if (typeof document === "undefined") {
+      if (typeof document === 'undefined') {
         return;
       }
 
@@ -115,14 +115,14 @@ export const FloatingPanel = React.forwardRef<
         tabIndex={-1}
         style={{ ...style, ...panelResize.style }}
         className={cn(
-          "fixed bottom-[var(--vk-floating-panel-offset)] right-[var(--vk-floating-panel-offset)] top-[var(--vk-floating-panel-offset)]",
-          "z-[var(--vk-z-floating)] w-[var(--vk-floating-panel-width)] max-w-[calc(100vw-(var(--vk-floating-panel-offset)*2))]",
-          "overflow-hidden rounded-[var(--vk-floating-panel-radius)] border border-[var(--vk-floating-panel-border)]",
-          "bg-[var(--vk-floating-panel-surface)] text-[var(--vk-text-normal)] shadow-[var(--vk-floating-panel-shadow)]",
-          "outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-surface-canvas)]",
+          'fixed bottom-[var(--vk-floating-panel-offset)] right-[var(--vk-floating-panel-offset)] top-[var(--vk-floating-panel-offset)]',
+          'z-[var(--vk-z-floating)] w-[var(--vk-floating-panel-width)] max-w-[calc(100vw-(var(--vk-floating-panel-offset)*2))]',
+          'overflow-hidden rounded-[var(--vk-floating-panel-radius)] border border-[var(--vk-floating-panel-border)]',
+          'bg-[var(--vk-floating-panel-surface)] text-[var(--vk-text-normal)] shadow-[var(--vk-floating-panel-shadow)]',
+          'outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-surface-canvas)]',
           resize &&
-            "transition-none max-md:inset-0 max-md:max-w-none max-md:rounded-none",
-          className,
+            'transition-none max-md:inset-0 max-md:max-w-none max-md:rounded-none',
+          className
         )}
         onClick={(event) => {
           event.stopPropagation();
@@ -141,7 +141,7 @@ export const FloatingPanel = React.forwardRef<
         }}
         onKeyDown={(event) => {
           onKeyDown?.(event);
-          if (event.defaultPrevented || event.key !== "Escape") {
+          if (event.defaultPrevented || event.key !== 'Escape') {
             return;
           }
 
@@ -164,10 +164,10 @@ export const FloatingPanel = React.forwardRef<
             type="button"
             aria-label={closeLabel}
             className={cn(
-              "absolute right-[var(--vk-space-3)] top-[var(--vk-space-3)] z-[2] inline-flex size-8 items-center justify-center",
-              "rounded-[var(--vk-radius-sm)] text-[var(--vk-text-low)] transition-colors duration-[var(--vk-duration-fast)]",
-              "hover:bg-[var(--vk-surface-hover)] hover:text-[var(--vk-text-high)] active:bg-[var(--vk-surface-selection)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-floating-panel-surface)]",
+              'absolute right-[var(--vk-space-3)] top-[var(--vk-space-3)] z-[2] inline-flex size-8 items-center justify-center',
+              'rounded-[var(--vk-radius-sm)] text-[var(--vk-text-low)] transition-colors [transition-duration:var(--vk-duration-fast)]',
+              'hover:bg-[var(--vk-surface-hover)] hover:text-[var(--vk-text-high)] active:bg-[var(--vk-surface-selection)]',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-floating-panel-surface)]'
             )}
             onClick={() => {
               explicitPanelCloseRef.current = true;
@@ -181,8 +181,8 @@ export const FloatingPanel = React.forwardRef<
 
         <div
           className={cn(
-            "h-full min-h-0 overflow-y-auto overscroll-contain",
-            contentClassName,
+            'h-full min-h-0 overflow-y-auto overscroll-contain',
+            contentClassName
           )}
         >
           {children}
@@ -190,14 +190,14 @@ export const FloatingPanel = React.forwardRef<
       </div>
     );
 
-    if (!portal || typeof document === "undefined") {
+    if (!portal || typeof document === 'undefined') {
       return panel;
     }
 
     return createPortal(panel, portalContainer ?? document.body);
-  },
+  }
 );
-FloatingPanel.displayName = "FloatingPanel";
+FloatingPanel.displayName = 'FloatingPanel';
 
 export function FloatingPanelHeader({
   className,
@@ -206,9 +206,9 @@ export function FloatingPanelHeader({
   return (
     <div
       className={cn(
-        "sticky top-0 z-[1] min-w-0 border-b border-[var(--vk-border-subtle)] bg-[var(--vk-floating-panel-surface)]",
-        "px-[var(--vk-space-4)] py-[var(--vk-space-3)] pr-[var(--vk-space-12)]",
-        className,
+        'sticky top-0 z-[1] min-w-0 border-b border-[var(--vk-border-subtle)] bg-[var(--vk-floating-panel-surface)]',
+        'px-[var(--vk-space-4)] py-[var(--vk-space-3)] pr-[var(--vk-space-12)]',
+        className
       )}
       {...props}
     />
@@ -222,13 +222,13 @@ export const FloatingPanelTitle = React.forwardRef<
   <h2
     ref={ref}
     className={cn(
-      "min-w-0 break-words text-[length:var(--vk-font-size-md)] font-semibold leading-[var(--vk-line-height-md)] text-[var(--vk-text-high)]",
-      className,
+      'min-w-0 break-words text-[length:var(--vk-font-size-md)] font-semibold leading-[var(--vk-line-height-md)] text-[var(--vk-text-high)]',
+      className
     )}
     {...props}
   />
 ));
-FloatingPanelTitle.displayName = "FloatingPanelTitle";
+FloatingPanelTitle.displayName = 'FloatingPanelTitle';
 
 export function FloatingPanelDescription({
   className,
@@ -237,8 +237,8 @@ export function FloatingPanelDescription({
   return (
     <p
       className={cn(
-        "mt-[var(--vk-space-1)] min-w-0 break-words text-[length:var(--vk-font-size-sm)] leading-[var(--vk-line-height-sm)] text-[var(--vk-text-low)]",
-        className,
+        'mt-[var(--vk-space-1)] min-w-0 break-words text-[length:var(--vk-font-size-sm)] leading-[var(--vk-line-height-sm)] text-[var(--vk-text-low)]',
+        className
       )}
       {...props}
     />
@@ -252,8 +252,8 @@ export function FloatingPanelBody({
   return (
     <div
       className={cn(
-        "min-w-0 break-words px-[var(--vk-space-4)] py-[var(--vk-space-4)]",
-        className,
+        'min-w-0 break-words px-[var(--vk-space-4)] py-[var(--vk-space-4)]',
+        className
       )}
       {...props}
     />
@@ -267,9 +267,9 @@ export function FloatingPanelFooter({
   return (
     <div
       className={cn(
-        "sticky bottom-0 flex min-w-0 flex-wrap justify-end gap-[var(--vk-space-2)]",
-        "border-t border-[var(--vk-border-subtle)] bg-[var(--vk-floating-panel-surface)] px-[var(--vk-space-4)] py-[var(--vk-space-3)]",
-        className,
+        'sticky bottom-0 flex min-w-0 flex-wrap justify-end gap-[var(--vk-space-2)]',
+        'border-t border-[var(--vk-border-subtle)] bg-[var(--vk-floating-panel-surface)] px-[var(--vk-space-4)] py-[var(--vk-space-3)]',
+        className
       )}
       {...props}
     />

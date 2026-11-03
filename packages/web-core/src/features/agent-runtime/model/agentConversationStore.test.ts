@@ -231,6 +231,76 @@ test('token updates notify only the block and preserve structural/history/run re
   expect(store.getBlock('1')).not.toBe(oldBlock);
 });
 
+test('a body update leaves the other 499 history structures untouched', () => {
+  const store = new AgentConversationStore('session', null);
+  let historyReads = 0;
+  const history = Array.from({ length: 499 }, (_, index) => ({
+    ...block(String(index + 1)),
+    get kind(): ConversationBlock['kind'] {
+      ++historyReads;
+      return 'text';
+    },
+  }));
+  store.applyPage(page([...history, block('500')]), true);
+  const initial = store.getSnapshot();
+  historyReads = 0;
+
+  store.applyChanges(changes([block('500', '2', 'updated body')], '2'));
+  expect(historyReads).toBe(0);
+  expect(store.getSnapshot().conversation).toBe(initial.conversation);
+  expect(store.getBlock('500')?.fields.text).toBe('updated body');
+
+  // A detail refresh and metadata-only page also leave history structure alone.
+  store.acceptDetailBlock(block('500', '3', 'latest body'));
+  store.applyChanges(changes([], '3'));
+  expect(historyReads).toBe(0);
+  expect(store.getSnapshot().conversation).toBe(initial.conversation);
+
+  // Tail eviction changes membership even though the window is still 500 rows.
+  store.applyChanges(changes([block('501', '4')], '4'));
+  const entries = store.getSnapshot().conversation.entries;
+  expect(entries).toHaveLength(500);
+  expect(entries[0]).toBe(initial.conversation.entries[1]);
+  expect(entries.at(-1)?.conversationBlockId).toBe('501');
+  expect(store.getBlock('1')).toBeUndefined();
+
+  // Run completion must still update active references throughout the window.
+  const settled = changes([], '5');
+  settled.runs = [run('succeeded')];
+  store.applyChanges(settled);
+  expect(
+    store
+      .getSnapshot()
+      .conversation.entries.every((entry) => !entry.canonical?.active)
+  ).toBe(true);
+});
+
+test('append notification does not lose a structural change before its durable baseline', () => {
+  const store = new AgentConversationStore('session', null);
+  const initial = { ...block('1'), role: 'user' } satisfies ConversationBlock;
+  store.applyPage(page([initial]), true);
+  store.applyAppend({
+    session_id: 'session',
+    epoch: 'epoch-a',
+    appends: [
+      {
+        block_id: '1',
+        base_revision: '1',
+        revision: '2',
+        field: 'text',
+        text: ' world',
+      },
+    ],
+  });
+  const baseline = store.getBlock('1')!;
+  // The authoritative baseline can exactly match the already-notified append.
+  store.applyChanges(changes([baseline], '2'));
+  const entry = store.getSnapshot().conversation.entries[0];
+  expect(entry.type).toBe('NORMALIZED_ENTRY');
+  if (entry.type === 'NORMALIZED_ENTRY')
+    expect(entry.content.content).toBe('hello world');
+});
+
 test('backward pagination neither regresses new content nor advances the live cursor', () => {
   const store = new AgentConversationStore('session', null);
   store.applyPage(page([block('2', '5')], '5'), true);

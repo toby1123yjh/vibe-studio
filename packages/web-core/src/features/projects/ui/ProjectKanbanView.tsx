@@ -312,22 +312,24 @@ function TaskCardContent({
         {actions}
       </header>
       <h3 title={task.title}>{task.title}</h3>
-      <div className="vk-kanban-issue-card__labels">
-        {task.priority ? (
-          <span
-            className="vk-priority"
-            data-priority={task.priority}
-            data-no-drag
-          >
-            {task.priority}
-          </span>
-        ) : null}
-        {task.tags.map((tag) => (
-          <span key={tag.id} className="vk-task-tag" data-no-drag>
-            {tag.name}
-          </span>
-        ))}
-      </div>
+      {task.priority || task.tags.length > 0 ? (
+        <div className="vk-kanban-issue-card__labels">
+          {task.priority ? (
+            <span
+              className="vk-priority"
+              data-priority={task.priority}
+              data-no-drag
+            >
+              {task.priority}
+            </span>
+          ) : null}
+          {task.tags.map((tag) => (
+            <span key={tag.id} className="vk-task-tag" data-no-drag>
+              {tag.name}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {task.executions.length > 0 ? (
         <div className="vk-kanban-issue-card__tasks" data-no-drag>
           <div className="vk-kanban-issue-card__execution-header">
@@ -435,6 +437,7 @@ function KanbanTaskCard({
   getExecutionUnavailableReason,
   placeholderHeight,
 }: KanbanTaskCardProps) {
+  const { t } = useTranslation('common');
   const {
     attributes,
     listeners,
@@ -609,7 +612,7 @@ function KanbanTaskCard({
                   }}
                 >
                   <Trash2 aria-hidden="true" size={15} />
-                  Delete task
+                  {t('shortcuts.actions.delete-issue')}
                 </button>
               </div>
             ) : null}
@@ -940,26 +943,26 @@ export function ProjectKanbanView({
         <label className="vk-kanban-search">
           <Search aria-hidden="true" size={16} />
           <span className="vk-visually-hidden">
-            Search tasks in {projectName}
+            {t('kanban.searchPlaceholder')}
           </span>
           <input
             type="search"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Search tasks"
+            placeholder={t('kanban.searchPlaceholder')}
           />
         </label>
         <span className="vk-project-kanban__issue-count">
           {taskCount} {taskCount === 1 ? 'Task' : 'Tasks'}
         </span>
-        <button
+        <Button
           type="button"
           className="vk-primary-action"
           onClick={() => onCreateTask()}
         >
           <Plus aria-hidden="true" size={16} />
-          New task
-        </button>
+          {t('kanban.newIssue')}
+        </Button>
       </header>
 
       {sourceStates.length > 0 ? (

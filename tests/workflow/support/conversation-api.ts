@@ -70,6 +70,10 @@ export async function mockWorkflowConversations(
     string,
     Array<{ runId: string; prompt: string; status: `${AgentRunStatus}` }>
   >();
+  const assistantReplies = new Map<
+    string,
+    { text: string; revision: string; finished: boolean }
+  >();
   let revision = 1;
   const currentState = (sessionId: string) =>
     runState(
@@ -232,6 +236,22 @@ export async function mockWorkflowConversations(
           position: `3:${String(index).padStart(4, "0")}`,
           source_event_id: `submitted-${turn.runId}`,
         })),
+        ...(assistantReplies.has(sessionId)
+          ? [
+              {
+                ...block("text", {
+                  text: assistantReplies.get(sessionId)!.text,
+                }),
+                block_id: `streamed-reply-${sessionId}`,
+                position: "9",
+                revision: assistantReplies.get(sessionId)!.revision,
+                finished: assistantReplies.get(sessionId)!.finished,
+                finish_reason: assistantReplies.get(sessionId)!.finished
+                  ? "completed"
+                  : null,
+              },
+            ]
+          : []),
       ],
       runs: [
         ...(initialHistory
@@ -404,6 +424,49 @@ export async function mockWorkflowConversations(
     acknowledgement,
     hasConversationConnection: (sessionId: string) =>
       (runSockets.get(sessionId)?.size ?? 0) > 0,
+    startAssistantReply: (sessionId: string, text: string) => {
+      assistantReplies.set(sessionId, {
+        text,
+        revision: String(revision + 1),
+        finished: false,
+      });
+      publishConversation(sessionId);
+    },
+    appendAssistantReply: (sessionId: string, text: string) => {
+      const reply = assistantReplies.get(sessionId);
+      if (!reply) throw new Error("Start the assistant reply before appending");
+      const baseRevision = reply.revision;
+      reply.text += text;
+      reply.revision = String(++revision);
+      for (const socket of runSockets.get(sessionId) ?? []) {
+        socket.send(
+          JSON.stringify({
+            type: "append",
+            data: {
+              session_id: sessionId,
+              epoch: `epoch-${sessionId}`,
+              appends: [
+                {
+                  block_id: `streamed-reply-${sessionId}`,
+                  base_revision: baseRevision,
+                  revision: reply.revision,
+                  field: "text",
+                  text,
+                },
+              ],
+            },
+          })
+        );
+      }
+    },
+    finishAssistantReply: (sessionId: string) => {
+      const reply = assistantReplies.get(sessionId);
+      if (!reply) throw new Error("Start the assistant reply before finishing");
+      reply.finished = true;
+      reply.revision = String(revision + 1);
+      runStatuses.set(sessionId, "succeeded");
+      publishConversation(sessionId);
+    },
     publishUserMessage: (
       sessionId: string,
       prompt: string,

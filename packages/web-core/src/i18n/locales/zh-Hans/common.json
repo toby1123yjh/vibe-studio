@@ -1559,6 +1559,7 @@
     "selectWorkspace": "选择一个工作空间以查看笔记"
   },
   "actions": {
+    "copyMarkdown": "复制 Markdown",
     "copyPath": "复制路径",
     "cancel": "取消",
     "saveChanges": "保存更改",

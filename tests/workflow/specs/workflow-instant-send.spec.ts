@@ -502,6 +502,107 @@ test("closing and reopening a pending conversation retains its single echo witho
   expect(submissions).toBe(1);
 });
 
+test("streaming a long reply preserves typing, history DOM and the draft after reopening", async ({
+  page,
+}) => {
+  const api = await mockWorkflowConversations(page, {
+    initialHistorySize: 100,
+    initialRunStatus: "running",
+  });
+  const { panel, editor } = await openConversation(page);
+  await expect
+    .poll(() => api.hasConversationConnection("analysis-session"))
+    .toBe(true);
+  const oldRow = historyRows(panel, "History message 100.");
+  await expect(oldRow).toHaveCount(1);
+  const oldElement = await oldRow.elementHandle();
+  const editorElement = await editor.elementHandle();
+  await editor.fill("Next request: ");
+  api.startAssistantReply("analysis-session", "## Live response\n\n");
+  // Query the real history rather than relying on the renderer's implementation.
+  const liveRow = historyRows(panel, "Live response");
+  await expect(liveRow).toHaveCount(1);
+  const typed = "keep my draft while the agent replies";
+  for (let index = 0; index < typed.length; index++) {
+    api.appendAssistantReply(
+      "analysis-session",
+      `Streaming section ${index}: **retained text** and \`src/example.ts\`.\n\n`,
+    );
+    await editor.pressSequentially(typed[index]);
+  }
+  await expect(liveRow).toContainText(`Streaming section ${typed.length - 1}`);
+  await expect(editor).toHaveText(`Next request: ${typed}`);
+  await expect(editor).toBeFocused();
+  expect(await editorElement!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  expect(await oldElement!.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(
+    panel.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeVisible();
+
+  api.finishAssistantReply("analysis-session");
+  await expect(
+    panel.getByRole("button", { name: "Send", exact: true }),
+  ).toBeEnabled();
+  await expect(liveRow).toHaveCount(1);
+  await expect(editor).toHaveText(`Next request: ${typed}`);
+  await panel
+    .getByRole("button", { name: "Close Node details", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await page.getByTestId("workflow-run-node-build").click();
+  await expect(editor).toHaveText(`Next request: ${typed}`);
+  await expect(liveRow).toHaveCount(1);
+  await expect(liveRow).toContainText(`Streaming section ${typed.length - 1}`);
+  expect(
+    api.requests.filter((request) => request.includes("/follow-up")),
+  ).toEqual([]);
+});
+
+for (const withRepository of [false, true]) {
+  test(`composer polls Git only for a confirmed repository (${withRepository})`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await mockWorkflowConversations(page);
+    if (withRepository) {
+      await page.route("**/api/workspaces/visual-workspace/repos", (route) =>
+        route.fulfill({
+          json: {
+            success: true,
+            data: [
+              {
+                id: "fixture-repo",
+                name: "fixture",
+                path: "C:/fixture",
+                target_branch: "main",
+              },
+            ],
+          },
+        }),
+      );
+    }
+    let gitRequests = 0;
+    await page.route(
+      "**/api/workspaces/visual-workspace/git/status",
+      (route) => {
+        gitRequests += 1;
+        return route.fulfill({ json: { success: true, data: [] } });
+      },
+    );
+    const { editor } = await openConversation(page);
+    if (withRepository) await expect.poll(() => gitRequests).toBeGreaterThan(0);
+    await editor.fill("Keep the composer ready");
+    await page.clock.fastForward(5_100);
+    await expect(editor).toHaveText("Keep the composer ready");
+    if (withRepository) await expect.poll(() => gitRequests).toBeGreaterThan(1);
+    else expect(gitRequests).toBe(0);
+  });
+}
+
 for (const historySize of [0, 100, 500]) {
   test(`submission feedback paints without waiting for HTTP with ${historySize} history blocks`, async ({
     page,

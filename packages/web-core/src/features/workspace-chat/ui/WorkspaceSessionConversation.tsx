@@ -1,9 +1,9 @@
-import { type ReactNode } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@vibe/ui/components/Button';
 import { ErrorState, LoadingState } from '@vibe/ui/components/StateSurface';
-import { sessionsApi } from '@/shared/lib/api';
+import { ApiError, sessionsApi } from '@/shared/lib/api';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 import { ExecutionProcessesProvider } from '@/shared/providers/ExecutionProcessesProvider';
 import { useWorkspaceRecord } from '@/shared/hooks/useWorkspaceRecord';
@@ -50,9 +50,25 @@ function BoundWorkspaceConversation({
   const session = sessionsQuery.data?.find(
     (item) => item.id === sessionId && item.workspace_id === workspaceId
   );
+  const workspace =
+    workspaceQuery.data?.id === workspaceId ? workspaceQuery.data : undefined;
+  const sessions = useMemo(() => (session ? [session] : []), [session]);
+  const { refetch: refetchWorkspace } = workspaceQuery;
+  const { refetch: refetchSessions } = sessionsQuery;
+  const retryBinding = useCallback(async () => {
+    await Promise.all([refetchWorkspace(), refetchSessions()]);
+  }, [refetchWorkspace, refetchSessions]);
+  // Repository reads feed the independently scoped Changes/tools state. They
+  // must not hold up the transcript or replace its editor on failure.
   const isLoading =
-    workspaceQuery.isLoading || reposQuery.isLoading || sessionsQuery.isLoading;
-  const error = workspaceQuery.error ?? reposQuery.error ?? sessionsQuery.error;
+    (!workspace && workspaceQuery.isLoading) ||
+    (!session && sessionsQuery.isLoading);
+  const bindingError = [workspaceQuery.error, sessionsQuery.error].find(
+    (failure) =>
+      failure instanceof ApiError &&
+      [401, 403, 404, 410].includes(failure.statusCode ?? 0)
+  );
+  const error = bindingError ?? workspaceQuery.error ?? sessionsQuery.error;
 
   if (isLoading) {
     return (
@@ -64,7 +80,7 @@ function BoundWorkspaceConversation({
       />
     );
   }
-  if (error || workspaceQuery.data?.id !== workspaceId || !session) {
+  if (bindingError || !workspace || !session) {
     return (
       <ErrorState
         className="min-h-0 flex-1"
@@ -80,13 +96,7 @@ function BoundWorkspaceConversation({
               })
         }
         action={
-          <Button
-            onClick={() => {
-              void workspaceQuery.refetch();
-              void reposQuery.refetch();
-              void sessionsQuery.refetch();
-            }}
-          >
+          <Button onClick={() => void retryBinding()}>
             {t('buttons.retry', { defaultValue: 'Retry' })}
           </Button>
         }
@@ -102,12 +112,17 @@ function BoundWorkspaceConversation({
       >
         <WorkspaceConversationContent
           {...presentation}
-          selectedWorkspace={workspaceQuery.data}
+          selectedWorkspace={workspace}
           selectedSession={session}
           selectedSessionId={sessionId}
-          sessions={[session]}
+          sessions={sessions}
           repos={reposQuery.repos}
           isLoading={false}
+          workspaceState={error ? 'degraded' : 'ready'}
+          isRetryingWorkspace={
+            workspaceQuery.isFetching || sessionsQuery.isFetching
+          }
+          onRetryWorkspace={retryBinding}
           isNewSessionMode={false}
           onSelectSession={ignoreSessionSelection}
           onStartNewSession={ignoreSessionSelection}

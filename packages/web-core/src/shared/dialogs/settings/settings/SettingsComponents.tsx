@@ -8,7 +8,8 @@ import {
   DropdownMenuTrigger,
   DropdownMenuTriggerButton,
 } from '@vibe/ui/components/Dropdown';
-import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
+import { Button } from '@vibe/ui/components/Button';
+import { Input } from '@vibe/ui/components/Input';
 import type { Icon } from '@phosphor-icons/react';
 
 // ============================================================================
@@ -153,17 +154,23 @@ export function SettingsCard({
   headerAction?: React.ReactNode;
 }) {
   return (
-    <div className="space-y-4 pb-6 border-b border-border last:border-b-0 last:pb-0">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-base font-medium text-high">{title}</h3>
+    <div className="vk-settings-card grid min-w-0 gap-4 border-b border-[var(--vk-border-subtle)] py-5 first:pt-0 last:border-b-0 last:pb-0">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-48">
+          <h3 className="text-[14px] font-medium leading-5 text-[var(--vk-text-high)]">
+            {title}
+          </h3>
           {description && (
-            <p className="text-sm text-low mt-1">{description}</p>
+            <p className="mt-1 max-w-[65ch] text-[13px] leading-relaxed text-[var(--vk-text-low)]">
+              {description}
+            </p>
           )}
         </div>
-        {headerAction && <div className="shrink-0 ml-2">{headerAction}</div>}
+        {headerAction && (
+          <div className="max-w-full shrink-0">{headerAction}</div>
+        )}
       </div>
-      <div className="space-y-4">{children}</div>
+      <div className="min-w-0 space-y-5">{children}</div>
     </div>
   );
 }
@@ -181,14 +188,25 @@ export function SettingsField({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="vk-settings-field min-w-0 space-y-2">
       {label && (
-        <label className="text-sm font-medium text-normal">{label}</label>
+        <label className="text-[13px] font-medium leading-5 text-[var(--vk-text-normal)]">
+          {label}
+        </label>
       )}
       {children}
-      {error && <p className="text-sm text-error">{error}</p>}
+      {error && (
+        <p
+          role="alert"
+          className="text-[13px] leading-5 text-[var(--vk-status-error-text)]"
+        >
+          {error}
+        </p>
+      )}
       {description && !error && (
-        <p className="text-sm text-low">{description}</p>
+        <p className="max-w-[65ch] text-[13px] leading-relaxed text-[var(--vk-text-low)]">
+          {description}
+        </p>
       )}
     </div>
   );
@@ -308,19 +326,14 @@ export function SettingsInput({
   disabled?: boolean;
 }) {
   return (
-    <input
+    <Input
       id={id}
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       disabled={disabled}
-      className={cn(
-        'w-full bg-secondary border rounded-sm px-base py-half text-sm text-high',
-        'placeholder:text-low placeholder:opacity-80 focus:outline-none focus:ring-1 focus:ring-brand',
-        error ? 'border-error' : 'border-border',
-        disabled && 'opacity-50 cursor-not-allowed'
-      )}
+      invalid={error}
     />
   );
 }
@@ -349,8 +362,8 @@ export function SettingsTextarea({
       disabled={disabled}
       rows={rows}
       className={cn(
-        'w-full bg-secondary border border-border rounded-sm px-base py-half text-sm text-high',
-        'placeholder:text-low placeholder:opacity-80 focus:outline-none focus:ring-1 focus:ring-brand',
+        'w-full min-w-0 rounded-[var(--vk-input-radius)] border border-[var(--vk-input-border)] bg-[var(--vk-input-surface)] px-3 py-2 text-[13px] leading-relaxed text-[var(--vk-input-text)]',
+        'placeholder:text-[var(--vk-input-placeholder)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)]',
         'resize-y',
         monospace && 'font-mono',
         disabled && 'opacity-50 cursor-not-allowed'
@@ -364,6 +377,7 @@ export function SettingsSaveBar({
   show,
   saving,
   saveDisabled,
+  unsavedMessage,
   onSave,
   onDiscard,
 }: {
@@ -377,37 +391,41 @@ export function SettingsSaveBar({
   const { t } = useTranslation(['settings', 'common']);
 
   if (!show) {
-    return <div />;
+    return null;
   }
 
   return (
-    <div className="sticky bottom-0 z-10 bg-panel/80 backdrop-blur-sm border-t border-border/50 py-4 -mx-6 px-6 -mb-6">
+    <div className="vk-settings-save-bar sticky bottom-4 z-[var(--vk-z-sticky)] mt-6 rounded-[var(--vk-radius-md)] border border-[var(--vk-border-subtle)] bg-[var(--vk-surface-elevated)] p-3 shadow-[var(--vk-shadow-popover)]">
       <div
         className={cn(
-          'flex items-center',
+          'flex flex-wrap items-center gap-3',
           onDiscard ? 'justify-between' : 'justify-end'
         )}
       >
         {onDiscard && (
-          <span className="text-sm text-low">
-            {t('settings.common.unsavedChanges')}
+          <span className="min-w-0 text-[13px] leading-5 text-[var(--vk-text-low)]">
+            {unsavedMessage ?? t('settings.common.unsavedChanges')}
           </span>
         )}
-        <div className="flex gap-2">
+        <div className="ml-auto flex max-w-full flex-wrap justify-end gap-2">
           {onDiscard && (
-            <PrimaryButton
-              variant="tertiary"
-              value={t('common:buttons.discard')}
+            <Button
+              type="button"
+              variant="ghost"
               onClick={onDiscard}
               disabled={saving}
-            />
+            >
+              {t('common:buttons.discard')}
+            </Button>
           )}
-          <PrimaryButton
-            value={t('common:buttons.save')}
+          <Button
+            type="button"
             onClick={onSave}
-            disabled={saving || saveDisabled}
-            actionIcon={saving ? 'spinner' : undefined}
-          />
+            disabled={saveDisabled}
+            loading={saving}
+          >
+            {t('common:buttons.save')}
+          </Button>
         </div>
       </div>
     </div>

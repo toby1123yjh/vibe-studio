@@ -53,7 +53,7 @@ export function ChatDisclosureRow({
       className={cn(
         'group/disclosure flex min-h-[32px] w-full min-w-0 items-center gap-half rounded-[var(--vk-radius-sm)] py-half text-left text-base leading-relaxed text-low transition-colors [transition-duration:var(--vk-duration-fast)] motion-reduce:transition-none [@media(pointer:coarse)]:min-h-[44px]',
         onClick &&
-          'cursor-pointer hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+          'cursor-pointer hover:bg-[var(--vk-surface-hover)] hover:text-[var(--vk-text-high)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)]',
         className
       )}
       onClick={onClick}
@@ -102,7 +102,10 @@ export function ChatDisclosureRow({
         </span>
       )}
       {statusLabel && (
-        <span id={statusId} className="max-w-[42%] shrink-0 truncate text-sm">
+        <span
+          id={statusId}
+          className="max-w-[42%] shrink-0 truncate text-[length:var(--vk-font-size-2xs)]"
+        >
           {statusLabel}
         </span>
       )}

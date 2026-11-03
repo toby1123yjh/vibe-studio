@@ -62,7 +62,7 @@ export function ChatBoxBase({
       {...(dropzone?.getRootProps() ?? {})}
       data-chat-composer="true"
       className={cn(
-        '@container/chat-composer relative flex min-h-0 min-w-0 max-w-full max-h-[min(70cqh,32rem)] flex-col rounded-[var(--vk-radius-md)] border border-border bg-secondary focus-within:border-brand/50',
+        '@container/chat-composer relative flex min-h-0 min-w-0 max-w-full max-h-[min(70cqh,32rem)] flex-col rounded-[var(--vk-radius-md)] border border-[var(--vk-input-border)] bg-[var(--vk-input-surface)] text-[var(--vk-text-normal)] transition-[border-color] [transition-duration:var(--vk-duration-fast)] focus-within:border-[var(--vk-input-border-focus)] motion-reduce:transition-none',
         compact ? 'w-full' : 'w-chat',
         (visualVariant === VisualVariant.FEEDBACK ||
           visualVariant === VisualVariant.EDIT ||
@@ -91,7 +91,9 @@ export function ChatBoxBase({
           className="max-h-24 shrink-0 overflow-y-auto rounded-t-[inherit] bg-error/10 border-b px-plusfifty py-base"
           role="alert"
         >
-          <p className="text-error text-sm [overflow-wrap:anywhere]">{error}</p>
+          <p className="text-[length:var(--vk-font-size-2xs)] leading-relaxed text-[var(--vk-status-error-text)] [overflow-wrap:anywhere]">
+            {error}
+          </p>
         </div>
       )}
       <div className="min-h-0 max-h-[35cqh] shrink overflow-y-auto empty:hidden">
@@ -99,7 +101,7 @@ export function ChatBoxBase({
       </div>
 
       <div
-        className="flex min-w-0 shrink-0 flex-wrap items-center gap-base px-plusfifty pt-base text-sm text-low empty:hidden"
+        className="flex min-w-0 shrink-0 flex-wrap items-center gap-base px-plusfifty pt-base text-[length:var(--vk-font-size-2xs)] text-[var(--vk-text-low)] empty:hidden"
         data-composer-status="true"
       >
         {status}
@@ -151,7 +153,7 @@ export function ChatBoxBase({
           {footerRight}
         </div>
       </div>
-      <div className="min-w-0 shrink-0 px-plusfifty pb-base text-sm text-low empty:hidden">
+      <div className="min-w-0 shrink-0 px-plusfifty pb-base text-[length:var(--vk-font-size-2xs)] leading-relaxed text-[var(--vk-text-low)] empty:hidden">
         {hint}
       </div>
     </div>

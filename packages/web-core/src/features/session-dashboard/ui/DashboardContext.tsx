@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check, Copy, ExternalLink, GitBranch, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@vibe/ui/components/Button';
 import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type { DashboardWorkRef } from 'shared/types';
 import { createDashboardApi } from '@/shared/lib/dashboardApi';
@@ -13,8 +14,10 @@ function CopyValue({ value }: { value: string }) {
   return (
     <span className="session-dashboard__copy-value">
       <code>{value}</code>
-      <button
+      <Button
         type="button"
+        variant="icon"
+        size="icon"
         className="session-dashboard__icon-button"
         title={t('sessionDashboard.context.copy')}
         aria-label={t('sessionDashboard.context.copy')}
@@ -37,7 +40,7 @@ function CopyValue({ value }: { value: string }) {
         ) : (
           <Copy size={13} aria-hidden="true" />
         )}
-      </button>
+      </Button>
       {failed ? (
         <span role="status">{t('sessionDashboard.context.copyFailed')}</span>
       ) : null}
@@ -87,15 +90,22 @@ export function DashboardContext({
     >
       <header>
         <h3>{t('sessionDashboard.context.title')}</h3>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           className="session-dashboard__text-button"
           disabled={context.isFetching}
+          aria-busy={context.isFetching || undefined}
           onClick={() => setRefresh((value) => value + 1)}
         >
-          <RefreshCw size={13} aria-hidden="true" />
+          <RefreshCw
+            size={13}
+            aria-hidden="true"
+            className="session-dashboard__refresh-icon"
+          />
           {t('sessionDashboard.context.refresh')}
-        </button>
+        </Button>
       </header>
       {context.isPending ? (
         <p role="status">{t('sessionDashboard.loading')}</p>
@@ -103,13 +113,15 @@ export function DashboardContext({
       {context.isError ? (
         <p role="alert">
           {t('sessionDashboard.context.failed')}{' '}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             className="session-dashboard__text-button"
             onClick={() => void context.refetch()}
           >
             {t('buttons.retry')}
-          </button>
+          </Button>
         </p>
       ) : null}
       {context.data ? (

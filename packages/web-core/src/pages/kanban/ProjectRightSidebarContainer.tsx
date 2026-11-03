@@ -148,7 +148,8 @@ function WorkspaceSessionPanel({
   const workspaceQuery = useWorkspaceRecord(workspaceId, {
     enabled: !!workspaceId,
   });
-  const workspace = workspaceQuery.data;
+  const workspace =
+    workspaceQuery.data?.id === workspaceId ? workspaceQuery.data : undefined;
   const reposQuery = useWorkspaceRepo(workspaceId);
   const {
     sessions,
@@ -227,18 +228,17 @@ function WorkspaceSessionPanel({
     'min-h-8 min-w-0 rounded-sm px-half py-half text-sm text-normal truncate hover:bg-panel hover:text-high transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11';
   const headerActionClass =
     'flex min-h-8 min-w-8 shrink-0 items-center justify-center rounded-sm text-low hover:text-normal hover:bg-panel transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
-  const isWorkspaceLoading = workspaceQuery.isLoading || reposQuery.isLoading;
+  const isWorkspaceLoading = workspaceQuery.isLoading && !workspace;
   const workspaceState = deriveWorkspaceDetailState({
     hasWorkspaceId: Boolean(workspaceId),
     isLoading: isWorkspaceLoading,
     hasWorkspace: Boolean(workspace),
-    error: workspaceQuery.error ?? reposQuery.error,
+    error: workspaceQuery.error,
   });
   const { refetch: refetchWorkspace } = workspaceQuery;
-  const { refetch: refetchRepos } = reposQuery;
   const retryWorkspace = useCallback(async () => {
-    await Promise.all([refetchWorkspace(), refetchRepos()]);
-  }, [refetchWorkspace, refetchRepos]);
+    await refetchWorkspace();
+  }, [refetchWorkspace]);
 
   return (
     <ExecutionProcessesProvider
@@ -318,9 +318,7 @@ function WorkspaceSessionPanel({
           repos={reposQuery.repos}
           isLoading={isWorkspaceLoading}
           workspaceState={workspaceState}
-          isRetryingWorkspace={
-            workspaceQuery.isFetching || reposQuery.isLoading
-          }
+          isRetryingWorkspace={workspaceQuery.isFetching}
           onRetryWorkspace={retryWorkspace}
           isSessionsLoading={isSessionsLoading}
           sessionsError={sessionsError}

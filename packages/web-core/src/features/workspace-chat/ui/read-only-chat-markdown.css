@@ -1,0 +1,167 @@
+.chat-markdown {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.chat-markdown p {
+  margin-bottom: 0.25rem;
+  white-space: pre-wrap;
+}
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+.chat-markdown h1 {
+  margin: 1rem 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+.chat-markdown h2 {
+  margin: 0.75rem 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.chat-markdown h3 {
+  margin: 0.75rem 0 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 0.5rem 0 0.25rem;
+  font-weight: 500;
+}
+.chat-markdown h4 {
+  font-size: 1rem;
+}
+.chat-markdown h5 {
+  font-size: 0.875rem;
+}
+.chat-markdown h6 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+.chat-markdown strong {
+  font-weight: 600;
+}
+.chat-markdown em {
+  font-style: italic;
+}
+.chat-markdown del {
+  text-decoration: line-through;
+}
+.chat-markdown a {
+  color: hsl(var(--brand));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.chat-markdown a[aria-disabled] {
+  cursor: not-allowed;
+}
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.25rem 0;
+  padding-left: 1.5rem;
+}
+.chat-markdown ul {
+  list-style: disc;
+}
+.chat-markdown ol {
+  list-style: decimal;
+}
+.chat-markdown li {
+  white-space: pre-wrap;
+}
+.chat-markdown li > p {
+  margin: 0;
+}
+.chat-markdown input[type='checkbox'] {
+  margin-right: 0.375rem;
+}
+.chat-markdown blockquote {
+  margin: 0.75rem 0;
+  border-left: 4px solid hsl(var(--primary-foreground));
+  padding-left: 1rem;
+  color: hsl(var(--muted-foreground));
+}
+.chat-markdown code {
+  font-family: 'IBM Plex Mono', monospace;
+}
+.chat-markdown :not(pre) > code {
+  padding: 0.125rem 0.25rem;
+  border-radius: var(--radius);
+  background: hsl(var(--bg-panel));
+}
+.chat-markdown pre {
+  display: block;
+  max-width: 100%;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  background: hsl(var(--bg-secondary));
+  white-space: pre;
+  overflow-x: auto;
+}
+.chat-markdown table {
+  width: 100%;
+  margin: 0.5rem 0;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+.chat-markdown th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}
+.chat-markdown hr {
+  margin: 0.75rem 0;
+  border-color: hsl(var(--border));
+}
+.chat-markdown .hljs-keyword,
+.chat-markdown .hljs-doctag,
+.chat-markdown .hljs-type {
+  color: var(--syntax-keyword);
+}
+.chat-markdown .hljs-title,
+.chat-markdown .hljs-section {
+  color: var(--syntax-function);
+}
+.chat-markdown .hljs-literal,
+.chat-markdown .hljs-number,
+.chat-markdown .hljs-attr,
+.chat-markdown .hljs-property {
+  color: var(--syntax-constant);
+}
+.chat-markdown .hljs-string,
+.chat-markdown .hljs-regexp {
+  color: var(--syntax-string);
+}
+.chat-markdown .hljs-variable,
+.chat-markdown .hljs-built_in,
+.chat-markdown .hljs-symbol {
+  color: var(--syntax-variable);
+}
+.chat-markdown .hljs-comment,
+.chat-markdown .hljs-meta {
+  color: var(--syntax-comment);
+}
+.chat-markdown .hljs-name,
+.chat-markdown .hljs-selector-tag,
+.chat-markdown .hljs-addition {
+  color: var(--syntax-tag);
+}
+.chat-markdown .hljs-deletion {
+  color: var(--syntax-deleted);
+}
+.chat-markdown .hljs-emphasis {
+  font-style: italic;
+}
+.chat-markdown .hljs-strong {
+  font-weight: 600;
+}

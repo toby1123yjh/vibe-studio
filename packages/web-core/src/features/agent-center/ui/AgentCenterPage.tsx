@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
-  SpinnerIcon,
   WarningCircleIcon,
 } from '@phosphor-icons/react';
 import {
@@ -17,6 +16,7 @@ import {
   type AgentProviderCapability,
 } from 'shared/types';
 import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
+import { Button } from '@vibe/ui/components/Button';
 import {
   DegradedState,
   EmptyState,
@@ -684,14 +684,15 @@ export function AgentCenterPage({
           description={t('agentCenter.errors.loadRemoteHosts')}
           action={
             hostDiscovery.canRetry ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 className="vk-agent-center__state-action"
-                disabled={hostDiscovery.isRetrying}
+                loading={hostDiscovery.isRetrying}
                 onClick={() => void hostDiscovery.retry()}
               >
                 {t('buttons.retry')}
-              </button>
+              </Button>
             ) : undefined
           }
         />
@@ -749,10 +750,13 @@ export function AgentCenterPage({
               </select>
             </label>
           )}
-          <button
+          <Button
             type="button"
+            variant="outline"
             className="vk-agent-center__rescan"
-            disabled={!hostAvailable || rescanning}
+            disabled={!hostAvailable}
+            loading={rescanning}
+            loadingLabel={t('agentCenter.rescanning')}
             title={
               hostAvailable
                 ? undefined
@@ -768,31 +772,27 @@ export function AgentCenterPage({
               ])
             }
           >
-            {rescanning ? (
-              <SpinnerIcon
-                className="vk-agent-center-spin"
-                aria-hidden="true"
-              />
-            ) : (
+            <span className="vk-agent-center__action-label">
               <ArrowClockwiseIcon aria-hidden="true" />
-            )}
-            {rescanning ? t('agentCenter.rescanning') : t('agentCenter.rescan')}
-          </button>
+              {t('agentCenter.rescan')}
+            </span>
+          </Button>
         </div>
       </header>
 
       {Boolean(remoteHostDiscovery.error) && (
-        <div role="status" className="vk-agent-center__header-actions">
+        <div role="status" className="vk-agent-center__remote-notice">
           <span>{t('agentCenter.errors.loadRemoteHosts')}</span>
           {remoteHostDiscovery.canRetry && (
-            <button
+            <Button
               type="button"
+              variant="outline"
               className="vk-agent-center__state-action"
-              disabled={remoteHostDiscovery.isRetrying}
+              loading={remoteHostDiscovery.isRetrying}
               onClick={() => void remoteHostDiscovery.retry()}
             >
               {t('buttons.retry')}
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -1131,14 +1131,16 @@ function ProviderOverview({
           </span>
         </div>
         <div className="vk-agent-center__provider-actions">
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={
               isDefault ||
               !canSetDefault ||
               defaultSaving ||
               defaultState !== 'ready'
             }
+            loading={defaultSaving}
             title={defaultUnavailableReason}
             aria-label={
               defaultUnavailableReason
@@ -1147,19 +1149,13 @@ function ProviderOverview({
             }
             onClick={onSetDefault}
           >
-            {defaultSaving && (
-              <SpinnerIcon
-                className="vk-agent-center-spin"
-                aria-hidden="true"
-              />
-            )}
             {isDefault
               ? t('agentCenter.defaultProvider')
               : t('agentCenter.setDefault')}
-          </button>
-          <button type="button" onClick={onOpenConfiguration}>
+          </Button>
+          <Button type="button" onClick={onOpenConfiguration}>
             {t('agentCenter.openConfiguration')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1173,13 +1169,14 @@ function ProviderOverview({
         <ErrorState
           title={t('agentCenter.errors.loadProviders')}
           action={
-            <button
+            <Button
               type="button"
+              variant="outline"
               className="vk-agent-center__state-action"
               onClick={onRetryGarage}
             >
               {t('buttons.retry')}
-            </button>
+            </Button>
           }
         />
       ) : garageProjection.state === 'unavailable' ? (
@@ -1187,13 +1184,14 @@ function ProviderOverview({
           title={t('agentCenter.states.summaryUnavailable')}
           description={t('agentCenter.errors.loadProviders')}
           action={
-            <button
+            <Button
               type="button"
+              variant="outline"
               className="vk-agent-center__state-action"
               onClick={onRetryGarage}
             >
               {t('buttons.retry')}
-            </button>
+            </Button>
           }
         />
       ) : garageProjection.state === 'degraded' ? (
@@ -1202,13 +1200,14 @@ function ProviderOverview({
           title={t('agentCenter.readiness.degraded')}
           description={t('agentCenter.errors.loadProviders')}
           action={
-            <button
+            <Button
               type="button"
+              variant="outline"
               className="vk-agent-center__state-action"
               onClick={onRetryGarage}
             >
               {t('buttons.retry')}
-            </button>
+            </Button>
           }
         />
       ) : null}
@@ -1240,7 +1239,16 @@ function ProviderOverview({
         />
       </div>
       {diagnostics.length > 0 && (
-        <div className="vk-agent-center__diagnostics">
+        <details
+          key={`${provider.executor}:${readiness}`}
+          className="vk-agent-center__diagnostics"
+          data-tone={providerReady ? 'warning' : 'error'}
+          open={!providerReady}
+        >
+          <summary>
+            <WarningCircleIcon aria-hidden="true" />
+            {t('agentCenter.states.summaryDiagnostics')}
+          </summary>
           {diagnostics.map((diagnostic) => (
             <p key={`${diagnostic.kind}:${diagnostic.message}`}>
               <WarningCircleIcon aria-hidden="true" />
@@ -1250,7 +1258,7 @@ function ProviderOverview({
                 : diagnostic.message}
             </p>
           ))}
-        </div>
+        </details>
       )}
 
       {hasGarageProviderData && (
@@ -1276,9 +1284,9 @@ function ProviderOverview({
       <section className="vk-agent-center__section">
         <div className="vk-agent-center__section-heading">
           <h3>{t('agentCenter.enabledTools')}</h3>
-          <button type="button" onClick={onOpenTools}>
+          <Button type="button" variant="ghost" size="sm" onClick={onOpenTools}>
             {t('agentCenter.manageTools')}
-          </button>
+          </Button>
         </div>
         <div className="vk-agent-center__metric-grid">
           <Metric
@@ -1308,9 +1316,14 @@ function ProviderOverview({
       <section className="vk-agent-center__section">
         <div className="vk-agent-center__section-heading">
           <h3>{t('agentCenter.nativeSummary')}</h3>
-          <button type="button" onClick={onOpenConfiguration}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onOpenConfiguration}
+          >
             {t('buttons.edit')}
-          </button>
+          </Button>
         </div>
         <div className="vk-agent-center__metric-grid">
           <Metric
@@ -1353,13 +1366,14 @@ function SourceProjectionNotice({
 }) {
   const { t } = useTranslation('common');
   const action = (
-    <button
+    <Button
       type="button"
+      variant="outline"
       className="vk-agent-center__state-action"
       onClick={onRetry}
     >
       {t('buttons.retry')}
-    </button>
+    </Button>
   );
 
   if (projection.state === 'error') {

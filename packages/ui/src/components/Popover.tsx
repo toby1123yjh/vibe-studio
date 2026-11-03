@@ -33,11 +33,12 @@ const PopoverContent = forwardRef<
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          'z-[var(--vk-z-popover)] w-72 max-w-[calc(100vw-2rem)] overflow-hidden',
+          'z-[var(--vk-z-popover)] max-h-[var(--radix-popover-content-available-height)] w-72 max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto',
           'rounded-[var(--vk-popover-radius)] border border-[var(--vk-popover-border)] bg-[var(--vk-popover-surface)]',
           'p-[var(--vk-space-3)] text-[length:var(--vk-font-size-sm)] leading-[var(--vk-line-height-sm)] text-[var(--vk-text-normal)] shadow-[var(--vk-popover-shadow)]',
           'break-words outline-none',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
+          'data-[state=open]:[animation-duration:var(--vk-duration-normal)] data-[state=closed]:[animation-duration:var(--vk-duration-fast)] motion-reduce:animate-none',
           'data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0',
           'data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95',
           'data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2',

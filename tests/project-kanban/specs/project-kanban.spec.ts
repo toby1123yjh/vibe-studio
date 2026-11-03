@@ -84,7 +84,7 @@ test("keeps interactive task controls out of drag activation", async ({
     .getByRole("button", { name: "More actions for VK-1", exact: true })
     .click();
   await expect(
-    page.getByRole("menuitem", { name: "Delete task" }),
+    page.getByRole("menuitem", { name: "Delete Task" }),
   ).toBeVisible();
   await expect(page.getByTestId("move-count")).toHaveText("0");
 });

@@ -73,7 +73,7 @@ const DialogContent = React.forwardRef<
             aria-label={closeLabel}
             className={cn(
               'absolute right-[var(--vk-space-3)] top-[var(--vk-space-3)] inline-flex size-8 items-center justify-center',
-              'rounded-[var(--vk-radius-sm)] text-[var(--vk-text-low)] transition-colors duration-[var(--vk-duration-fast)]',
+              'rounded-[var(--vk-radius-sm)] text-[var(--vk-text-low)] transition-colors [transition-duration:var(--vk-duration-fast)]',
               'hover:bg-[var(--vk-dialog-close-hover)] hover:text-[var(--vk-text-high)] active:bg-[var(--vk-surface-selection)]',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-dialog-surface)]',
               'disabled:pointer-events-none disabled:text-[var(--vk-text-disabled)]'

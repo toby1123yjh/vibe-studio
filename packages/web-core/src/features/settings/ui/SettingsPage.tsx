@@ -204,7 +204,11 @@ export function SettingsPage({ search, onSearchChange }: SettingsPageProps) {
   const requiresHost = route.tab !== 'cloud';
 
   return (
-    <section className="vk-settings-page" aria-labelledby="settings-title">
+    <section
+      className="vk-settings-page"
+      data-section={route.section}
+      aria-labelledby="settings-title"
+    >
       <header className="vk-settings-page__header">
         <div>
           {isProjectSettings && (

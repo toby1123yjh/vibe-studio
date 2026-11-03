@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Bot,
   ChevronDown,
+  LoaderCircle,
   Sparkles,
   Workflow,
   X,
@@ -192,10 +193,19 @@ export function TaskFloatingPanel({
                 if (!agentUnavailableReason) onCreateAgent();
               }}
               disabled={busyAction === 'agent'}
+              aria-busy={busyAction === 'agent'}
               aria-disabled={agentUnavailableReason ? true : undefined}
               title={agentUnavailableReason ?? undefined}
             >
-              <Bot aria-hidden="true" size={17} />
+              {busyAction === 'agent' ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  size={17}
+                  className="vk-spin"
+                />
+              ) : (
+                <Bot aria-hidden="true" size={17} />
+              )}
               <span>{t('taskDetails.singleAgent', 'Single agent')}</span>
             </button>
             <button
@@ -204,10 +214,19 @@ export function TaskFloatingPanel({
                 if (!workflowUnavailableReason) onCreateWorkflow();
               }}
               disabled={busyAction === 'workflow'}
+              aria-busy={busyAction === 'workflow'}
               aria-disabled={workflowUnavailableReason ? true : undefined}
               title={workflowUnavailableReason ?? undefined}
             >
-              <Workflow aria-hidden="true" size={17} />
+              {busyAction === 'workflow' ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  size={17}
+                  className="vk-spin"
+                />
+              ) : (
+                <Workflow aria-hidden="true" size={17} />
+              )}
               <span>{t('taskDetails.workflow', 'Workflow')}</span>
             </button>
             <button
@@ -216,10 +235,19 @@ export function TaskFloatingPanel({
                 if (!arenaUnavailableReason) onCreateArena();
               }}
               disabled={busyAction === 'arena'}
+              aria-busy={busyAction === 'arena'}
               aria-disabled={arenaUnavailableReason ? true : undefined}
               title={arenaUnavailableReason ?? undefined}
             >
-              <Sparkles aria-hidden="true" size={17} />
+              {busyAction === 'arena' ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  size={17}
+                  className="vk-spin"
+                />
+              ) : (
+                <Sparkles aria-hidden="true" size={17} />
+              )}
               <span>{t('taskDetails.arena', 'Arena')}</span>
             </button>
           </div>

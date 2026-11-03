@@ -8,10 +8,11 @@ import { cn } from '../lib/cn';
 
 const buttonVariants = cva(
   cn(
-    'relative inline-flex max-w-full items-center justify-center gap-[var(--vk-button-gap)]',
+    'relative inline-flex max-w-full cursor-pointer touch-manipulation items-center justify-center gap-[var(--vk-button-gap)]',
     'rounded-[var(--vk-button-radius)] border text-center font-medium',
     'whitespace-normal break-words text-[length:var(--vk-font-size-sm)] leading-[var(--vk-line-height-sm)]',
-    'transition-[background-color,border-color,color,box-shadow] duration-[var(--vk-duration-fast)] ease-[var(--vk-ease-standard)]',
+    'transition-[background-color,border-color,color,box-shadow] [transition-duration:var(--vk-duration-fast)] [transition-timing-function:var(--vk-ease-standard)]',
+    '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 motion-reduce:transition-none',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-surface-primary)]',
     'data-[selected=true]:ring-2 data-[selected=true]:ring-[var(--vk-selection-ring)] data-[selected=true]:ring-offset-1',
     'disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-[var(--vk-button-disabled-border)] disabled:bg-[var(--vk-button-disabled-surface)] disabled:text-[var(--vk-button-disabled-text)]',
@@ -140,10 +141,20 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             {loading && (
               <LoaderCircle
                 aria-hidden="true"
-                className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+                className="absolute inset-0 m-auto size-4 animate-spin motion-reduce:animate-none"
               />
             )}
-            <span className="min-w-0">{children}</span>
+            <span
+              aria-hidden={loading && loadingLabel ? true : undefined}
+              className={cn(
+                'inline-flex min-w-0 items-center justify-center gap-[var(--vk-button-gap)]',
+                // Keep the label mounted and sized while the spinner replaces
+                // it visually, so pending actions do not move adjacent controls.
+                loading && 'opacity-0'
+              )}
+            >
+              {children}
+            </span>
             {loading && loadingLabel && (
               <span className="sr-only">{loadingLabel}</span>
             )}

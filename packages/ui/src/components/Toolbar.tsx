@@ -9,6 +9,7 @@ import {
 } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
+import { Button } from './Button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,17 +43,16 @@ function ToolbarIconButton({
   ...props
 }: ToolbarIconButtonProps) {
   return (
-    <button
-      className={cn(
-        'flex items-center justify-center text-low hover:text-normal',
-        disabled && 'opacity-40 cursor-not-allowed hover:text-low',
-        className
-      )}
+    <Button
+      type="button"
+      variant="icon"
+      size="icon"
+      className={cn('shrink-0', className)}
       disabled={disabled}
       {...props}
     >
       <IconComponent className="size-icon-base" />
-    </button>
+    </Button>
   );
 }
 

@@ -1,37 +1,10 @@
 import { useEffect } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { LinkNode } from '@lexical/link';
-
-/**
- * Sanitize href to block dangerous protocols.
- * Returns undefined if the href is blocked.
- */
-function sanitizeHref(href?: string): string | undefined {
-  if (typeof href !== 'string') return undefined;
-  const trimmed = href.trim();
-  // Block dangerous protocols
-  if (/^(javascript|vbscript|data):/i.test(trimmed)) return undefined;
-  // Allow anchors and common relative forms (but they'll be disabled)
-  if (
-    trimmed.startsWith('#') ||
-    trimmed.startsWith('./') ||
-    trimmed.startsWith('../') ||
-    trimmed.startsWith('/')
-  )
-    return trimmed;
-  // Allow only https
-  if (/^https:\/\//i.test(trimmed)) return trimmed;
-  // Block everything else by default
-  return undefined;
-}
-
-/**
- * Check if href is an external HTTPS link.
- */
-function isExternalHref(href?: string): boolean {
-  if (!href) return false;
-  return /^https:\/\//i.test(href);
-}
+import {
+  sanitizeReadOnlyHref as sanitizeHref,
+  isExternalReadOnlyHref as isExternalHref,
+} from '../lib/read-only-link';
 
 /**
  * Plugin that handles link sanitization and security attributes in read-only mode.

@@ -1,5 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CaretDownIcon } from '@phosphor-icons/react';
+import { Button } from '@vibe/ui/components/Button';
+import { Input } from '@vibe/ui/components/Input';
 import type { BaseCodingAgent } from 'shared/types';
 import type { MachineClient } from '@/shared/lib/machineClient';
 import {
@@ -84,15 +87,19 @@ export function AgentInstallPanel({
   const running = pending || job?.status === 'running';
   return (
     <section className="vk-agent-center__section vk-agent-center__installer">
-      <button
+      <Button
         type="button"
-        className="vk-agent-center__state-action"
+        variant="outline"
+        className="vk-agent-center__install-toggle"
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen(!open)}
       >
-        {t('agentCenter.install.title')}
-      </button>
+        <span className="vk-agent-center__action-label">
+          {t('agentCenter.install.title')}
+          <CaretDownIcon aria-hidden="true" />
+        </span>
+      </Button>
       {open && (
         <div id={id}>
           <p>
@@ -103,19 +110,19 @@ export function AgentInstallPanel({
           {supportsNpmRegistry(executor) && (
             <label>
               <span>{t('agentCenter.install.registry')}</span>
-              <input
+              <Input
                 type="url"
                 value={registry}
                 disabled={running}
                 onChange={(event) => setRegistry(event.target.value)}
-                aria-describedby={`${id}-hint`}
+                aria-describedby={`${id}-hint${registryInvalid ? ` ${id}-error` : ''}`}
                 aria-invalid={registryInvalid}
               />
               <small id={`${id}-hint`}>
                 {t('agentCenter.install.registryHint')}
               </small>
               {registryInvalid && (
-                <small role="alert">
+                <small id={`${id}-error`} role="alert">
                   {t('agentCenter.install.registryInvalid')}
                 </small>
               )}
@@ -130,25 +137,28 @@ export function AgentInstallPanel({
             </p>
           )}
           {job?.logs && (
-            <pre tabIndex={0} aria-label={t('agentCenter.install.logs')}>
-              {job.logs.slice(-32768)}
-            </pre>
+            <details className="vk-agent-center__install-logs">
+              <summary>{t('agentCenter.install.logs')}</summary>
+              <pre tabIndex={0} aria-label={t('agentCenter.install.logs')}>
+                {job.logs.slice(-32768)}
+              </pre>
+            </details>
           )}
-          <button
+          <Button
             type="button"
-            className="vk-agent-center__state-action"
+            className="vk-agent-center__install-start"
             disabled={(running && !error) || registryInvalid}
+            loading={running && !error}
+            loadingLabel={t('agentCenter.install.running')}
             onClick={() => {
               if (job?.status === 'running' && error) setError(false);
               else void start();
             }}
           >
-            {running && !error
-              ? t('agentCenter.install.running')
-              : error || job?.status === 'failed'
-                ? t('buttons.retry')
-                : t('agentCenter.install.start')}
-          </button>
+            {error || job?.status === 'failed'
+              ? t('buttons.retry')
+              : t('agentCenter.install.start')}
+          </Button>
         </div>
       )}
     </section>

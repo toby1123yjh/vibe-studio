@@ -1,5 +1,6 @@
 import { cn } from '../lib/cn';
 import type { Icon } from '@phosphor-icons/react';
+import { Button } from './Button';
 
 interface IconButtonProps {
   icon: Icon;
@@ -22,29 +23,22 @@ export function IconButton({
   title,
   className,
 }: IconButtonProps) {
-  const variantStyles = disabled
-    ? 'opacity-40 cursor-not-allowed'
-    : variant === 'default'
-      ? 'text-low hover:text-normal hover:bg-secondary/50'
-      : 'bg-panel hover:bg-secondary text-normal';
-
   return (
-    <button
+    <Button
       type="button"
-      className={cn(
-        'flex items-center justify-center p-half rounded-sm transition-colors',
-        variantStyles,
-        className
-      )}
+      variant={variant === 'tertiary' ? 'secondary' : 'icon'}
+      size="icon"
+      className={className}
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
       title={title}
     >
       <IconComponent
-        className={cn('size-icon-sm', iconClassName)}
+        aria-hidden="true"
+        className={cn('size-4', iconClassName)}
         weight="bold"
       />
-    </button>
+    </Button>
   );
 }

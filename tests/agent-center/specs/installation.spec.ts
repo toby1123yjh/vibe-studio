@@ -149,6 +149,10 @@ test("switching missing providers does not reuse another provider installation j
   await page
     .getByRole("button", { name: "Start installation", exact: true })
     .click();
+  const logs = page.locator(".vk-agent-center__install-logs");
+  await expect(logs).not.toHaveAttribute("open", "");
+  await logs.locator("summary").click();
+  await expect(logs).toHaveAttribute("open", "");
   await expect(page.getByLabel("Installation output")).toContainText(
     "OPENCODE",
   );

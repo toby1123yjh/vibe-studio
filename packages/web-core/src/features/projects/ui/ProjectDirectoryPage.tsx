@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderKanban, LoaderCircle, Plus, Search } from 'lucide-react';
 import type { ProjectListItem } from 'shared/types';
+import { Button } from '@vibe/ui/components/Button';
 import {
   DegradedState,
   EmptyState,
@@ -255,9 +256,12 @@ export function ProjectDirectoryPage() {
             {t('directory.title', { defaultValue: 'Projects' })}
           </h1>
         </div>
-        <button
+        <Button
           type="button"
           className="vk-primary-action"
+          aria-label={t('directory.newProject', {
+            defaultValue: 'New project',
+          })}
           onClick={() => void createProject()}
           disabled={!organizationId || isRemoteOffline}
           title={
@@ -272,7 +276,7 @@ export function ProjectDirectoryPage() {
           <span>
             {t('directory.newProject', { defaultValue: 'New project' })}
           </span>
-        </button>
+        </Button>
       </header>
 
       <label className="vk-project-search">

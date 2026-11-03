@@ -353,10 +353,10 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   const scratchId = isNewSessionMode ? workspaceId : sessionId;
 
   // Get repos for file search
-  const { repos } = useWorkspaceRepo(workspaceId);
+  const { repos, isSuccess: reposReady } = useWorkspaceRepo(workspaceId);
   const workspaceQuery = useWorkspaceRecord(workspaceId);
   const workspace = explicitWorkspace ?? workspaceQuery.data;
-  const repoIds = repos.map((r) => r.id);
+  const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
   const resumeScopePath = useMemo(
     () =>
       resolveWorkspaceWorkingDirectory({
@@ -400,7 +400,11 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     isStandaloneScriptStopping;
 
   // Branch status for edit retry and conflict detection
-  const { data: branchStatus } = useBranchStatus(workspaceId);
+  // Ordinary directory conversations need no Git polling. Preserve conflict
+  // detection for repositories, including while the Inspector is collapsed.
+  const { data: branchStatus } = useBranchStatus(workspaceId, {
+    enabled: reposReady && repos.length > 0,
+  });
 
   // Derive conflict state from branch status
   const hasConflicts = useMemo(() => {

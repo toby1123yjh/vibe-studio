@@ -124,15 +124,22 @@ function DashboardForScope({ scope }: { scope: DashboardScope }) {
               <DashboardTime at={dashboard.lastSuccess} now={now} />
             </span>
           ) : null}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             className="session-dashboard__text-button"
             disabled={dashboard.isRefreshing || !hostAvailable}
+            aria-busy={dashboard.isRefreshing || undefined}
             onClick={dashboard.refresh}
           >
-            <RefreshCw size={14} aria-hidden="true" />
+            <RefreshCw
+              size={14}
+              aria-hidden="true"
+              className="session-dashboard__refresh-icon"
+            />
             {t('sessionDashboard.refresh')}
-          </button>
+          </Button>
         </div>
       </header>
       <DashboardToolbar
@@ -160,9 +167,12 @@ function DashboardForScope({ scope }: { scope: DashboardScope }) {
           {data.has_updates ||
           data.expanded.some((page) => page.has_updates || page.invalidation) ||
           data.snapshot_status !== 'ready' ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               className="session-dashboard__update-button"
+              disabled={dashboard.isRefreshing}
               onClick={dashboard.refresh}
             >
               <RefreshCw size={12} aria-hidden="true" />
@@ -173,7 +183,7 @@ function DashboardForScope({ scope }: { scope: DashboardScope }) {
                     ? 'sessionDashboard.snapshotCapacity'
                     : 'sessionDashboard.hasUpdates'
               )}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -190,13 +200,16 @@ function DashboardForScope({ scope }: { scope: DashboardScope }) {
               </>
             ) : null}
           </span>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             className="session-dashboard__text-button"
+            disabled={dashboard.isRefreshing}
             onClick={dashboard.refresh}
           >
             {t('buttons.retry')}
-          </button>
+          </Button>
         </div>
       ) : null}
       {data?.issues.length ? (

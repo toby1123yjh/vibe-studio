@@ -58,7 +58,6 @@ export function WorkspacesLayout() {
   const {
     workspaceId,
     workspace: selectedWorkspace,
-    isLoading,
     isWorkspaceLoading,
     workspaceError,
     retryWorkspace,
@@ -268,7 +267,7 @@ export function WorkspacesLayout() {
                     sessions={sessions}
                     repos={repos}
                     onSelectSession={selectSession}
-                    isLoading={isLoading}
+                    isLoading={isWorkspaceLoading && !selectedWorkspace}
                     workspaceState={deriveWorkspaceDetailState({
                       hasWorkspaceId: Boolean(workspaceId),
                       isLoading: isWorkspaceLoading,

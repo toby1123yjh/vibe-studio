@@ -43,12 +43,12 @@ export function ChatUserMessage({
   const { t } = useTranslation('tasks');
 
   const actionClassName =
-    'flex size-8 items-center justify-center rounded-[var(--vk-radius-sm)] text-low hover:bg-secondary hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand transition-colors duration-[var(--vk-duration-fast)] motion-reduce:transition-none [@media(pointer:coarse)]:size-11';
+    'flex size-8 items-center justify-center rounded-[var(--vk-radius-sm)] text-low hover:bg-secondary hover:text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand transition-colors [transition-duration:var(--vk-duration-fast)] motion-reduce:transition-none [@media(pointer:coarse)]:size-11';
   const bubbleClassName =
     'min-w-0 rounded-[var(--vk-radius-lg)] bg-secondary px-plusfifty py-base text-normal leading-relaxed [overflow-wrap:anywhere] [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:[overflow-wrap:normal] [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto';
   const actions =
     !isGreyed && (onEdit || onReset || (expanded && onToggle)) ? (
-      <div className="flex items-center justify-end gap-half pt-half transition-opacity duration-[var(--vk-duration-fast)] motion-reduce:transition-none [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100">
+      <div className="flex items-center justify-end gap-half pt-half transition-opacity [transition-duration:var(--vk-duration-fast)] motion-reduce:transition-none [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100">
         {onReset && (
           <Tooltip content={t('conversation.actions.resetTooltip')}>
             <button

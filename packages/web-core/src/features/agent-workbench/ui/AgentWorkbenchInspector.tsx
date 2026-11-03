@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@vibe/ui/components/Button';
 import type { RepoWithTargetBranch, Workspace } from 'shared/types';
 
 import { TerminalPanelContainer } from '@/shared/components/TerminalPanelContainer';
@@ -244,24 +245,26 @@ export function AgentWorkbenchInspector({
         })}
       >
         {tabs.map((tab) => (
-          <button
+          <Button
             key={tab}
             id={`${tabsId}-tab-${tab}`}
             type="button"
+            variant="ghost"
+            size="sm"
             role="tab"
             aria-selected={activeTab === tab}
             aria-controls={`${tabsId}-panel-${tab}`}
             tabIndex={activeTab === tab ? 0 : -1}
             className={cn(
-              'min-h-9 min-w-0 rounded px-2 text-xs text-muted-foreground',
-              'hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
-              activeTab === tab && 'bg-accent text-foreground'
+              'min-h-9 min-w-0 px-2 text-[length:var(--vk-font-size-2xs)] text-[var(--vk-text-low)]',
+              activeTab === tab &&
+                'bg-[var(--vk-surface-selection)] text-[var(--vk-text-high)]'
             )}
             onClick={() => selectTab(tab)}
             onKeyDown={(event) => handleTabKeyDown(event, tab)}
           >
             {tabLabels[tab]}
-          </button>
+          </Button>
         ))}
       </div>
       <div className="relative min-h-0 flex-1">

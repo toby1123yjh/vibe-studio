@@ -29,7 +29,10 @@ import { SettingsHostProvider } from "../../../../packages/web-core/src/shared/d
 import { SettingsMachineUserSystemProvider } from "../../../../packages/web-core/src/shared/dialogs/settings/settings/SettingsMachineUserSystemProvider";
 import { organizationKeys } from "../../../../packages/web-core/src/shared/hooks/organizationKeys";
 import { configureAuthRuntime } from "../../../../packages/web-core/src/shared/lib/auth/runtime";
-import { setLocalRemoteApiEnabled } from "../../../../packages/web-core/src/shared/lib/remoteApi";
+import {
+  setLocalRemoteApiEnabled,
+  setRemoteApiBase,
+} from "../../../../packages/web-core/src/shared/lib/remoteApi";
 import { useAppUpdateStore } from "../../../../packages/web-core/src/shared/stores/useAppUpdateStore";
 import { ProjectDirectoryPage } from "../../../../packages/web-core/src/features/projects/ui/ProjectDirectoryPage";
 import { DefaultProjectPage } from "../../../../packages/web-core/src/features/projects/ui/ProjectSessions";
@@ -42,6 +45,9 @@ import "../../../../packages/ui/src/styles/tokens.css";
 import "./style.css";
 
 setLocalRemoteApiEnabled(true);
+if (new URLSearchParams(window.location.search).get("mode") === "offline") {
+  setRemoteApiBase(`${window.location.origin}/api/local`);
+}
 configureAuthRuntime({
   getToken: async () => "page-surfaces-fixture-token",
   triggerRefresh: async () => "page-surfaces-fixture-token",

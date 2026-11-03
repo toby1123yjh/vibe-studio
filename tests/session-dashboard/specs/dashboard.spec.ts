@@ -537,6 +537,89 @@ test('opens the original exact conversation, preserves drafts and restores focus
   expect(mutations).toEqual([]);
 });
 
+test("row clicks open the exact conversation without intercepting context controls or text selection", async ({
+  page,
+}) => {
+  await mockWorkflowConversations(page);
+  await mockDashboard(page);
+  await page.goto("/");
+  const row = page.getByTestId("dashboard-work-row").first();
+  const title = row.getByRole("button", { name: "Ship release", exact: true });
+  const context = row.getByRole("button", {
+    name: "Show context: Ship release",
+  });
+  const panel = page.getByTestId("dashboard-conversation-panel");
+  await context.click();
+  await expect(page.getByTestId("dashboard-context")).toBeVisible();
+  await expect(panel).toHaveCount(0);
+
+  const path = row.locator(".session-dashboard__path");
+  await path.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await expect(panel).toHaveCount(0);
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await path.click();
+  await expect(panel).toHaveAttribute("data-session-id", "research-session");
+  await panel
+    .getByRole("button", { name: "Close conversation", exact: true })
+    .click();
+  await expect(title).toBeFocused();
+
+  await title.press("Enter");
+  await expect(panel).toHaveAttribute("data-session-id", "research-session");
+  await expect(page.getByTestId("destination")).toHaveText("");
+});
+
+test("monitoring columns adapt to available content width and keep readable controls in both themes", async ({
+  page,
+}, testInfo) => {
+  await mockDashboard(page);
+  await page.goto("/");
+  await expect(page.getByRole("table")).toBeVisible();
+  await page.locator(".dashboard-fixture").evaluate((element) => {
+    element.style.width = "720px";
+  });
+  const row = page.getByTestId("dashboard-work-row").first();
+  await expect(
+    row.locator(".session-dashboard__directory-column"),
+  ).toBeHidden();
+  await expect(row.locator(".session-dashboard__agent-column")).toBeHidden();
+  await expect(row.locator(".session-dashboard__mobile-meta")).toBeVisible();
+  await expect(row.locator(".session-dashboard__muted").first()).toHaveCSS(
+    "font-size",
+    "12px",
+  );
+  const table = page.getByRole("table");
+  const reply = row.locator(".session-dashboard__reply-column");
+  const actions = row.locator(".session-dashboard__actions-column");
+  const bounds = (await table.boundingBox())!;
+  expect((await reply.boundingBox())!.width).toBeGreaterThan(180);
+  expect((await actions.boundingBox())!.x + (await actions.boundingBox())!.width)
+    .toBeCloseTo(bounds.x + bounds.width, 0);
+  await page.screenshot({
+    path: testInfo.outputPath("dashboard-contained-light.png"),
+  });
+  await page.getByRole("button", { name: "Dark", exact: true }).click();
+  await expect(row).toHaveCSS("background-color", "rgb(24, 28, 32)");
+  await expect(row.locator(".session-dashboard__title-button")).toHaveCSS(
+    "color", "rgb(242, 244, 245)",
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("dashboard-contained-dark.png"),
+  });
+  expect(
+    await page
+      .getByTestId("dashboard-page")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
 test('work leaving the ongoing list keeps its already opened original conversation', async ({
   page,
 }) => {

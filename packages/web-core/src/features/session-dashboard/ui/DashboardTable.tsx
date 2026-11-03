@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@vibe/ui/components/Button';
 import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import type {
   DashboardAgent,
@@ -224,6 +225,7 @@ function Reply({
 
 interface WorkRowProps {
   row: DashboardWorkRow;
+  columnCount: number;
   child?: DashboardChildRow;
   scopeKey: string;
   hostId: string | null;
@@ -237,6 +239,7 @@ interface WorkRowProps {
 
 const WorkRow = memo(function WorkRow({
   row,
+  columnCount,
   child,
   scopeKey,
   hostId,
@@ -249,6 +252,7 @@ const WorkRow = memo(function WorkRow({
 }: WorkRowProps) {
   const { t } = useTranslation('common');
   const [contextOpen, setContextOpen] = useState(false);
+  const titleTriggerRef = useRef<HTMLButtonElement>(null);
   const source = child ?? row;
   const directoryPath = source.directory.path
     ? formatPathForDisplay(source.directory.path)
@@ -288,8 +292,22 @@ const WorkRow = memo(function WorkRow({
           actualSession && selectedSessionId === actualSession
         )}
         data-invalidated={!child && row.invalidated}
+        data-openable={Boolean(target && !row.invalidated)}
         data-testid="dashboard-work-row"
         data-work-key={child?.id ?? dashboardWorkKey(row.work)}
+        onClick={(event) => {
+          if (!target || row.invalidated || event.defaultPrevented) return;
+          const clicked = event.target;
+          if (
+            !(clicked instanceof Element) ||
+            clicked.closest('button, a, input, select, textarea, summary') ||
+            window.getSelection()?.isCollapsed === false
+          )
+            return;
+          // Row clicks supplement the real title button, which remains the
+          // keyboard entry point and the focus-return target for the chat.
+          open(target, titleTriggerRef.current ?? event.currentTarget);
+        }}
       >
         <td className="session-dashboard__status-column">
           <DashboardStatus
@@ -328,8 +346,10 @@ const WorkRow = memo(function WorkRow({
         <td className="session-dashboard__work-column">
           <div className="session-dashboard__work-title">
             {!child && row.child_count > 0 ? (
-              <button
+              <Button
                 type="button"
+                variant="icon"
+                size="icon"
                 className="session-dashboard__icon-button"
                 aria-expanded={expanded}
                 aria-label={t(
@@ -345,7 +365,7 @@ const WorkRow = memo(function WorkRow({
                 ) : (
                   <ChevronRight size={15} aria-hidden="true" />
                 )}
-              </button>
+              </Button>
             ) : child ? (
               <span
                 className="session-dashboard__tree-branch"
@@ -354,6 +374,7 @@ const WorkRow = memo(function WorkRow({
             ) : null}
             {target && !row.invalidated ? (
               <button
+                ref={titleTriggerRef}
                 type="button"
                 className="session-dashboard__title-button"
                 title={source.title}
@@ -462,8 +483,10 @@ const WorkRow = memo(function WorkRow({
         </td>
         <td className="session-dashboard__actions-column">
           <div className="session-dashboard__actions">
-            <button
+            <Button
               type="button"
+              variant="icon"
+              size="icon"
               className="session-dashboard__icon-button"
               aria-expanded={contextOpen}
               aria-label={t('sessionDashboard.context.show', {
@@ -473,10 +496,12 @@ const WorkRow = memo(function WorkRow({
               onClick={() => setContextOpen((value) => !value)}
             >
               <Info size={15} aria-hidden="true" />
-            </button>
+            </Button>
             {target && !row.invalidated ? (
-              <button
+              <Button
                 type="button"
+                variant="icon"
+                size="icon"
                 className="session-dashboard__icon-button"
                 aria-label={t(
                   target.kind === 'session'
@@ -497,14 +522,14 @@ const WorkRow = memo(function WorkRow({
                 ) : (
                   <ExternalLink size={15} aria-hidden="true" />
                 )}
-              </button>
+              </Button>
             ) : null}
           </div>
         </td>
       </tr>
       {source.issues.length ? (
         <tr className="session-dashboard__issues-row">
-          <td colSpan={7}>
+          <td colSpan={columnCount}>
             {source.issues.map((issue, index) => (
               <span key={`${issue.code}:${index}`}>{issue.message}</span>
             ))}
@@ -513,7 +538,7 @@ const WorkRow = memo(function WorkRow({
       ) : null}
       {contextOpen ? (
         <tr className="session-dashboard__context-row">
-          <td colSpan={7}>
+          <td colSpan={columnCount}>
             <DashboardContext
               work={row.work}
               hostId={hostId}
@@ -551,7 +576,7 @@ function ChildRows({
   if (!page || page.workflow_run_id !== row.workflow_run_id)
     return (
       <tr className="session-dashboard__child-state">
-        <td colSpan={7} role="status">
+        <td colSpan={props.columnCount} role="status">
           {t(
             loading
               ? 'sessionDashboard.loadingChildren'
@@ -564,7 +589,7 @@ function ChildRows({
     <>
       {page.invalidation ? (
         <tr className="session-dashboard__child-state">
-          <td colSpan={7} role="status">
+          <td colSpan={props.columnCount} role="status">
             {t('sessionDashboard.childrenChanged')}
           </td>
         </tr>
@@ -579,7 +604,7 @@ function ChildRows({
       ))}
       {page.total > page.page_size ? (
         <tr className="session-dashboard__child-state">
-          <td colSpan={7}>
+          <td colSpan={props.columnCount}>
             <Pagination
               page={page.page}
               pageSize={page.page_size}
@@ -624,24 +649,28 @@ export function Pagination({
       <span>
         {t('sessionDashboard.page', { page: page + 1, pages, total })}
       </span>
-      <button
+      <Button
         type="button"
+        variant="icon"
+        size="icon"
         className="session-dashboard__icon-button"
         disabled={page === 0 || disabled}
         aria-label={t('sessionDashboard.previousPage')}
         onClick={() => onPage(page - 1)}
       >
         <ChevronLeft size={16} aria-hidden="true" />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="icon"
+        size="icon"
         className="session-dashboard__icon-button"
         disabled={page >= pages - 1 || disabled}
         aria-label={t('sessionDashboard.nextPage')}
         onClick={() => onPage(page + 1)}
       >
         <ChevronRight size={16} aria-hidden="true" />
-      </button>
+      </Button>
     </nav>
   );
 }
@@ -679,10 +708,28 @@ export function DashboardTable({
 }) {
   const { t } = useTranslation('common');
   const scroller = useRef<HTMLDivElement>(null);
+  const [columnCount, setColumnCount] = useState(7);
   const initialScrollTop = useRef(scrollTop);
   useLayoutEffect(() => {
     if (scroller.current) scroller.current.scrollTop = initialScrollTop.current;
     // Restore only on mount; streaming updates must never move the viewport.
+  }, []);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const syncColumnCount = () => {
+      const headers = element.querySelectorAll('thead th');
+      const visibleCount = Array.from(headers).filter(
+        (header) => getComputedStyle(header).display !== 'none'
+      ).length;
+      // Keep spanning rows on the visible grid. A fixed colspan leaves
+      // phantom columns when container queries hide metadata columns.
+      setColumnCount(visibleCount);
+    };
+    syncColumnCount();
+    const observer = new ResizeObserver(syncColumnCount);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
   let previousProject: string | null | undefined;
   const rows: ReactNode[] = [];
@@ -695,7 +742,7 @@ export function DashboardTable({
           key={`project:${project}:${key}`}
           className="session-dashboard__project-group"
         >
-          <th scope="rowgroup" colSpan={7}>
+          <th scope="rowgroup" colSpan={columnCount}>
             {dashboardProjectTitle(row.project, t)}
           </th>
         </tr>
@@ -706,6 +753,7 @@ export function DashboardTable({
       <Fragment key={dashboardRowKey(hostId, row.work)}>
         <WorkRow
           row={row}
+          columnCount={columnCount}
           scopeKey={scopeKey}
           hostId={hostId}
           now={now}
@@ -718,6 +766,7 @@ export function DashboardTable({
         {expandedKeys.has(key) ? (
           <ChildRows
             row={row}
+            columnCount={columnCount}
             scopeKey={scopeKey}
             hostId={hostId}
             now={now}
@@ -745,15 +794,6 @@ export function DashboardTable({
         className="session-dashboard__table"
         aria-label={t('sessionDashboard.tableLabel')}
       >
-        <colgroup>
-          <col className="session-dashboard__status-column" />
-          <col className="session-dashboard__kind-column" />
-          <col className="session-dashboard__work-column" />
-          <col className="session-dashboard__directory-column" />
-          <col className="session-dashboard__agent-column" />
-          <col className="session-dashboard__reply-column" />
-          <col className="session-dashboard__actions-column" />
-        </colgroup>
         <thead>
           <tr>
             {(
@@ -782,7 +822,7 @@ export function DashboardTable({
             rows
           ) : (
             <tr>
-              <td colSpan={7} className="session-dashboard__empty">
+              <td colSpan={columnCount} className="session-dashboard__empty">
                 <MessageSquare size={22} aria-hidden="true" />
                 <h2>{t('sessionDashboard.emptyTitle')}</h2>
                 <p>{t('sessionDashboard.emptyDescription')}</p>

@@ -233,7 +233,8 @@ test("Inspector close button has its own header without covering the tabs at min
   const tabs = page.getByRole("tablist", { name: "Inspector tabs" });
   const tabBounds = (await tabs.boundingBox())!;
   expect(closeBounds.y + closeBounds.height).toBeLessThanOrEqual(tabBounds.y);
-  await expect(close).toHaveCSS("position", "static");
+  expect(await close.evaluate((node) => getComputedStyle(node).position))
+    .not.toMatch(/^(absolute|fixed)$/);
   expect(
     await tabs.evaluate((node) => node.scrollWidth - node.clientWidth),
   ).toBeLessThanOrEqual(1);

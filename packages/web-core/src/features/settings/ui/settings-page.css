@@ -1,6 +1,7 @@
 .vk-settings-page {
   display: flex;
   min-height: 100%;
+  min-width: 0;
   flex-direction: column;
   color: var(--vk-text-normal);
 }
@@ -9,8 +10,12 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  padding: 28px 0 20px;
+  gap: var(--vk-space-6);
+  padding: var(--vk-space-6) 0 var(--vk-space-5);
+}
+
+.vk-settings-page__header > div {
+  min-width: 0;
 }
 
 .vk-settings-page__eyebrow {
@@ -72,6 +77,7 @@
 .vk-settings-page__host-picker {
   display: grid;
   min-width: 220px;
+  max-width: 100%;
   gap: 6px;
   color: var(--vk-text-low);
   font-size: 11px;
@@ -86,6 +92,10 @@
   padding: 0 34px 0 12px;
   color: var(--vk-text-high);
   font: inherit;
+  font-size: var(--vk-font-size-xs);
+  transition:
+    background-color var(--vk-duration-fast) var(--vk-ease-standard),
+    border-color var(--vk-duration-fast) var(--vk-ease-standard);
 }
 
 .vk-settings-page__host-picker select:focus-visible,
@@ -121,6 +131,10 @@
   cursor: pointer;
   font: inherit;
   font-size: 13px;
+  transition:
+    color var(--vk-duration-fast) var(--vk-ease-standard),
+    background-color var(--vk-duration-fast) var(--vk-ease-standard),
+    border-color var(--vk-duration-fast) var(--vk-ease-standard);
 }
 
 .vk-settings-page__tabs button {
@@ -142,6 +156,7 @@
 
 .vk-settings-page__tabs button[aria-current='page'] {
   border-bottom-color: var(--vk-brand);
+  font-weight: var(--vk-font-weight-medium);
 }
 
 .vk-settings-page__sections {
@@ -150,7 +165,7 @@
 }
 
 .vk-settings-page__sections button {
-  min-height: 44px;
+  min-height: var(--vk-button-height);
   border: 1px solid transparent;
   border-radius: var(--vk-radius-sm);
   padding: 0 12px;
@@ -159,11 +174,17 @@
 .vk-settings-page__sections button[aria-current='page'] {
   border-color: var(--vk-border-subtle);
   background: var(--vk-surface-secondary);
+  font-weight: var(--vk-font-weight-medium);
 }
 
 .vk-settings-page__content {
   min-width: 0;
-  padding: 20px 0 40px;
+  padding: var(--vk-space-5) 0 var(--vk-space-10);
+  overflow-wrap: anywhere;
+}
+
+.vk-settings-page[data-section='application'] .vk-settings-page__host-content {
+  max-width: 52rem;
 }
 
 .vk-settings-page__content > .space-y-6,
@@ -218,6 +239,11 @@
   margin: 0;
   border: 0;
   padding: 0;
+}
+
+.vk-settings-page__host-content > .vk-settings-card + .vk-settings-card,
+.vk-settings-page__content > .vk-settings-card + .vk-settings-card {
+  margin-top: var(--vk-space-5);
 }
 
 .vk-settings-page__version-row {
@@ -284,6 +310,11 @@
   line-height: 44px;
 }
 
+.vk-settings-page__update-notes summary:focus-visible {
+  outline: 2px solid var(--vk-focus-ring);
+  outline-offset: 2px;
+}
+
 .vk-settings-page__update-notes p {
   max-height: 160px;
   overflow: auto;
@@ -307,9 +338,25 @@
 
   .vk-settings-page__host-picker {
     width: 100%;
+    min-width: 0;
+  }
+
+  .vk-settings-page__sections button {
+    min-height: 44px;
+  }
+
+  .vk-settings-save-bar {
+    bottom: var(--vk-space-2);
+    padding-bottom: max(var(--vk-space-3), env(safe-area-inset-bottom));
   }
 
   .vk-settings-page__unavailable-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (pointer: coarse) {
+  .vk-settings-page__sections button {
+    min-height: 44px;
   }
 }

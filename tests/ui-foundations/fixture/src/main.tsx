@@ -16,6 +16,7 @@ import {
   FloatingPanelTitle,
 } from '../../../../packages/ui/src/components/FloatingPanel';
 import { Button } from '../../../../packages/ui/src/components/Button';
+import { ControlsHarness } from './ControlsHarness';
 import { ConfirmDialogView } from '../../../../packages/ui/src/components/ConfirmDialog';
 import { Input } from '../../../../packages/ui/src/components/Input';
 import { SplitLayout } from '../../../../packages/ui/src/components/SplitLayout';
@@ -55,10 +56,14 @@ import './style.css';
 const panelResizeFixture = new URLSearchParams(window.location.search).has(
   'panel-resize'
 );
+const controlsFixture = new URLSearchParams(window.location.search).has(
+  'controls'
+);
 
 if (
   new URLSearchParams(window.location.search).has('confirmation') ||
-  panelResizeFixture
+  panelResizeFixture ||
+  controlsFixture
 ) {
   await import('./tailwind.css');
   // Match the application: generated base/utilities precede component CSS.
@@ -132,7 +137,11 @@ const mountCount = Number(root.dataset.fixtureMountCount ?? '0') + 1;
 root.dataset.fixtureMountCount = String(mountCount);
 mountCountOutput.textContent = String(mountCount);
 
-if (window.location.pathname === '/' && !panelResizeFixture) {
+if (
+  window.location.pathname === '/' &&
+  !panelResizeFixture &&
+  !controlsFixture
+) {
   window.history.replaceState(
     { fixture: 'theme-foundations' },
     '',
@@ -649,7 +658,9 @@ if (!componentRoot) {
 
 createRoot(componentRoot).render(
   <React.StrictMode>
-    {panelResizeFixture ? (
+    {controlsFixture ? (
+      <ControlsHarness />
+    ) : panelResizeFixture ? (
       <ResizableFloatingPanelHarness />
     ) : (
       <>

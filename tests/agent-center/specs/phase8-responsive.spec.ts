@@ -90,3 +90,37 @@ test('Agent Center disables spinner motion when reduced motion is requested', as
   });
   expect(animation).toBe('none');
 });
+
+test('operable agent diagnostics stay compact and open with the keyboard', async ({
+  page,
+}) => {
+  await page.goto('/?signedOut=true&diagnostic=installed');
+  const diagnostics = page.locator('.vk-agent-center__diagnostics');
+  await expect(diagnostics).toBeVisible();
+  await expect(diagnostics).toHaveAttribute('data-tone', 'warning');
+  await expect(diagnostics).not.toHaveAttribute('open', '');
+  const summary = diagnostics.locator('summary');
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  await expect(diagnostics).toHaveAttribute('open', '');
+  await expect(
+    diagnostics.getByText(
+      'Agent detected; authentication status has not been verified.',
+      { exact: true }
+    )
+  ).toBeVisible();
+});
+
+test('blocking agent diagnostics remain expanded with their recovery message', async ({
+  page,
+}) => {
+  await page.goto('/?signedOut=true&diagnostic=blocked');
+  const diagnostics = page.locator('.vk-agent-center__diagnostics');
+  await expect(diagnostics).toHaveAttribute('data-tone', 'error');
+  await expect(diagnostics).toHaveAttribute('open', '');
+  await expect(
+    diagnostics.getByText('Sign in to the agent on this machine.', {
+      exact: true,
+    })
+  ).toBeVisible();
+});

@@ -1584,6 +1584,7 @@
     "selectWorkspace": "Select a workspace to view notes"
   },
   "actions": {
+    "copyMarkdown": "Copy as Markdown",
     "copyPath": "Copy path",
     "cancel": "Cancel",
     "saveChanges": "Save Changes",

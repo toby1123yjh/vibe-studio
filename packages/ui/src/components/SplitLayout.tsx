@@ -217,7 +217,7 @@ export const SplitLayout = React.forwardRef<HTMLDivElement, SplitLayoutProps>(
           data-resizable={resizable || undefined}
           className={cn(
             'group relative order-1 shrink-0 touch-none select-none bg-transparent outline-none',
-            'after:absolute after:bg-[var(--vk-split-divider)] after:transition-colors after:duration-[var(--vk-duration-fast)]',
+            'after:absolute after:bg-[var(--vk-split-divider)] after:transition-colors after:[transition-duration:var(--vk-duration-fast)]',
             'focus-visible:after:bg-[var(--vk-split-divider-active)]',
             isHorizontal
               ? 'w-[var(--vk-split-divider-size)] cursor-col-resize after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2'

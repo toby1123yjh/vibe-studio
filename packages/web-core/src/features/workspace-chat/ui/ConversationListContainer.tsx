@@ -66,7 +66,10 @@ import { AppChatMarkdown } from './AppChatMarkdown';
 import { useWorkflowNotifications } from '@/shared/hooks/useWorkflowManagement';
 import { workflowNotificationEntries } from '@/features/workflow/model/workflowNotifications';
 import { Button } from '@vibe/ui/components/Button';
-import type { WorkspaceConversationViewState } from '../model/conversationViewState';
+import {
+  captureConversationReadingAnchor,
+  type WorkspaceConversationViewState,
+} from '../model/conversationViewState';
 import { useHostId } from '@/shared/providers/HostIdProvider';
 
 interface ConversationListProps {
@@ -451,12 +454,22 @@ export const ConversationList = forwardRef<
     returnToLatestRef.current = null;
   }, [conversationScopeKey]);
 
+  const clearPendingInteractionAnchor = useCallback(() => {
+    if (pendingInteractionAnchorFrameRef.current !== null) {
+      cancelAnimationFrame(pendingInteractionAnchorFrameRef.current);
+      pendingInteractionAnchorFrameRef.current = null;
+    }
+    pendingInteractionAnchorDeadlineRef.current = 0;
+    pendingInteractionAnchorRef.current = null;
+  }, []);
+
   useEffect(() => {
     const element = tanstackScrollRef.current;
     if (!element) return;
     const cancelWindowScroll = () => {
       historyAnchorRef.current = null;
       returnToLatestRef.current = null;
+      clearPendingInteractionAnchor();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -487,16 +500,7 @@ export const ConversationList = forwardRef<
       element.removeEventListener('pointerdown', cancelWindowScroll);
       element.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
-
-  const clearPendingInteractionAnchor = useCallback(() => {
-    if (pendingInteractionAnchorFrameRef.current !== null) {
-      cancelAnimationFrame(pendingInteractionAnchorFrameRef.current);
-      pendingInteractionAnchorFrameRef.current = null;
-    }
-    pendingInteractionAnchorDeadlineRef.current = 0;
-    pendingInteractionAnchorRef.current = null;
-  }, []);
+  }, [clearPendingInteractionAnchor]);
 
   const programmaticScrollDeadlineRef = useRef(0);
 
@@ -704,14 +708,11 @@ export const ConversationList = forwardRef<
     const element = tanstackScrollRef.current;
     const store = sessionConversation.store;
     if (!element || !store || store.getSnapshot().isLoadingHistory) return;
-    const top = element.getBoundingClientRect().top;
-    const visible = [
-      ...element.querySelectorAll<HTMLElement>('[data-semantic-key]'),
-    ].find((row) => row.getBoundingClientRect().bottom > top);
-    if (visible?.dataset.semanticKey)
+    const visible = captureConversationReadingAnchor(element);
+    if (visible)
       historyAnchorRef.current = {
-        key: visible.dataset.semanticKey,
-        top: visible.getBoundingClientRect().top - top,
+        key: visible.key,
+        top: visible.offset,
         ready: false,
         committed: false,
         corrections: 0,
@@ -827,12 +828,31 @@ export const ConversationList = forwardRef<
         conversationVirtualizer.scrollToBottom('auto');
       } else {
         conversationVirtualizer.releaseBottomLock();
-        element.scrollTop = saved.scrollTop;
+        const index = saved.anchor
+          ? conversationRows.findIndex(
+              (row) => row.semanticKey === saved.anchor?.key
+            )
+          : -1;
+        if (saved.anchor && index >= 0) {
+          historyAnchorRef.current = {
+            key: saved.anchor.key,
+            top: saved.anchor.offset,
+            ready: true,
+            committed: true,
+            corrections: 0,
+          };
+          conversationVirtualizer.scrollToIndex(index, {
+            align: 'start',
+            behavior: 'auto',
+          });
+        } else {
+          element.scrollTop = saved.scrollTop;
+        }
       }
       viewRestoredRef.current = true;
     }
     return true;
-  }, [conversationVirtualizer]);
+  }, [conversationRows, conversationVirtualizer]);
 
   const scrollExecutor = useScrollCommandExecutor({
     virtualizer: conversationVirtualizer.virtualizer,
@@ -1085,19 +1105,25 @@ export const ConversationList = forwardRef<
   const canReportViewRef = useRef(false);
   canReportViewRef.current =
     !loading && !isLoadingHistory && viewRestoredRef.current;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = tanstackScrollRef.current;
     if (!element) return;
     const report = () => {
-      if (!canReportViewRef.current) return;
-      reportViewRef.current?.({
+      if (!canReportViewRef.current || !reportViewRef.current) return;
+      const atBottom =
+        windowScrollRef.current.conversationVirtualizer.checkIsAtBottom();
+      reportViewRef.current({
         scrollTop: element.scrollTop,
-        atBottom:
-          element.scrollHeight - element.clientHeight - element.scrollTop < 48,
+        atBottom,
+        anchor: atBottom
+          ? undefined
+          : captureConversationReadingAnchor(element),
       });
     };
     element.addEventListener('scroll', report, { passive: true });
     return () => {
+      // Capture before React detaches the rows; passive cleanup sees a detached
+      // container with zero layout metrics and would overwrite the saved view.
       report();
       element.removeEventListener('scroll', report);
     };

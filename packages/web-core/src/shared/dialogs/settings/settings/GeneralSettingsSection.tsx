@@ -272,7 +272,10 @@ function GeneralSettingsForm({
   if (!config) {
     return (
       <div className="py-8">
-        <div className="bg-error/10 border border-error/50 rounded-sm p-4 text-error">
+        <div
+          role="alert"
+          className="rounded-[var(--vk-radius-md)] border border-[var(--vk-status-error)] bg-[var(--vk-status-error-subtle)] p-4 text-[13px] leading-relaxed text-[var(--vk-status-error-text)]"
+        >
           {t('settings.general.loadError')}
         </div>
       </div>
@@ -304,7 +307,10 @@ function GeneralSettingsForm({
       )}
 
       {success && (
-        <div className="bg-success/10 border border-success/50 rounded-sm p-4 text-success font-medium">
+        <div
+          role="status"
+          className="rounded-[var(--vk-radius-md)] border border-[var(--vk-status-success)] bg-[var(--vk-status-success-subtle)] p-4 text-[13px] leading-relaxed text-[var(--vk-status-success-text)]"
+        >
           {t('settings.general.save.success')}
         </div>
       )}
@@ -632,8 +638,8 @@ function GeneralSettingsForm({
           label={t('settings.general.git.workspaceDir.label')}
           description={t('settings.general.git.workspaceDir.helper')}
         >
-          <div className="flex gap-2">
-            <div className="flex-1">
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="min-w-0 flex-1 basis-48">
               <SettingsInput
                 value={draft?.workspace_dir ?? ''}
                 onChange={(value) =>
@@ -879,8 +885,8 @@ function GeneralSettingsForm({
         title={t('settings.general.safety.title')}
         description={t('settings.general.safety.description')}
       >
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1 basis-48">
             <p className="text-sm font-medium text-normal">
               {t('settings.general.safety.onboarding.title')}
             </p>

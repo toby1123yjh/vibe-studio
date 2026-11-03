@@ -168,6 +168,7 @@ export class AgentConversationStore {
   private readonly blockListeners = new Map<string, Set<Listener>>();
   private readonly listeners = new Set<Listener>();
   private readonly changedBlockIds = new Set<string>();
+  private readonly dirtyReferences = new Set<string>();
   private ids: string[] = [];
   private entries: PatchTypeWithKey[] = [];
   private runs: AgentRunSummary[] = [];
@@ -321,12 +322,16 @@ export class AgentConversationStore {
     let hasNewer = false;
     for (const block of blocks) {
       const previous = this.blocks.get(block.block_id);
+      const revisionOrder = previous
+        ? compareRevision(block.revision, previous.revision)
+        : 1;
       // A full baseline at the same revision replaces an optional append fast
       // path, including finish/metadata fields that were not in the delta.
       if (
         previous &&
-        (compareRevision(block.revision, previous.revision) < 0 ||
-          JSON.stringify(block) === JSON.stringify(previous))
+        (revisionOrder < 0 ||
+          (revisionOrder === 0 &&
+            JSON.stringify(block) === JSON.stringify(previous)))
       )
         continue;
       const isNew = !this.ids.includes(block.block_id);
@@ -352,6 +357,7 @@ export class AgentConversationStore {
         orderChanged = true;
       }
       this.changedBlockIds.add(block.block_id);
+      this.dirtyReferences.add(block.block_id);
     }
     if (orderChanged)
       this.ids.sort((a, b) => {
@@ -412,10 +418,11 @@ export class AgentConversationStore {
     }
     const key = runSignature(runs);
     const previousRuns = this.runs;
+    const runsChanged = key !== this.runsKey;
     // Keep version facts current even when token-only updates intentionally
     // preserve the public timeline reference and composer subscription.
     this.runs = runs;
-    if (key !== this.runsKey) {
+    if (runsChanged) {
       this.runsKey = key;
       this.timeline = buildCanonicalAgentSessionTimeline(this.sessionId, runs);
       for (const [id, block] of this.blocks) {
@@ -447,34 +454,46 @@ export class AgentConversationStore {
       if (!previous || compareRevision(block.revision, previous.revision) > 0) {
         this.blocks.set(block.block_id, block);
         this.changedBlockIds.add(block.block_id);
+        this.dirtyReferences.add(block.block_id);
       }
     }
+    const windowIds = new Set(this.ids);
     const retained = new Set([
-      ...this.ids,
+      ...windowIds,
       ...pending.map((block) => block.block_id),
     ]);
+    let entriesChanged = this.entries.length !== this.ids.length;
     for (const id of this.blocks.keys())
       if (!retained.has(id)) {
         this.blocks.delete(id);
-        this.references.delete(id);
+        if (this.references.delete(id)) entriesChanged = true;
         this.changedBlockIds.add(id);
       }
-    const next = this.ids.flatMap((id) => {
+    // Body-only updates cannot change unrelated history structure. Recheck
+    // dirty blocks, or the window when Run metadata can affect active rows.
+    // Keep this dirty set separate from notifications: append traffic notifies
+    // immediately, before its durable changes page reconciles references.
+    const candidates = runsChanged ? this.ids : this.dirtyReferences;
+    for (const id of candidates) {
+      if (!windowIds.has(id)) continue;
       const block = this.blocks.get(id);
-      if (!block) return [];
+      if (!block) continue;
       const signature = referenceSignature(block, this.runs);
-      let reference = this.references.get(id);
+      const reference = this.references.get(id);
       if (!reference || reference.signature !== signature) {
-        reference = { signature, entry: blockReference(block, this.runs) };
-        this.references.set(id, reference);
+        this.references.set(id, {
+          signature,
+          entry: blockReference(block, this.runs),
+        });
+        entriesChanged = true;
       }
-      return [reference.entry];
-    });
-    if (
-      next.length !== this.entries.length ||
-      next.some((entry, index) => entry !== this.entries[index])
-    )
-      this.entries = next;
+    }
+    this.dirtyReferences.clear();
+    if (entriesChanged)
+      this.entries = this.ids.flatMap((id) => {
+        const reference = this.references.get(id);
+        return reference ? [reference.entry] : [];
+      });
   }
 
   applyPage = (page: ConversationPage, replace = false) => {
@@ -587,6 +606,7 @@ export class AgentConversationStore {
           ),
         });
         this.changedBlockIds.add(block.block_id);
+        this.dirtyReferences.add(block.block_id);
         continue;
       }
       this.blocks.set(block.block_id, {
@@ -605,6 +625,7 @@ export class AgentConversationStore {
         ),
       });
       this.changedBlockIds.add(block.block_id);
+      this.dirtyReferences.add(block.block_id);
     }
     // Only a committed changes page advances the session recovery cursor.
     this.notify();

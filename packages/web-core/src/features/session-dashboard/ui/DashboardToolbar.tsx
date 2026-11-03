@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Search, SlidersHorizontal, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@vibe/ui/components/Button';
 import {
   Popover,
   PopoverContent,
@@ -68,19 +69,24 @@ export function DashboardToolbar({
             onChange={(event) => setSearch(event.target.value)}
           />
           {search ? (
-            <button
+            <Button
               type="button"
+              variant="icon"
+              size="icon"
+              className="session-dashboard__clear-search"
               aria-label={t('sessionDashboard.filters.clearSearch')}
               onClick={() => setSearch('')}
             >
               <X size={13} aria-hidden="true" />
-            </button>
+            </Button>
           ) : null}
         </label>
         <Popover>
           <PopoverTrigger asChild>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               className="session-dashboard__filter-trigger"
               aria-label={t('sessionDashboard.filters.open')}
               data-active={activeFilters > 0}
@@ -95,7 +101,7 @@ export function DashboardToolbar({
                   {activeFilters}
                 </span>
               ) : null}
-            </button>
+            </Button>
           </PopoverTrigger>
           <PopoverContent
             align="end"
@@ -106,8 +112,10 @@ export function DashboardToolbar({
           >
             <div className="session-dashboard__filter-heading">
               <span>{t('sessionDashboard.filters.open')}</span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 disabled={activeFilters === 0}
                 onClick={() =>
                   onChange({
@@ -117,7 +125,7 @@ export function DashboardToolbar({
                 }
               >
                 {t('sessionDashboard.filters.reset')}
-              </button>
+              </Button>
             </div>
             <div className="session-dashboard__filter-fields">
               <label>

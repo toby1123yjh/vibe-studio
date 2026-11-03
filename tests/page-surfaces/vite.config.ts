@@ -6,6 +6,7 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
   root: `${repoRoot}/tests/page-surfaces/fixture`,
+  define: { __APP_VERSION__: JSON.stringify("fixture") },
   plugins: [react()],
   resolve: {
     alias: {

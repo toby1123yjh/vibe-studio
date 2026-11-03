@@ -28,7 +28,7 @@ export const WORKFLOW_CANVAS_COLOR_TOKENS = {
 } as const;
 
 export const WORKFLOW_CANVAS_NODE_SURFACE_CLASSES = {
-  card: 'workflow-node-card rounded-[6px] border bg-[var(--workflow-node-bg)] shadow-[var(--workflow-node-shadow-base)] transition-colors duration-[140ms] motion-reduce:transition-none',
+  card: 'workflow-node-card rounded-[6px] border bg-[var(--workflow-node-bg)] shadow-[var(--workflow-node-shadow-base)] transition-colors [transition-duration:140ms] motion-reduce:transition-none',
   structural:
     'bg-[var(--workflow-node-structural-bg)] shadow-[var(--workflow-node-shadow-structural)]',
   agent:
@@ -46,9 +46,9 @@ export const WORKFLOW_CANVAS_NODE_SURFACE_CLASSES = {
   chip: 'inline-flex items-center rounded border border-secondary bg-secondary/30 px-1.5 py-0.5 text-xs font-medium leading-none text-low',
   chipTruncate:
     'inline-flex max-w-full items-center truncate rounded border border-secondary bg-secondary/30 px-1.5 py-0.5 text-xs font-medium leading-none text-low',
-  note: 'relative h-full min-h-[120px] w-full min-w-[220px] overflow-hidden rounded-lg border p-3 shadow-[var(--workflow-note-shadow)] backdrop-blur transition-colors',
+  note: 'workflow-annotation-note relative h-full min-h-[120px] w-full min-w-[220px] overflow-hidden rounded-lg border p-3 shadow-[var(--workflow-note-shadow)] transition-colors motion-reduce:transition-none',
   stageGroup:
-    'relative h-full min-h-[170px] w-full min-w-[360px] rounded-xl border p-4 text-low transition-colors',
+    'workflow-annotation-group relative h-full min-h-[170px] w-full min-w-[360px] rounded-xl border p-4 text-low transition-colors motion-reduce:transition-none',
 } as const;
 
 export const WORKFLOW_CANVAS_NODE_STATE_FRAME_CLASSES: Record<
@@ -149,17 +149,17 @@ export const WORKFLOW_CANVAS_EDGE_CLASSES = {
 } as const;
 
 export const WORKFLOW_CANVAS_NOTE_COLOR_CLASSES = {
-  amber: 'border-amber-300/35 bg-amber-300/12 text-normal',
-  blue: 'border-sky-300/30 bg-sky-300/10 text-normal',
-  green: 'border-emerald-300/30 bg-emerald-300/10 text-normal',
-  neutral: 'border-secondary bg-secondary/30 text-high',
+  amber: 'workflow-annotation-amber text-normal',
+  blue: 'workflow-annotation-blue text-normal',
+  green: 'workflow-annotation-green text-normal',
+  neutral: 'workflow-annotation-neutral text-high',
 } satisfies Record<string, string>;
 
 export const WORKFLOW_CANVAS_GROUP_COLOR_CLASSES = {
-  amber: 'border-amber-300/18 bg-amber-300/[0.035]',
-  blue: 'border-sky-300/18 bg-sky-300/[0.035]',
-  green: 'border-emerald-300/18 bg-emerald-300/[0.035]',
-  neutral: 'border-secondary bg-white/[0.025]',
+  amber: 'workflow-annotation-amber',
+  blue: 'workflow-annotation-blue',
+  green: 'workflow-annotation-green',
+  neutral: 'workflow-annotation-neutral',
 } satisfies Record<string, string>;
 
 const WORKFLOW_NODE_STATUS_IDENTITY_OVERRIDE_STATES =

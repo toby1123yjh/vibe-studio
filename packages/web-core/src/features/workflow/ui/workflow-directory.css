@@ -13,6 +13,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--vk-space-4);
+  flex-wrap: wrap;
 }
 
 .vk-workflow-directory__header h1 {
@@ -40,15 +41,16 @@
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 244px;
+  min-height: 216px;
   overflow: hidden;
   border: 1px solid var(--vk-border-subtle);
   border-radius: var(--vk-radius-md);
   background: var(--vk-surface-primary);
-  transition: border-color 150ms var(--vk-ease-standard);
+  transition: border-color var(--vk-duration-fast) var(--vk-ease-standard);
 }
 
-.vk-workflow-directory__card:hover {
+.vk-workflow-directory__card:hover,
+.vk-workflow-directory__card:focus-within {
   border-color: var(--vk-border-strong);
 }
 
@@ -76,8 +78,8 @@
   justify-content: center;
   border: 1px solid var(--vk-border-subtle);
   border-radius: var(--vk-radius-md);
-  color: var(--vk-text-low);
-  background: var(--vk-surface-secondary);
+  color: var(--vk-status-workflow-text);
+  background: var(--vk-status-workflow-subtle);
 }
 
 .vk-workflow-directory__copy {
@@ -105,7 +107,7 @@
 .vk-workflow-directory__copy p {
   margin-top: var(--vk-space-1);
   color: var(--vk-text-low);
-  font-size: var(--vk-font-size-2xs);
+  font-size: var(--vk-font-size-xs);
   line-height: var(--vk-line-height-xs);
 }
 
@@ -140,6 +142,7 @@
   margin-top: var(--vk-space-3);
   padding-top: var(--vk-space-3);
   border-top: 1px solid var(--vk-border-subtle);
+  flex-wrap: wrap;
 }
 
 .vk-workflow-directory__status {
@@ -192,10 +195,20 @@
   right: var(--vk-space-3);
   width: var(--vk-workflow-directory-action-size);
   height: var(--vk-workflow-directory-action-size);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--vk-duration-fast) var(--vk-ease-standard);
+}
+
+.vk-workflow-directory__card:hover .vk-workflow-directory__more,
+.vk-workflow-directory__card:focus-within .vk-workflow-directory__more,
+.vk-workflow-directory__more[aria-expanded='true'] {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .vk-workflow-directory__actions {
-  width: 280px;
+  width: min(280px, calc(100vw - var(--vk-space-4) * 2));
   padding: var(--vk-space-2);
 }
 
@@ -284,7 +297,7 @@
   }
 }
 
-@media (pointer: coarse) {
+@media (hover: none), (pointer: coarse) {
   .vk-workflow-directory__grid {
     --vk-workflow-directory-action-size: 44px;
   }
@@ -292,10 +305,16 @@
   .vk-workflow-directory__action {
     min-height: 44px;
   }
+
+  .vk-workflow-directory__more {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vk-workflow-directory__card {
+  .vk-workflow-directory__card,
+  .vk-workflow-directory__more {
     transition: none;
   }
 }

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
   AgentProviderCapability,
+  AgentProviderDiagnosticKind,
   AgentProviderReadiness,
   type AgentSettingsProvider,
   type AgentCommandInventoryView,
@@ -394,16 +395,33 @@ export const machineClient = {
     if (params.has('scanError') && calls.garage > 1)
       throw new Error('PRIVATE_SCAN_ERROR');
     return garage.map((entry) =>
-      missingProviders.includes(entry.executor) && !installProbe.installed
+      entry.executor === BaseCodingAgent.CODEX && params.has('diagnostic')
         ? {
             ...entry,
-            availability: { type: 'NOT_FOUND' as const },
             policy: {
               ...entry.policy,
-              readiness: AgentProviderReadiness.MISSING_EXECUTABLE,
+              readiness:
+                params.get('diagnostic') === 'blocked'
+                  ? AgentProviderReadiness.AUTH_REQUIRED
+                  : AgentProviderReadiness.INSTALLED,
+              diagnostics: [
+                {
+                  kind: AgentProviderDiagnosticKind.AUTH_REQUIRED,
+                  message: 'Sign in to the agent on this machine.',
+                },
+              ],
             },
           }
-        : entry
+        : missingProviders.includes(entry.executor) && !installProbe.installed
+          ? {
+              ...entry,
+              availability: { type: 'NOT_FOUND' as const },
+              policy: {
+                ...entry.policy,
+                readiness: AgentProviderReadiness.MISSING_EXECUTABLE,
+              },
+            }
+          : entry
     );
   },
   startAgentInstall: async (request: {

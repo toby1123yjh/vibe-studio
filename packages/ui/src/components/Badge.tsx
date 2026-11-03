@@ -8,7 +8,7 @@ const badgeVariants = cva(
     'inline-flex max-w-full items-center gap-[var(--vk-space-1)] rounded-[var(--vk-badge-radius)] border',
     'px-[var(--vk-space-2)] py-[var(--vk-space-1)]',
     'break-words text-[length:var(--vk-font-size-2xs)] font-medium leading-[var(--vk-line-height-2xs)]',
-    'transition-[background-color,border-color,color,box-shadow] duration-[var(--vk-duration-fast)]',
+    'transition-[background-color,border-color,color,box-shadow] [transition-duration:var(--vk-duration-fast)]',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vk-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--vk-surface-primary)]',
     'data-[selected=true]:ring-2 data-[selected=true]:ring-[var(--vk-badge-selected-ring)] data-[selected=true]:ring-offset-1',
     'aria-disabled:pointer-events-none aria-disabled:border-[var(--vk-border-disabled)] aria-disabled:bg-[var(--vk-surface-disabled)] aria-disabled:text-[var(--vk-text-disabled)]'

@@ -7,6 +7,7 @@ const containerMocks = `${repoRoot}/tests/project-kanban/fixture/src/container-m
 
 export default defineConfig({
   root: `${repoRoot}/tests/project-kanban/fixture`,
+  cacheDir: `${repoRoot}/node_modules/.vite/project-kanban`,
   plugins: [react()],
   resolve: {
     alias: {

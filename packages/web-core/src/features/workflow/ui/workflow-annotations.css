@@ -1,0 +1,102 @@
+.workflow-annotation-amber {
+  --workflow-annotation-color: var(--vk-status-waiting);
+}
+
+.workflow-annotation-blue {
+  --workflow-annotation-color: var(--vk-status-running);
+}
+
+.workflow-annotation-green {
+  --workflow-annotation-color: var(--vk-status-success);
+}
+
+.workflow-annotation-neutral {
+  --workflow-annotation-color: var(--vk-text-low);
+}
+
+.workflow-annotation-note {
+  border-color: color-mix(
+    in srgb,
+    var(--workflow-annotation-color) 36%,
+    var(--vk-border-subtle)
+  );
+  background: color-mix(
+    in srgb,
+    var(--workflow-annotation-color) 10%,
+    var(--workflow-node-bg)
+  );
+}
+
+.workflow-annotation-group {
+  border-color: color-mix(
+    in srgb,
+    var(--workflow-annotation-color) 30%,
+    var(--vk-border-subtle)
+  );
+  background: color-mix(
+    in srgb,
+    var(--workflow-annotation-color) 4%,
+    transparent
+  );
+}
+
+.workflow-annotation-note:hover,
+.workflow-annotation-group:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--workflow-annotation-color) 65%,
+    var(--vk-border-strong)
+  );
+}
+
+.workflow-annotation-action {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--vk-border-subtle);
+  border-radius: var(--vk-radius-sm);
+  color: var(--vk-text-low);
+  background: var(--workflow-node-action-bg);
+  cursor: pointer;
+  transition:
+    color var(--vk-duration-fast) var(--vk-ease-standard),
+    border-color var(--vk-duration-fast) var(--vk-ease-standard),
+    background-color var(--vk-duration-fast) var(--vk-ease-standard);
+}
+
+.workflow-annotation-action:hover:not(:disabled) {
+  border-color: var(--vk-status-error);
+  color: var(--vk-status-error-text);
+  background: var(--vk-status-error-subtle);
+}
+
+.workflow-annotation-action:focus-visible,
+.workflow-annotation-note input:focus-visible,
+.workflow-annotation-note textarea:focus-visible,
+.workflow-annotation-group input:focus-visible,
+.workflow-annotation-group textarea:focus-visible {
+  outline: 2px solid var(--vk-focus-ring);
+  outline-offset: 2px;
+}
+
+.workflow-annotation-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .workflow-annotation-action {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-annotation-action {
+    transition: none;
+  }
+}
