@@ -81,10 +81,10 @@ type DefaultMutationOwner = {
 
 const TABS: AgentCenterTab[] = [
   'providers',
+  'profiles',
   'mcp',
   'skills',
   'commands',
-  'profiles',
 ];
 
 function garageEntryFor(
@@ -816,25 +816,6 @@ export function AgentCenterPage({
           />
         )}
 
-      <nav
-        className="vk-agent-center__tabs"
-        aria-label={t('agentCenter.tabsLabel')}
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            aria-current={activeTab === tab ? 'page' : undefined}
-            onClick={() => {
-              if (activeTab === tab) return;
-              void runAfterDirtyConfirmation(() => setActiveTab(tab));
-            }}
-          >
-            {t(`agentCenter.tabs.${tab}`)}
-          </button>
-        ))}
-      </nav>
-
       {hostOffline ? (
         <OfflineState
           title={t('agentCenter.states.hostOfflineTitle')}
@@ -884,6 +865,24 @@ export function AgentCenterPage({
           </aside>
 
           <section className="vk-agent-center__content">
+            <nav
+              className="vk-agent-center__tabs"
+              aria-label={t('agentCenter.tabsLabel')}
+            >
+              {TABS.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  aria-current={activeTab === tab ? 'page' : undefined}
+                  onClick={() => {
+                    if (activeTab === tab) return;
+                    void runAfterDirtyConfirmation(() => setActiveTab(tab));
+                  }}
+                >
+                  {t(`agentCenter.tabs.${tab}`)}
+                </button>
+              ))}
+            </nav>
             {currentActionError && (
               <div className="vk-agent-center__alert" role="alert">
                 <WarningCircleIcon aria-hidden="true" />

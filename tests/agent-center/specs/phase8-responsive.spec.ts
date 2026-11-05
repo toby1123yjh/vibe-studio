@@ -17,7 +17,7 @@ for (const width of viewports) {
     expect(metrics.bodyWidth).toBe(metrics.viewport);
 
     await expect(
-      page.getByRole('button', { name: 'Providers', exact: true })
+      page.getByRole('button', { name: 'Overview', exact: true })
     ).toBeVisible();
     await expect(
       page.getByRole('button', { name: /^Claude Code/ })

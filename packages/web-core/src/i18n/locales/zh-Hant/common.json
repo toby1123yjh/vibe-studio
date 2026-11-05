@@ -1875,17 +1875,17 @@
     },
     "eyebrow": "智能體執行階段",
     "title": "智能體中心",
-    "description": "在同一頁面管理已安裝的智能體、原生設定、MCP、技能與執行階段命令。",
+    "description": "設定目前主機上的智能體、模型與工具。",
     "host": "目前主機",
     "rescan": "重新掃描主機",
     "rescanning": "正在掃描...",
     "tabsLabel": "智能體中心分區",
     "tabs": {
-      "providers": "智能體",
+      "providers": "概覽",
       "mcp": "MCP",
       "skills": "技能",
       "commands": "命令",
-      "profiles": "設定檔案"
+      "profiles": "設定"
     },
     "authenticationUnverified": "已偵測到智慧體，驗證狀態尚未確認。",
     "readiness": {

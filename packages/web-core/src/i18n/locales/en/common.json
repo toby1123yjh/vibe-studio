@@ -2065,17 +2065,17 @@
     },
     "eyebrow": "Agent runtime",
     "title": "Agent Center",
-    "description": "Manage installed Agent providers, native configuration, MCP servers, Skills, and runtime Commands from one place.",
+    "description": "Configure your agents, models, and tools on the selected host.",
     "host": "Current host",
     "rescan": "Rescan host",
     "rescanning": "Rescanning...",
     "tabsLabel": "Agent Center sections",
     "tabs": {
-      "providers": "Providers",
+      "providers": "Overview",
       "mcp": "MCP",
       "skills": "Skills",
       "commands": "Commands",
-      "profiles": "Configuration Profiles"
+      "profiles": "Configuration"
     },
     "authenticationUnverified": "Agent detected; authentication status has not been verified.",
     "readiness": {

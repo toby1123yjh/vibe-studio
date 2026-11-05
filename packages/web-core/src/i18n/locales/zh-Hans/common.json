@@ -2146,17 +2146,17 @@
     },
     "eyebrow": "智能体运行时",
     "title": "智能体中心",
-    "description": "在一个页面管理已安装的智能体、原生配置、MCP、技能与运行时命令。",
+    "description": "配置当前主机上的智能体、模型和工具。",
     "host": "当前主机",
     "rescan": "重新扫描本机",
     "rescanning": "正在扫描...",
     "tabsLabel": "智能体中心分区",
     "tabs": {
-      "providers": "智能体",
+      "providers": "概览",
       "mcp": "MCP",
       "skills": "技能",
       "commands": "命令",
-      "profiles": "配置档案"
+      "profiles": "配置"
     },
     "authenticationUnverified": "已检测到智能体，认证状态未验证。",
     "readiness": {

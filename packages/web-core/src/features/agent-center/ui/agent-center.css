@@ -218,8 +218,10 @@
 
 .vk-agent-center__tabs {
   display: flex;
+  min-width: 0;
   overflow-x: auto;
   border-bottom: 1px solid var(--vk-border-subtle);
+  margin-bottom: var(--vk-space-5);
   scrollbar-width: none;
   gap: var(--vk-space-1);
 }

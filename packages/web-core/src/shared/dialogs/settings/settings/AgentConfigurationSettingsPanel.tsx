@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
-  CodeIcon,
   CopyIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -26,6 +32,12 @@ import {
   DialogTitle,
 } from '@vibe/ui/components/KeyboardDialog';
 import { Switch } from '@vibe/ui/components/Switch';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTriggerButton,
+} from '@vibe/ui/components/Dropdown';
 import { formatPathForDisplay } from '@vibe/ui/lib/path';
 import {
   AgentSettingsProvider,
@@ -244,10 +256,11 @@ export function AgentConfigurationSettingsPanel({
   const [loadedProfiles, setLoadedProfiles] = useState<ConfigProfileView[]>([]);
   const [profilesContext, setProfilesContext] =
     useState<AgentSettingsRequestContext | null>(null);
-  const [activeSection, setActiveSection] = useState<string>('overview');
+  const [activeSection, setActiveSection] = useState<string>('general');
   const [scope, setScope] = useState<SettingScope>(SettingScope.user);
   const [projectPath, setProjectPath] = useState('');
   const [projectPathInput, setProjectPathInput] = useState('');
+  const projectPathId = useId();
   const [loading, setLoading] = useState(false);
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -478,7 +491,7 @@ export function AgentConfigurationSettingsPanel({
   }, [machineClient]);
 
   useEffect(() => {
-    setActiveSection('overview');
+    setActiveSection('general');
   }, [machineClient, provider]);
 
   useEffect(() => {
@@ -510,13 +523,30 @@ export function AgentConfigurationSettingsPanel({
       (section) => includeTools || section.id !== 'tools'
     );
   }, [includeTools, snapshot]);
+  const primarySections = sections.filter(
+    (section) =>
+      section.id !== 'overview' &&
+      section.id !== 'native_config' &&
+      section.id !== 'effective_config'
+  );
+  const advancedSections = sections.filter(
+    (section) =>
+      section.id === 'overview' ||
+      section.id === 'native_config' ||
+      section.id === 'effective_config'
+  );
 
   useEffect(() => {
     if (
       sections.length > 0 &&
       !sections.some((section) => section.id === activeSection)
     ) {
-      setActiveSection(sections[0].id);
+      const defaultSection =
+        sections.find((section) => section.id === 'general') ??
+        sections.find((section) => section.descriptors.length > 0) ??
+        sections.find((section) => section.id === 'profiles') ??
+        sections[0];
+      setActiveSection(defaultSection.id);
     }
   }, [activeSection, sections]);
 
@@ -533,10 +563,11 @@ export function AgentConfigurationSettingsPanel({
   );
 
   useEffect(() => {
-    if (!projectScopeSupported && scope === SettingScope.project) {
+    // A scope change clears the snapshot while rediscovering its settings.
+    if (snapshot && !projectScopeSupported && scope === SettingScope.project) {
       setScope(SettingScope.user);
     }
-  }, [projectScopeSupported, scope]);
+  }, [projectScopeSupported, scope, snapshot]);
 
   const draftDirty = isAgentSettingsDraftDirty(draft);
   const profileEnvironment = useMemo(
@@ -1208,15 +1239,6 @@ export function AgentConfigurationSettingsPanel({
     <SettingsCard
       title={tc('overviewTitle', { provider: PROVIDER_LABELS[provider] })}
       description={tc('overviewDescription')}
-      headerAction={
-        <PrimaryButton
-          variant="tertiary"
-          value={tc('refresh')}
-          onClick={() => void refreshSettings()}
-          disabled={loading || !machineClient}
-          actionIcon={loading ? 'spinner' : undefined}
-        />
-      }
     >
       <div className="grid gap-3 md:grid-cols-2">
         <InfoTile
@@ -1228,46 +1250,6 @@ export function AgentConfigurationSettingsPanel({
           value={snapshot?.provider_version ?? tc('unknown')}
         />
       </div>
-      <SettingsField
-        label={tc('projectPath')}
-        description={tc('projectPathHelp')}
-      >
-        <div className="flex gap-2">
-          <SettingsInput
-            value={formatPathForDisplay(projectPathInput)}
-            onChange={setProjectPathInput}
-            placeholder="/absolute/path/to/project"
-            disabled={busy}
-          />
-          <button
-            type="button"
-            className="rounded-sm border border-border px-3 text-low hover:text-normal disabled:opacity-40"
-            aria-label={tc('discoverProject')}
-            disabled={busy || loading}
-            onClick={() => void discoverProjectPath()}
-          >
-            <ArrowClockwiseIcon className="size-icon-xs" aria-hidden="true" />
-          </button>
-        </div>
-      </SettingsField>
-      <SettingsField label={tc('scope')} description={tc('scopeHelp')}>
-        <select
-          value={scope}
-          onChange={(event) =>
-            void changeScope(event.target.value as SettingScope)
-          }
-          disabled={busy}
-          className="w-full rounded-sm border border-border bg-secondary px-base py-half text-sm text-high focus:outline-none focus:ring-1 focus:ring-brand"
-        >
-          <option value={SettingScope.user}>{tc('userScope')}</option>
-          <option
-            value={SettingScope.project}
-            disabled={!projectPath.trim() || !projectScopeSupported}
-          >
-            {tc('projectScope')}
-          </option>
-        </select>
-      </SettingsField>
       <div className="flex flex-wrap gap-2" aria-label={tc('capabilities')}>
         {snapshot &&
           Object.entries(snapshot.capabilities).map(([key, enabled]) => (
@@ -2110,17 +2092,53 @@ export function AgentConfigurationSettingsPanel({
     );
 
   const active = sections.find((section) => section.id === activeSection);
+  const activeAdvanced = advancedSections.find(
+    (section) => section.id === activeSection
+  );
+  const sectionLabel = (section: (typeof sections)[number]) =>
+    section.id === 'native_config'
+      ? t('agentCenter.nativeConfig.sectionLabel')
+      : tc(`sections.${section.id}`, { defaultValue: section.label });
   return (
     <>
-      <div
-        className="mt-5 space-y-4 border-t border-border pt-5"
-        data-testid="agent-settings-panel"
-      >
-        <div className="flex items-center gap-2">
-          <CodeIcon className="size-icon-sm text-brand" aria-hidden="true" />
-          <h3 className="text-base font-medium text-high">
-            {tc('installedSettings')}
+      <div className="min-w-0 space-y-5" data-testid="agent-settings-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-[16px] font-medium text-high">
+            {tc('installedSettings', { provider: PROVIDER_LABELS[provider] })}
           </h3>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
+            <label className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-[13px] text-low">
+              <span>{tc('scope')}</span>
+              <select
+                value={scope}
+                onChange={(event) => {
+                  const nextScope = event.target.value as SettingScope;
+                  event.currentTarget.value = scope;
+                  void changeScope(nextScope);
+                }}
+                disabled={busy || !snapshot}
+                title={tc('scopeHelp')}
+                className="min-h-9 max-w-full rounded-sm border border-border bg-secondary px-3 text-[13px] text-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <option value={SettingScope.user}>{tc('userScope')}</option>
+                <option
+                  value={SettingScope.project}
+                  disabled={!projectPath.trim() || !projectScopeSupported}
+                >
+                  {tc('projectScope')}
+                </option>
+              </select>
+            </label>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy || loading || !machineClient}
+              onClick={() => void refreshSettings()}
+            >
+              <ArrowClockwiseIcon className="size-4" aria-hidden="true" />
+              {tc('refresh')}
+            </Button>
+          </div>
         </div>
         {error && (
           <div
@@ -2158,32 +2176,104 @@ export function AgentConfigurationSettingsPanel({
           </div>
         ) : (
           <>
-            <div
-              className="flex flex-wrap gap-1 border-b border-border"
-              role="tablist"
-              aria-label={tc('sectionsLabel')}
-            >
-              {sections.map((section) => (
-                <button
-                  key={section.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeSection === section.id}
-                  onClick={() => void changeActiveSection(section.id)}
-                  className={cn(
-                    'border-b-2 px-3 py-2 text-sm',
-                    activeSection === section.id
-                      ? 'border-brand text-brand'
-                      : 'border-transparent text-low hover:text-normal'
-                  )}
+            <details className="rounded-sm border border-border px-3">
+              <summary className="cursor-pointer py-3 text-[13px] font-medium text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+                {tc('projectContext')}
+                {projectPath && (
+                  <span className="ml-2 break-all font-normal text-low">
+                    {formatPathForDisplay(projectPath)}
+                  </span>
+                )}
+              </summary>
+              <div className="space-y-2 pb-3">
+                <label
+                  htmlFor={projectPathId}
+                  className="block text-[13px] font-medium text-normal"
                 >
-                  {section.id === 'native_config'
-                    ? t('agentCenter.nativeConfig.sectionLabel')
-                    : tc(`sections.${section.id}`, {
-                        defaultValue: section.label,
-                      })}
-                </button>
-              ))}
+                  {tc('projectPath')}
+                </label>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <div className="min-w-0 flex-1 basis-48">
+                    <SettingsInput
+                      id={projectPathId}
+                      value={formatPathForDisplay(projectPathInput)}
+                      onChange={setProjectPathInput}
+                      placeholder="/absolute/path/to/project"
+                      disabled={busy}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy || loading}
+                    onClick={() => void discoverProjectPath()}
+                  >
+                    {tc('discoverProject')}
+                  </Button>
+                </div>
+                <p className="text-[13px] leading-relaxed text-low">
+                  {tc('projectPathHelp')}
+                </p>
+              </div>
+            </details>
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
+              <div
+                className="flex min-w-0 flex-wrap gap-1"
+                role="tablist"
+                aria-label={tc('sectionsLabel')}
+              >
+                {primarySections.map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeSection === section.id}
+                    onClick={() => void changeActiveSection(section.id)}
+                    className={cn(
+                      'min-h-9 rounded-sm px-3 py-2 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                      activeSection === section.id
+                        ? 'bg-brand/10 font-medium text-brand'
+                        : 'text-low hover:bg-secondary hover:text-normal'
+                    )}
+                  >
+                    {sectionLabel(section)}
+                  </button>
+                ))}
+              </div>
+              {advancedSections.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTriggerButton
+                    label={
+                      activeAdvanced
+                        ? sectionLabel(activeAdvanced)
+                        : tc('advanced')
+                    }
+                    aria-label={
+                      activeAdvanced
+                        ? `${tc('advanced')}: ${sectionLabel(activeAdvanced)}`
+                        : tc('advanced')
+                    }
+                    wrapLabel
+                    className={cn(
+                      'max-w-full',
+                      activeAdvanced && 'border-brand text-brand'
+                    )}
+                  />
+                  <DropdownMenuContent align="end">
+                    {advancedSections.map((section) => (
+                      <DropdownMenuItem
+                        key={section.id}
+                        aria-current={
+                          activeSection === section.id ? 'page' : undefined
+                        }
+                        onSelect={() => void changeActiveSection(section.id)}
+                      >
+                        {sectionLabel(section)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
             {activeSection === 'overview' && renderOverview()}
             {active?.descriptors.length

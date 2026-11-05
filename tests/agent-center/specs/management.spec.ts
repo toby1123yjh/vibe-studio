@@ -32,12 +32,14 @@ for (const [name, provider, model] of [
     await page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
     await expect(page.getByText(model, { exact: true })).toBeVisible();
     await page
-      .getByRole("button", { name: "Configuration Profiles", exact: true })
+      .getByRole("button", { name: "Configuration", exact: true })
       .click();
     const panel = page.getByTestId("agent-settings-panel");
-    await panel.getByRole("tab", { name: "General", exact: true }).click();
-    await expect(panel.locator("input").first()).toHaveValue(model);
-    await expect(panel.locator("input").last()).toHaveValue(
+    await expect(
+      panel.getByRole("tab", { name: "General", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(panel.locator("input:visible").first()).toHaveValue(model);
+    await expect(panel.locator("input:visible").last()).toHaveValue(
       "https://api.fixture.example.com/v1/agent-runtime/configuration",
     );
     expect(
@@ -46,6 +48,40 @@ for (const [name, provider, model] of [
     expect(errors).toEqual([]);
   });
 }
+
+test("project configuration scope survives discovery, refresh, and cancelled changes", async ({
+  page,
+}) => {
+  await page.goto("/?signedOut=true");
+  await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  const panel = page.getByTestId("agent-settings-panel");
+  const projectContext = panel.locator("details");
+  await expect(projectContext).not.toHaveAttribute("open");
+  await projectContext.locator("summary").click();
+  await panel
+    .getByLabel("Project path (optional)", { exact: true })
+    .fill("C:\\AgentCenterFixture");
+  await panel
+    .getByRole("button", { name: "Discover project settings", exact: true })
+    .click();
+  const scope = panel.getByRole("combobox", { name: "Apply scope", exact: true });
+  await scope.selectOption("project");
+  const refresh = panel.getByRole("button", { name: "Refresh", exact: true });
+  await expect(refresh).toBeEnabled();
+  await expect(scope).toHaveValue("project");
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(scope).toHaveValue("project");
+  await expect(
+    panel.getByRole("tab", { name: "General", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  const model = panel.locator("input:visible").first();
+  await model.fill("fixture-local-model");
+  // The fixture cancels discard confirmation, preserving the scope and draft.
+  await scope.selectOption("user");
+  await expect(scope).toHaveValue("project");
+  await expect(model).toHaveValue("fixture-local-model");
+});
 
 for (const [name, provider, mcpScopes] of [
   ["OpenCode", "opencode", ["user", "project"]],
@@ -243,6 +279,9 @@ test("real model selector preserves an advertised empty variant and does not inv
     .getByRole("button", { name: "Follow CLI config", exact: true })
     .click();
   await page.getByRole("menuitem", { name: "No variant", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "No variant", exact: true }),
+  ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(model).toContainText("No variant");
   expect(
