@@ -443,19 +443,10 @@ function appendRunEntries(
           })
         );
         break;
-      case 'unknown':
-        resetMessageMerge();
-        output.push(
-          normalizedPatch(event, {
-            entry_type: { type: 'system_message' },
-            content: `Unsupported agent event: ${payload.data.event_type}`,
-            timestamp: event.timestamp,
-          })
-        );
-        break;
       case 'file_changes':
       case 'lifecycle_changed':
       case 'provider_extension':
+      case 'unknown':
         // These events have no conversation row. Native metadata can arrive
         // between text deltas and their completed snapshot without starting
         // a second visible message.

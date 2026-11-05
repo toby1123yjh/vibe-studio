@@ -341,7 +341,7 @@ export const ConversationList = forwardRef<
         defaultValue: 'File changes',
       }),
       working: t('agentWorkbench.timeline.working', {
-        defaultValue: 'Agent is working',
+        defaultValue: 'Working',
       }),
       terminalStatuses: {
         cancelled: t('agentWorkbench.timeline.cancelled', {

@@ -348,7 +348,6 @@
     "parentTool": "父工具：{{id}}",
     "agentRequest": "智能體請求",
     "resourceDetails": "資源詳細資料",
-    "providerDetails": "智能體事件詳細資料",
     "toolGroupLabel": "工具活動",
     "toolGroupFailed": "工具異常",
     "toolGroupRunning": "執行中",

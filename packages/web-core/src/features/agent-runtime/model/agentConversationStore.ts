@@ -321,6 +321,9 @@ export class AgentConversationStore {
     let orderChanged = false;
     let hasNewer = false;
     for (const block of blocks) {
+      // Protocol details remain on the server. They must not consume the
+      // bounded chat window and evict actual messages during noisy runs.
+      if (block.kind === 'extension') continue;
       const previous = this.blocks.get(block.block_id);
       const revisionOrder = previous
         ? compareRevision(block.revision, previous.revision)
@@ -462,7 +465,7 @@ export class AgentConversationStore {
       ...windowIds,
       ...pending.map((block) => block.block_id),
     ]);
-    let entriesChanged = this.entries.length !== this.ids.length;
+    let entriesChanged = this.entries.length !== this.references.size;
     for (const id of this.blocks.keys())
       if (!retained.has(id)) {
         this.blocks.delete(id);
@@ -478,6 +481,10 @@ export class AgentConversationStore {
       if (!windowIds.has(id)) continue;
       const block = this.blocks.get(id);
       if (!block) continue;
+      if (block.kind === 'extension') {
+        if (this.references.delete(id)) entriesChanged = true;
+        continue;
+      }
       const signature = referenceSignature(block, this.runs);
       const reference = this.references.get(id);
       if (!reference || reference.signature !== signature) {

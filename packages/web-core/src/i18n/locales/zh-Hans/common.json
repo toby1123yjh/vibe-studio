@@ -531,7 +531,6 @@
     "parentTool": "父工具：{{id}}",
     "agentRequest": "智能体请求",
     "resourceDetails": "资源详情",
-    "providerDetails": "智能体事件详情",
     "toolGroupLabel": "工具活动",
     "toolGroupFailed": "工具异常",
     "toolGroupRunning": "运行中",

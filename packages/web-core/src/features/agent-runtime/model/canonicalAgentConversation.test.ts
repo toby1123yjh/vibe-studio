@@ -190,7 +190,7 @@ describe('projectCanonicalAgentConversation', () => {
     ).toBe(true);
   });
 
-  it('keeps one assistant reply when native metadata separates deltas from completion', () => {
+  it('keeps one assistant reply when native metadata or unknown events separate deltas from completion', () => {
     const runId = 'run-stream-metadata';
     const projection = projectRuns([
       {
@@ -217,13 +217,17 @@ describe('projectCanonicalAgentConversation', () => {
             },
           }),
           event(runId, 3, {
+            type: 'unknown',
+            data: { event_type: 'future_event', payload: { retained: true } },
+          }),
+          event(runId, 4, {
             type: 'file_changes',
             data: {
               tool_call_id: 'patch-1',
               changes: [{ path: 'smoke.txt', change_type: 'modified' }],
             },
           }),
-          event(runId, 4, {
+          event(runId, 5, {
             type: 'message',
             data: {
               message: {
@@ -234,11 +238,11 @@ describe('projectCanonicalAgentConversation', () => {
               final_output: false,
             },
           }),
-          event(runId, 5, {
+          event(runId, 6, {
             type: 'lifecycle_changed',
             data: { status: 'running' },
           }),
-          event(runId, 6, {
+          event(runId, 7, {
             type: 'message',
             data: {
               message: {
@@ -259,8 +263,8 @@ describe('projectCanonicalAgentConversation', () => {
     );
     expect(reply.canonical?.eventIds).toEqual([
       `${runId}-event-1`,
-      `${runId}-event-4`,
-      `${runId}-event-6`,
+      `${runId}-event-5`,
+      `${runId}-event-7`,
     ]);
   });
 

@@ -707,22 +707,17 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
       );
       break;
     }
-    case 'resource':
     case 'extension':
+      // Provider protocol details remain available in audit/log storage.
+      // Never turn an internal event into a generic chat disclosure.
+      return null;
+    case 'resource':
       content = (
         <ChatDisclosure
           icon={<FileTextIcon className="size-icon-base" />}
-          label={t(
-            block.kind === 'resource'
-              ? 'conversation.resourceDetails'
-              : 'conversation.providerDetails',
-            {
-              defaultValue:
-                block.kind === 'resource'
-                  ? 'Resource details'
-                  : 'Agent event details',
-            }
-          )}
+          label={t('conversation.resourceDetails', {
+            defaultValue: 'Resource details',
+          })}
           summary={fields.text?.split(/\r?\n/, 1)[0]}
           expanded={expanded}
           onToggle={() => toggle()}
@@ -730,10 +725,7 @@ export const ConversationBlockEntry = memo(function ConversationBlockEntry({
           {expanded && (
             <>
               {fields.text && body}
-              <BlockBody
-                block={block}
-                field={block.kind === 'resource' ? 'resource' : 'extension'}
-              />
+              <BlockBody block={block} field="resource" />
             </>
           )}
         </ChatDisclosure>

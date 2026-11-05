@@ -4,8 +4,6 @@ import {
   PencilSimpleIcon,
   ArrowUUpLeftIcon,
   CaretDownIcon,
-  CheckIcon,
-  ClockIcon,
 } from '@phosphor-icons/react';
 import { cn } from '../lib/cn';
 import { Tooltip } from './Tooltip';
@@ -129,27 +127,12 @@ export function ChatUserMessage({
       ) : null}
       {actions}
       {submissionStatus && (
-        <span
-          role="status"
-          className="pointer-events-none absolute -left-double bottom-base inline-flex size-icon-base items-center justify-center text-low"
-          title={t(
+        <span role="status" className="sr-only">
+          {t(
             submissionStatus === 'sending'
               ? 'conversation.sendingMessage'
               : 'conversation.acceptedMessage'
           )}
-        >
-          {submissionStatus === 'sending' ? (
-            <ClockIcon className="size-icon-sm" aria-hidden />
-          ) : (
-            <CheckIcon className="size-icon-sm" aria-hidden />
-          )}
-          <span className="sr-only">
-            {t(
-              submissionStatus === 'sending'
-                ? 'conversation.sendingMessage'
-                : 'conversation.acceptedMessage'
-            )}
-          </span>
         </span>
       )}
     </div>

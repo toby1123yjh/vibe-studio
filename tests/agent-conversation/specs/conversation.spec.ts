@@ -5,6 +5,56 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('timeline')).toContainText('Initial response');
 });
 
+test('internal event details stay out of live and reloaded chat while real failures remain visible', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).conversationFixture;
+    fixture.updateBlock(
+      fixture.block('internal-event', 'extension', {
+        text: 'Internal protocol payload',
+        extension: {
+          provider_event: 'future_event',
+          payload: { retained: true },
+        },
+      })
+    );
+    fixture.updateBlock({
+      ...fixture.block('real-error', 'notice', {
+        text: 'Authentication required',
+      }),
+      finished: true,
+      finish_reason: 'failed',
+    });
+  });
+  const timeline = page.getByTestId('timeline');
+  await expect(timeline).toContainText('Authentication required');
+  await expect(timeline).toContainText('Initial response');
+  await expect(timeline).not.toContainText('Agent event details');
+  await expect(timeline).not.toContainText('Internal protocol payload');
+  await expect(
+    timeline.locator('[data-conversation-block="internal-event"]')
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).conversationFixture.state.blocks.find(
+          (block: { block_id: string }) => block.block_id === 'internal-event'
+        ).fields.extension.payload.retained
+    )
+  ).toBe(true);
+
+  // A different Host store loads the retained blocks through the history API.
+  await page.getByRole('button', { name: 'Switch host' }).click();
+  await expect(timeline).toContainText('Authentication required');
+  await expect(timeline).toContainText('Initial response');
+  await expect(timeline).not.toContainText('Agent event details');
+  await expect(timeline).not.toContainText('Internal protocol payload');
+  await expect(
+    timeline.locator('[data-conversation-block="internal-event"]')
+  ).toHaveCount(0);
+});
+
 test('tool groups show useful activity without counters and reveal details on demand', async ({
   page,
 }) => {
@@ -172,7 +222,9 @@ test('tool locations display ordinary paths while native arguments stay intact',
   }, rawPath);
   await page.getByRole('button', { name: 'Read file', exact: true }).click();
   await expect(
-    page.getByText(String.raw`D:\目录 with spaces\file.txt:42`, { exact: true })
+    page.getByText(String.raw`D:\目录 with spaces\file.txt:42`, {
+      exact: true,
+    })
   ).toBeVisible();
   await expect(page.getByText(rawPath, { exact: true })).toBeVisible();
   expect(

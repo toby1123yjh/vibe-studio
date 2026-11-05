@@ -17,7 +17,7 @@ export interface AgentWorkbenchTimelineCopy {
 
 const DEFAULT_TIMELINE_COPY: AgentWorkbenchTimelineCopy = {
   fileChanges: 'File changes',
-  working: 'Agent is working',
+  working: 'Working',
   terminalStatuses: {
     [CANCELLED_STATUS]: 'Agent run cancelled',
     failed: 'Agent run failed',

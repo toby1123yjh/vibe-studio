@@ -298,7 +298,7 @@ impl<'a> AgentConversationService<'a> {
         let mut tx = self.pool.begin().await?;
         let state = session_state(&mut tx, session_id).await?;
         let mut records = sqlx::query_as::<_, ConversationBlockRecord>(
-            "SELECT * FROM agent_conversation_blocks WHERE session_id = ? AND tombstone = 0
+            "SELECT * FROM agent_conversation_blocks WHERE session_id = ? AND tombstone = 0 AND kind != 'extension'
              AND (? IS NULL OR position < ?) ORDER BY position DESC LIMIT ?",
         )
         .bind(session_id)
@@ -1659,6 +1659,84 @@ mod tests {
         assert_eq!(detail.content, "once");
         assert_eq!(detail.block.revision, "1");
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn internal_events_do_not_consume_history_pages_but_remain_recoverable() {
+        let mut history = History::new().await;
+        for index in 0..3 {
+            history.text(&format!("text-{index}"), "visible").await;
+        }
+        let baseline = history
+            .service()
+            .page(history.session_id, None, 50)
+            .await
+            .unwrap();
+        for index in 0..60 {
+            history
+                .block(
+                    &format!("internal-{index}"),
+                    ConversationBlockKind::Extension,
+                    ConversationBlockOperation::Snapshot {
+                        fields: ConversationBlockFields {
+                            extension: Some(json!({"record": index})),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .await;
+        }
+
+        let tail = history
+            .service()
+            .page(history.session_id, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            tail.blocks
+                .iter()
+                .map(|block| block.block_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["text-1", "text-2"]
+        );
+        assert!(tail.has_more);
+        assert_eq!(
+            tail.previous_cursor.as_ref(),
+            Some(&tail.blocks[0].position)
+        );
+        let older = history
+            .service()
+            .page(history.session_id, tail.previous_cursor.as_deref(), 2)
+            .await
+            .unwrap();
+        assert_eq!(older.blocks.len(), 1);
+        assert_eq!(older.blocks[0].block_id, "text-0");
+        assert!(!older.has_more);
+        assert_eq!(
+            older.previous_cursor.as_ref(),
+            Some(&older.blocks[0].position)
+        );
+
+        let detail = history
+            .service()
+            .block_detail(history.session_id, "internal-59", "extension", 0, 100)
+            .await
+            .unwrap();
+        assert_eq!(detail.block.kind, ConversationBlockKind::Extension);
+        assert_eq!(detail.block.fields.extension, Some(json!({"record": 59})));
+        let changes = history
+            .service()
+            .changes(history.session_id, &baseline.cursor, 100)
+            .await
+            .unwrap();
+        assert_eq!(changes.blocks.len(), 60);
+        assert!(
+            changes
+                .blocks
+                .iter()
+                .all(|block| block.kind == ConversationBlockKind::Extension)
+        );
+        assert_eq!(changes.cursor.revision, tail.cursor.revision);
     }
 
     #[tokio::test]

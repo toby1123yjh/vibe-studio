@@ -547,7 +547,6 @@
     "parentTool": "Parent tool: {{id}}",
     "agentRequest": "Agent request",
     "resourceDetails": "Resource details",
-    "providerDetails": "Agent event details",
     "toolGroupLabel": "Tool activity",
     "toolGroupFailed": "Tool error",
     "toolGroupRunning": "Running",

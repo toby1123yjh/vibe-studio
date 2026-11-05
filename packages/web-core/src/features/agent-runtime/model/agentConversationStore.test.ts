@@ -104,6 +104,132 @@ const changes = (
   reset_required: false,
 });
 
+test('history and live updates omit internal chat rows without changing server records', () => {
+  const store = new AgentConversationStore('session', null);
+  const internal: ConversationBlock = {
+    ...block('internal'),
+    kind: 'extension',
+    fields: {
+      extension: {
+        provider_event: 'future_event',
+        payload: { retained: true },
+      },
+    },
+  };
+  const visible = (
+    [
+      'text',
+      'reasoning',
+      'tool',
+      'plan',
+      'interaction',
+      'resource',
+      'notice',
+    ] as const
+  ).map((kind) => ({
+    ...block(kind),
+    kind,
+    position: kind,
+    ...(kind === 'notice' ? { finish_reason: 'failed' as const } : {}),
+  }));
+  const history = page([...visible, internal]);
+  store.applyPage(history, true);
+  expect(
+    store
+      .getSnapshot()
+      .conversation.entries.map((entry) => entry.conversationBlockId)
+  ).toEqual(visible.map((item) => item.block_id).sort());
+  expect(store.getBlock('internal')).toBeUndefined();
+  expect(history.blocks).toContain(internal);
+  expect(internal.fields.extension).toEqual({
+    provider_event: 'future_event',
+    payload: { retained: true },
+  });
+
+  const initial = store.getSnapshot();
+  const live = { ...internal, block_id: 'live-internal', revision: '2' };
+  store.applyChanges(changes([live], '2'));
+  expect(store.getBlock('live-internal')).toBeUndefined();
+  expect(live.fields.extension).toEqual(internal.fields.extension);
+  expect(store.getCursor()?.revision).toBe('2');
+  expect(store.getSnapshot()).toBe(initial);
+
+  const older = { ...internal, block_id: 'older-internal', position: '00000' };
+  store.applyPage(page([older], '3'));
+  expect(store.getBlock('older-internal')).toBeUndefined();
+  expect(store.getSnapshot()).toBe(initial);
+  expect(store.getCursor()?.revision).toBe('2');
+
+  store.applyChanges({ ...changes([], '4'), tombstones: ['live-internal'] });
+  expect(store.getBlock('live-internal')).toBeUndefined();
+  expect(store.getSnapshot()).toBe(initial);
+  store.applyChanges({ ...changes([], '5'), tombstones: ['notice'] });
+  expect(
+    store
+      .getSnapshot()
+      .conversation.entries.map((entry) => entry.conversationBlockId)
+  ).not.toContain('notice');
+
+  store.applyPage(page([internal], '1', 'epoch-b'), true);
+  expect(store.getSnapshot().conversation.entries).toEqual([]);
+  expect(store.getBlock('text')).toBeUndefined();
+  expect(store.getBlock('internal')).toBeUndefined();
+  expect(history.blocks).toContain(internal);
+});
+
+test('more than 500 internal events cannot evict messages or replace visible history', () => {
+  const store = new AgentConversationStore('session', null);
+  let historyReads = 0;
+  const hidden = Array.from(
+    { length: 600 },
+    (_, index): ConversationBlock => ({
+      ...block(String(index + 1)),
+      get kind(): ConversationBlock['kind'] {
+        ++historyReads;
+        return 'extension';
+      },
+    })
+  );
+  store.applyPage(page([...hidden, block('601')]), true);
+  const initial = store.getSnapshot();
+  expect(initial.conversation.entries).toHaveLength(1);
+  historyReads = 0;
+
+  store.applyChanges(changes([block('601', '2', 'updated reply')], '2'));
+  expect(historyReads).toBe(0);
+  expect(store.getSnapshot()).toBe(initial);
+  const extensions = Array.from(
+    { length: 600 },
+    (_, index): ConversationBlock => ({
+      ...block(String(index + 602), '3'),
+      kind: 'extension',
+    })
+  );
+  store.applyChanges(changes(extensions, '3'));
+  store.applyChanges(
+    changes(
+      extensions.map((item) => ({ ...item, revision: '4' })),
+      '4'
+    )
+  );
+  expect(historyReads).toBe(0);
+  expect(store.getSnapshot().conversation).toBe(initial.conversation);
+  expect(store.getBlock('601')?.fields.text).toBe('updated reply');
+  expect(store.getCursor()?.revision).toBe('4');
+
+  // A subsequent real message retains the existing message and row object.
+  store.applyChanges(changes([block('1202', '5')], '5'));
+  expect(
+    store
+      .getSnapshot()
+      .conversation.entries.map((entry) => entry.conversationBlockId)
+  ).toEqual(['601', '1202']);
+  expect(store.getSnapshot().conversation.entries[0]).toBe(
+    initial.conversation.entries[0]
+  );
+  expect(store.getBlock('1')).toBeUndefined();
+});
+
 test('a returned Run remains active across stale history until canonical discovery catches up', () => {
   const store = new AgentConversationStore('session', null);
   const empty = page([]);

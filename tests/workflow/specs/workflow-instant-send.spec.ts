@@ -155,7 +155,7 @@ test("history feedback follows canonical activity, respects reading position and
     )
     .toBe(true);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(activity).toContainText("Agent is working");
+  await expect(activity).toContainText("Working");
   await expect
     .poll(() =>
       activity
